@@ -1,6 +1,13 @@
-# dsh-tavily-search bundle patch: register the tavily-search plugin row.
-# The plugin module is this package itself (package.json main); the bare name
-# resolves from the profile's node_modules after `dsh plugin add`.
+# dsh-free-search bundle patch: mount the free-search plugin and route the
+# web seam's search capability to it. The base layer pins
+# `searchProvider: deepseek-official` (a paid DeepSeek model call per search);
+# this patch replaces that row's config — `searchProvider` is its only base
+# key — with our free engine chain. A later profile patch can pin any
+# provider back.
+- id: web
+  config:
+    searchProvider: free-search
+
 - insert:
-    - id: tavily-search
-      name: dsh-tavily-search
+    - id: free-search
+      name: dsh-free-search

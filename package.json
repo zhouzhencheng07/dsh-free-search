@@ -1,12 +1,12 @@
 {
-  "name": "dsh-tavily-search",
-  "version": "0.1.0",
-  "description": "Free keyless Tavily web search tool for DeepSeek Harness (dsh)",
+  "name": "dsh-free-search",
+  "version": "0.2.0",
+  "description": "Free multi-source web search provider for DeepSeek Harness (dsh): Tavily keyless + keyless fallbacks, wired into the native web seam",
   "license": "MIT",
   "type": "module",
-  "main": "./src/tavily-search.js",
+  "main": "./src/web-search.js",
   "exports": {
-    ".": "./src/tavily-search.js"
+    ".": "./src/web-search.js"
   },
   "files": [
     "src",
@@ -19,13 +19,16 @@
     "dsh",
     "deepseek-harness",
     "plugin",
-    "tavily",
     "search",
-    "web-search"
+    "web-search",
+    "tavily",
+    "sogou",
+    "keyless",
+    "free"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zhouzhencheng07/dsh-tavily-search.git"
+    "url": "git+https://github.com/zhouzhencheng07/dsh-free-search.git"
   },
   "dsh": {
     "bundle": {
