@@ -1,0 +1,35 @@
+{
+  "name": "dsh-tavily-search",
+  "version": "0.1.0",
+  "description": "Free keyless Tavily web search tool for DeepSeek Harness (dsh)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/tavily-search.js",
+  "exports": {
+    ".": "./src/tavily-search.js"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "tavily",
+    "search",
+    "web-search"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhouzhencheng07/dsh-tavily-search.git"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
