@@ -17,8 +17,9 @@
   - **github 引擎在本机受限**:hosts 文件(2026-08-14 修改)将 `api.github.com` 等指向
     127.0.0.1,Node fetch 被挡 → github 引擎在本机自动降级到 tavily(不影响链路)。
   - arxiv 引擎支持 ID 直达(`arxiv 1706.03762` → `id_list=` 查询)。
-- 待办:用户改 GitHub 仓库名 `dsh-tavily-search` → `dsh-free-search` 后,更新 profile
-  依赖并重装、重启 web 验证。
+- 收尾(2026-08-16 完成):GitHub 仓库已改名 `dsh-free-search`(原 `dsh-tavily-search` 自动重定向),
+  profile 依赖已从 `file:` 切回 `git+https://github.com/zhouzhencheng07/dsh-free-search.git` 并重装。
+  剩余:重启 web 后验证 `web_search` 走免费引擎链。
 
 
 ## 1. 背景与问题
