@@ -1,15 +1,20 @@
 // dsh-kit — DSH 页面能力插件包（宿主半边）
 //
-// 当前能力：终端（terminal）
-//   - 浏览器半边（client/bundle.js）在 shell.overlay 槽位注册一个 VSCode 风格
-//     的底部终端面板 + 右下角悬浮按钮，Ctrl+` 切换。
-//   - 宿主半边（本文件）：
-//       1) ctx.webServer.registerUpgrade 挂 WebSocket 端点 /dsh-kit/terminal
-//          （webserver 默认只绑 loopback），每条连接对应一个 node-pty 会话；
-//       2) /dsh-kit/vendor/* 伺服 client/vendor/ 下的官方预编译 UMD 静态资源
-//          （xterm.js / addon-fit.js / xterm.css），浏览器端按需加载。
-//   - 工作目录由浏览器端传入（当前会话的 cwd，即会话所在工作区目录），
-//     宿主侧校验后才启动 shell。
+// 当前能力：
+//   终端（terminal）——见下方协议注释；
+//   文件树（file tree）——GET /dsh-kit/tree?path=<绝对目录> 返回该层
+//     目录+文件的 JSON 列表（官方 browse RPC 只列目录不列文件，故自建）。
+//
+// 浏览器半边（client/bundle.js）在 shell.overlay 槽位注册 VSCode 风格的
+// 底部终端面板 + 右下角悬浮按钮（Ctrl+` 切换），在 sidebar.footer.action
+// 槽位注册文件树开关按钮（面板停靠在侧边栏区域）。
+//
+// 宿主半边（本文件）挂三个端点（webserver 默认只绑 loopback）：
+//   1) WebSocket /dsh-kit/terminal —— 每条连接一个 node-pty 会话；
+//   2) 静态 /dsh-kit/vendor/* —— xterm 官方预编译 UMD，按需加载；
+//   3) GET /dsh-kit/tree?path=… —— 单层目录列表（含文件），只读。
+//
+// 终端的工作目录由浏览器端传入（当前会话的 cwd），宿主侧校验后才启动 shell。
 //
 // 协议（JSON 文本帧，双向）：
 //   浏览器 → 宿主：
@@ -169,6 +174,63 @@ export function apply(ctx) {
         },
       })
 
+      // ── 文件树端点：GET /dsh-kit/tree?path=<绝对目录> ──
+      // 只读单层列表（目录+文件，目录在前）。官方 browse RPC（ctx.workspaces
+      // .listDirectory）只返回子目录不返回文件，文件树走这里。
+      const TREE_LIMIT = 2000
+      const disposeTree = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/tree',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          // 同源校验：同源 fetch 的 GET 可能不带 Origin（浏览器行为），带了就必须匹配 Host；
+          // webserver 本身只绑 loopback，这里防的是其它本地页面跨源探测。
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const dir = validateCwd(url.searchParams.get('path') ?? '')
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          fs.readdir(dir.path, { withFileTypes: true }, (error, dirents) => {
+            if (error) {
+              json(404, { error: `读取目录失败：${error?.message ?? error}` })
+              return
+            }
+            // Dirent 不追符号链接：链接项按文件呈现（点击复制路径不受影响）
+            const entries = dirents.map((d) => ({
+              name: d.name,
+              path: path.join(dir.path, d.name),
+              dir: d.isDirectory(),
+            }))
+            entries.sort((a, b) =>
+              a.dir === b.dir
+                ? a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+                : a.dir
+                  ? -1
+                  : 1,
+            )
+            const truncated = entries.length > TREE_LIMIT
+            json(200, {
+              path: dir.path,
+              entries: truncated ? entries.slice(0, TREE_LIMIT) : entries,
+              truncated,
+            })
+          })
+        },
+      })
+
       // ── 终端 WebSocket 端点 ──
       let disposeUpgrade = null
       let disposeHttp = null
@@ -290,9 +352,10 @@ export function apply(ctx) {
       console.log('dsh-kit: vendor 资源已注册 /dsh-kit/vendor/*')
       return () => {
         disposeVendor()
+        disposeTree()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
       }
-    }, 'dsh-kit: terminal endpoint + vendor assets')
+    }, 'dsh-kit: terminal endpoint + vendor assets + tree endpoint')
   })
 }

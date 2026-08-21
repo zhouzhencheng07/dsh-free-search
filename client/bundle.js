@@ -1,9 +1,12 @@
 // dsh-kit 浏览器半边 —— 手写 client bundle，与官方 lib/client.js 产物同形，
 // 无构建步骤：改完本文件重装/重启即生效。
 //
-// 结构：在 shell.overlay 列表槽位注册悬浮层——右下角 ">_" 悬浮按钮 +
-// Ctrl+` 切换的底部终端面板。xterm 不打进 bundle，由宿主半边伺服
-// /dsh-kit/vendor/* 静态资源（官方预编译 UMD），首次打开面板时按需加载。
+// 结构：两个官方槽位——
+//   shell.overlay（列表槽）：右下角 ">_" 悬浮按钮 + Ctrl+` 切换的底部终端面板；
+//   sidebar.footer.action（列表槽）：侧边栏底部的文件树开关按钮，面板停靠在
+//     侧边栏区域，根目录 = 当前会话工作目录。数据走宿主半边 /dsh-kit/tree。
+// xterm 不打进 bundle，由宿主半边伺服 /dsh-kit/vendor/* 静态资源（官方预编译
+// UMD），首次打开终端面板时按需加载。
 //
 // 外观跟随：面板 chrome 全部用 --dsw-alias-* 令牌（随 DSH 明暗主题自动切换）；
 // xterm 需要具体色值，从 body 的 data-ds-dark-theme 属性判断明暗，
@@ -37,6 +40,16 @@ window.__ModuleLoader__.load({
       close: "关闭终端面板",
       toggle: "切换终端（Ctrl+`）",
       vendorFail: "终端组件加载失败",
+      treeLabel: "文件树",
+      treeToggle: "文件树（当前会话工作目录）",
+      treeClose: "关闭文件树",
+      treeRefresh: "刷新",
+      treeLoading: "加载中…",
+      treeEmpty: "（空目录）",
+      treeFail: "加载失败",
+      treeTruncated: "条目过多，列表已截断",
+      copied: "已复制路径",
+      copyFail: "复制失败",
     };
     const en = {
       label: "Terminal",
@@ -48,6 +61,16 @@ window.__ModuleLoader__.load({
       close: "Close terminal panel",
       toggle: "Toggle terminal (Ctrl+`)",
       vendorFail: "Failed to load terminal components",
+      treeLabel: "Files",
+      treeToggle: "File tree (current session workspace)",
+      treeClose: "Close file tree",
+      treeRefresh: "Refresh",
+      treeLoading: "Loading…",
+      treeEmpty: "(empty)",
+      treeFail: "Failed to load",
+      treeTruncated: "Too many entries, list truncated",
+      copied: "Path copied",
+      copyFail: "Copy failed",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
@@ -112,6 +135,16 @@ window.__ModuleLoader__.load({
 body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})}
 [class*="_centerCol"]{transition:padding-bottom .18s ease}
 @media (prefers-reduced-motion:reduce){[class*="_centerCol"]{transition:none}}
+/* 文件树面板：停靠在侧边栏区域（宽度=侧栏列宽，随开合跟随） */
+.dshk-tree{position:fixed;top:0;bottom:0;left:0;width:var(--dshk-tree-w,280px);display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);border-right:1px solid var(--dsw-alias-border-l1);box-shadow:6px 0 20px rgba(0,0,0,.10);z-index:780;pointer-events:auto}
+.dshk-tree-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 4px 12px;font-size:13px}
+.dshk-row{display:flex;align-items:center;gap:5px;height:26px;padding:0 6px;border-radius:6px;cursor:pointer;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.dshk-row:hover{background:var(--dsw-alias-fill-l2)}
+.dshk-chev{width:13px;flex:none;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1}
+.dshk-name{overflow:hidden;text-overflow:ellipsis}
+.dshk-file .dshk-name{color:var(--dsw-alias-label-secondary)}
+.dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.dshk-ftbtn[aria-pressed="true"]{background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary)}
 `;
 
     /** 注入 xterm.css（link）与本插件样式（style），幂等 */
@@ -375,6 +408,233 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
       });
     }
 
+    // ─────────── 文件树 ───────────
+    // 数据走宿主半边只读端点 /dsh-kit/tree（官方 browse RPC 只列目录不列文件）。
+    function fetchTree(path, signal) {
+      return fetch(`/dsh-kit/tree?path=${encodeURIComponent(path)}`, { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || !Array.isArray(body.entries)) {
+          throw new Error((body && body.error) || `HTTP ${res.status}`);
+        }
+        return body;
+      });
+    }
+
+    function FolderIcon() {
+      return jsxRuntime.jsx(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          children: jsxRuntime.jsx("path", {
+            d: "M1.5 3.5c0-.55.45-1 1-1h3.2l1.6 1.8h6.2c.55 0 1 .45 1 1v7.2c0 .55-.45 1-1 1h-11c-.55 0-1-.45-1-1v-9z",
+            fill: "none",
+            stroke: "currentColor",
+            strokeWidth: 1.2,
+            strokeLinejoin: "round",
+          }),
+        },
+      );
+    }
+
+    /** 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?} */
+    function TreeNode({ entry, depth, expanded, onToggle, onCopy }) {
+      const info = entry.dir ? expanded[entry.path] : undefined;
+      const rows = [jsxRuntime.jsxs("div", {
+        className: `dshk-row${entry.dir ? "" : " dshk-file"}`,
+        style: { paddingLeft: 8 + depth * 14 },
+        title: entry.path,
+        onClick: () => (entry.dir ? onToggle(entry) : onCopy(entry)),
+        children: [
+          jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? (info ? "▾" : "▸") : "" }),
+          jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }),
+        ],
+      }, entry.path)];
+      if (entry.dir && info) {
+        if (info.status === "loading") {
+          rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeLoading") }, `${entry.path}::loading`));
+        } else if (info.status === "error") {
+          rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, title: info.error ?? "", children: `${t("treeFail")}${info.error ? `：${info.error}` : ""}` }, `${entry.path}::error`));
+        } else if (info.entries.length === 0) {
+          rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeEmpty") }, `${entry.path}::empty`));
+        } else {
+          for (const child of info.entries) {
+            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onCopy }, child.path));
+          }
+          if (info.truncated) {
+            rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeTruncated") }, `${entry.path}::truncated`));
+          }
+        }
+      }
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, { children: rows });
+    }
+
+    function FileTreePanel({ cwd, onClose }) {
+      // expanded: 路径 → 目录单层状态；根目录就是 cwd
+      const [expanded, setExpanded] = react.useState({});
+      const [nonce, setNonce] = react.useState(0);
+      const [toast, setToast] = react.useState("");
+      const toastTimer = react.useRef(0);
+      const abortsRef = react.useRef(new Set());
+      // 宽度跟随侧栏列（测量对话列左缘，同终端的跟随手法）
+      const [width, setWidth] = react.useState(null);
+
+      react.useLayoutEffect(() => {
+        const el = document.querySelector('[class*="_centerCol"]');
+        if (!el) return undefined;
+        const update = () => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) setWidth(Math.max(260, Math.min(r.left, 380)));
+        };
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+      }, []);
+
+      const showToast = (msg) => {
+        setToast(msg);
+        window.clearTimeout(toastTimer.current);
+        toastTimer.current = window.setTimeout(() => setToast(""), 1600);
+      };
+
+      const loadDir = (dirPath) => {
+        const controller = new AbortController();
+        abortsRef.current.add(controller);
+        setExpanded((m) => ({ ...m, [dirPath]: { status: "loading" } }));
+        fetchTree(dirPath, controller.signal)
+          .then((body) => {
+            setExpanded((m) => ({
+              ...m,
+              [dirPath]: { status: "ready", entries: body.entries, truncated: body.truncated === true },
+            }));
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) return;
+            setExpanded((m) => ({ ...m, [dirPath]: { status: "error", error: String(error?.message ?? error) } }));
+          })
+          .finally(() => {
+            abortsRef.current.delete(controller);
+          });
+      };
+
+      // 根目录 / 刷新：清空缓存重拉
+      react.useEffect(() => {
+        abortsRef.current.forEach((c) => c.abort());
+        abortsRef.current.clear();
+        if (!cwd) {
+          setExpanded({});
+          return undefined;
+        }
+        setExpanded({ [cwd]: { status: "loading" } });
+        loadDir(cwd);
+        return () => {
+          abortsRef.current.forEach((c) => c.abort());
+          abortsRef.current.clear();
+        };
+      }, [cwd, nonce]);
+
+      // Esc 关闭面板
+      react.useEffect(() => {
+        const onKey = (e) => {
+          if (e.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+      }, [onClose]);
+
+      react.useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+      const toggleDir = (entry) => {
+        setExpanded((m) => {
+          if (m[entry.path]) {
+            const next = { ...m };
+            delete next[entry.path];
+            return next;
+          }
+          return { ...m, [entry.path]: { status: "loading" } };
+        });
+        if (!expanded[entry.path]) loadDir(entry.path);
+      };
+
+      const copyPath = (entry) => {
+        const done = () => showToast(t("copied"));
+        const fail = () => showToast(t("copyFail"));
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(entry.path).then(done, fail);
+        } else {
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = entry.path;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            done();
+          } catch {
+            fail();
+          }
+        }
+      };
+
+      const rootInfo = cwd ? expanded[cwd] : undefined;
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-tree",
+        style: width ? { width } : undefined,
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-head",
+            children: [
+              jsxRuntime.jsx(FolderIcon, {}),
+              jsxRuntime.jsx("span", { className: "dshk-title", children: t("treeLabel") }),
+              cwd ? jsxRuntime.jsx("span", { className: "dshk-sub", title: cwd, children: cwd }) : null,
+              toast !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: toast }) : null,
+              jsxRuntime.jsx("span", { className: "dshk-spring" }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("treeRefresh"),
+                onClick: () => setNonce((n) => n + 1),
+                children: "⟳",
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("treeClose"),
+                onClick: onClose,
+                children: "✕",
+              }),
+            ],
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-tree-body",
+            children:
+              !cwd
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("noCwd") })
+                : !rootInfo || rootInfo.status === "loading"
+                  ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
+                  : rootInfo.status === "error"
+                    ? jsxRuntime.jsx("div", { className: "dshk-note", title: rootInfo.error ?? "", children: `${t("treeFail")}${rootInfo.error ? `：${rootInfo.error}` : ""}` })
+                    : rootInfo.entries.length === 0
+                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeEmpty") })
+                      : jsxRuntime.jsxs(jsxRuntime.Fragment, {
+                          children: [
+                            rootInfo.entries.map((entry) =>
+                              jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onCopy: copyPath }, entry.path),
+                            ),
+                            rootInfo.truncated
+                              ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
+                              : null,
+                          ],
+                        }),
+          }),
+        ],
+      });
+    }
+
     // ─────────── 槽位入口组件 ───────────
     function TerminalDock(props) {
       const cwd = useCurrentCwd(props);
@@ -420,6 +680,25 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
       });
     }
 
+    /** sidebar.footer.action 入口：开关按钮 + 停靠面板（同组件持有状态，免跨槽同步） */
+    function FileTreeDock(props) {
+      const cwd = useCurrentCwd(props);
+      const [open, setOpen] = react.useState(false);
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
+        children: [
+          jsxRuntime.jsx("button", {
+            type: "button",
+            className: "dshk-btn dshk-ftbtn",
+            "aria-pressed": open,
+            title: t("treeToggle"),
+            onClick: () => setOpen((v) => !v),
+            children: jsxRuntime.jsx(FolderIcon, {}),
+          }),
+          open ? jsxRuntime.jsx(FileTreePanel, { cwd, onClose: () => setOpen(false) }) : null,
+        ],
+      });
+    }
+
     // ─────────── 插件体 ───────────
     function apply(ctx) {
       injectStyles();
@@ -427,6 +706,12 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
         ctx.slots.register(
           { name: "shell.overlay", key: "dsh-kit-terminal", id: "dsh-kit-terminal", order: 50, label: t("label") },
           TerminalDock,
+        ),
+      );
+      ctx.slots.inject("sidebar.footer.action", () =>
+        ctx.slots.register(
+          { name: "sidebar.footer.action", id: "dsh-kit-filetree", order: 60, label: t("treeLabel") },
+          FileTreeDock,
         ),
       );
     }

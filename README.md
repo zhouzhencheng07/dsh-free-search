@@ -5,7 +5,9 @@
 面向 DeepSeek Harness (dsh) 的**页面能力套件插件**：给 DSH 的浏览器界面加装可选能力，
 每个能力独立、互不依赖；全部不用时 DSH 退化为原版。
 
-## 当前能力：终端（terminal）
+## 当前能力
+
+### 终端（terminal）
 
 VSCode 风格的页内终端：
 
@@ -14,6 +16,14 @@ VSCode 风格的页内终端：
 - Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；面板内可一键重启
 - 面板关闭 / 页面刷新即结束对应 shell 进程（不留孤儿进程）
 
+### 文件树（file tree）
+
+侧边栏底部的文件树开关（设置齿轮旁）：
+
+- 面板停靠在侧边栏区域，以**当前会话的工作区目录**为根浏览文件
+- 目录懒加载逐级展开；点击文件复制其绝对路径（方便粘贴做 @ 引用）
+- 数据走插件宿主的只读端点 `/dsh-kit/tree`（同源校验；webserver 仅 loopback 可达）
+
 ## 安装
 
 ```bash
@@ -21,7 +31,8 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
 本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层(而不是仅仅装成
-一个不生效的普通依赖)。安装后重启 `dsh web`,页面右下角出现终端入口。
+一个不生效的普通依赖)。安装后重启 `dsh web`,页面右下角出现终端入口,
+侧边栏底部出现文件树开关。
 
 ### 本地开发安装
 
@@ -32,11 +43,14 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
 
 ## 工作原理
 
-- `src/index.js`:宿主半边——经 `ctx.webServer.registerUpgrade` 挂 `/dsh-kit/terminal`
-  WS 端点(升级前校验 Origin 同源;每条连接 = 一个 node-pty 会话,JSON 文本帧协议,
-  见文件头注释),并把 `client/vendor/` 下 xterm 官方预编译 UMD 伺服为 `/dsh-kit/vendor/*`。
+- `src/index.js`:宿主半边——挂三个端点:`/dsh-kit/terminal` WS 端点
+  (`registerUpgrade`,升级前校验 Origin 同源;每条连接 = 一个 node-pty 会话,
+  JSON 文本帧协议,见文件头注释)、`/dsh-kit/vendor/*` 静态资源(xterm 官方
+  预编译 UMD)、`/dsh-kit/tree?path=…` 只读单层目录列表(官方 browse RPC 只列
+  目录不列文件,文件树走这里)。
 - `client/bundle.js`:浏览器半边(手写 ModuleLoader 格式 client bundle,无构建)——
-  在 `shell.overlay` 槽位注册悬浮入口,首次打开面板时按需加载 vendor xterm。
+  在 `shell.overlay` 槽位注册终端悬浮入口(首次打开按需加载 vendor xterm),
+  在 `sidebar.footer.action` 槽位注册文件树开关(面板停靠侧边栏区域)。
 - `cordis.patch.yml`:把 `dsh-kit` 插件行 insert 进 bundle 层。
 - 宿主侧 `node-pty`/`ws` 不声明依赖:运行时从 profile fallback node_modules 解析。
 
