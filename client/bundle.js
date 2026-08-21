@@ -1,10 +1,12 @@
 // dsh-kit 浏览器半边 —— 手写 client bundle，与官方 lib/client.js 产物同形，
-// 无构建步骤：改完本文件重装/重启即生效。
+// 无构建步骤：改完本文件刷新浏览器即生效（本地目录 junction 直装）。
 //
-// 结构：两个官方槽位——
-//   shell.overlay（列表槽）：右下角 ">_" 悬浮按钮 + Ctrl+` 切换的底部终端面板；
-//   sidebar.footer.action（列表槽）：侧边栏底部的文件树开关按钮，面板停靠在
-//     侧边栏区域，根目录 = 当前会话工作目录。数据走宿主半边 /dsh-kit/tree。
+// 结构（两个 sidebar.footer.action 菜单按钮 + 文件树动态接管浏览区）：
+//   终端：侧边栏底部按钮（'>_'）开合底部停靠终端面板（Ctrl+` 亦可切换）；
+//     数据走宿主半边 /dsh-kit/terminal WS。
+//   文件树：侧边栏底部按钮（文件夹图标）开合；打开时临时注册进单槽
+//     sidebar.workspaces——把侧边栏浏览区整体换成文件树，关闭时 dispose 注销、
+//     原生工作区列表自动回归。根目录 = 当前会话工作目录，数据走宿主半边 /dsh-kit/tree。
 // xterm 不打进 bundle，由宿主半边伺服 /dsh-kit/vendor/* 静态资源（官方预编译
 // UMD），首次打开终端面板时按需加载。
 //
@@ -29,6 +31,9 @@ window.__ModuleLoader__.load({
     /** 终端面板高度（与让位 padding 共用一个变量） */
     const DOCK_H = "min(34vh, 330px)";
 
+    /** apply 时捕获的 ctx；文件树按钮用它动态 register/dispose sidebar.workspaces 单槽 */
+    let slotsCtx = null;
+
     // ─────────── 文案 ───────────
     const zh = {
       label: "终端",
@@ -41,7 +46,7 @@ window.__ModuleLoader__.load({
       toggle: "切换终端（Ctrl+`）",
       vendorFail: "终端组件加载失败",
       treeLabel: "文件树",
-      treeToggle: "文件树（当前会话工作目录）",
+      treeToggle: "切换文件树（Ctrl+E）",
       treeClose: "关闭文件树",
       treeRefresh: "刷新",
       treeLoading: "加载中…",
@@ -62,7 +67,7 @@ window.__ModuleLoader__.load({
       toggle: "Toggle terminal (Ctrl+`)",
       vendorFail: "Failed to load terminal components",
       treeLabel: "Files",
-      treeToggle: "File tree (current session workspace)",
+      treeToggle: "Toggle file tree (Ctrl+E)",
       treeClose: "Close file tree",
       treeRefresh: "Refresh",
       treeLoading: "Loading…",
@@ -124,24 +129,26 @@ window.__ModuleLoader__.load({
 .dshk-status{color:var(--dsw-alias-label-tertiary)}
 .dshk-spring{flex:1}
 .dshk-btn{appearance:none;background:transparent;border:0;color:var(--dsw-alias-label-secondary);width:26px;height:26px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1;padding:0}
-.dshk-btn:hover{background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary)}
+.dshk-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshk-body{flex:1 1 auto;min-height:0;padding:4px 8px 8px;position:relative}
 .dshk-term{height:100%}
 .dshk-term .xterm{height:100%}
 .dshk-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:13px}
-.dshk-fab{position:fixed;right:18px;bottom:18px;width:38px;height:38px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2,#444);background:var(--dsw-alias-bg-layer-2,#202020);color:var(--dsw-alias-label-secondary,#ccc);z-index:900;pointer-events:auto;cursor:pointer;display:flex;align-items:center;justify-content:center;font:700 13px ui-monospace,Consolas,monospace;box-shadow:0 4px 14px rgba(0,0,0,.2);padding:0}
-.dshk-fab:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
 /* 让位布局：终端打开时把对话列顶起，内容不被遮挡（终端宽度即对话列宽） */
 body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})}
 [class*="_centerCol"]{transition:padding-bottom .18s ease}
 @media (prefers-reduced-motion:reduce){[class*="_centerCol"]{transition:none}}
-/* 文件树面板：停靠在侧边栏区域（宽度=侧栏列宽，随开合跟随） */
-.dshk-tree{position:fixed;top:0;bottom:0;left:0;width:var(--dshk-tree-w,280px);display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);border-right:1px solid var(--dsw-alias-border-l1);box-shadow:6px 0 20px rgba(0,0,0,.10);z-index:780;pointer-events:auto}
+/* 文件树：作为 sidebar.workspaces 单槽 occupant 填满侧边栏浏览区（非浮层）。
+   行/箭头对齐原生工作区树（Radius 8、padding 0 8、gap 6、hover 用 interactive-bg-hover） */
+.dshk-tree{width:100%;height:100%;display:flex;flex-direction:column;pointer-events:auto}
 .dshk-tree-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 4px 12px;font-size:13px}
-.dshk-row{display:flex;align-items:center;gap:5px;height:26px;padding:0 6px;border-radius:6px;cursor:pointer;color:var(--dsw-alias-label-primary);white-space:nowrap}
-.dshk-row:hover{background:var(--dsw-alias-fill-l2)}
-.dshk-chev{width:13px;flex:none;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1}
+.dshk-row{display:flex;align-items:center;gap:6px;height:30px;padding:0 8px;border-radius:8px;cursor:pointer;color:var(--dsw-alias-label-primary);white-space:nowrap;user-select:none}
+.dshk-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-chev{width:16px;flex:none;display:inline-flex;justify-content:center;align-items:center;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1}
+.dshk-arrow{transition:transform .15s var(--ds-ease-in-out);display:block}
+.dshk-arrow-open{transform:rotate(90deg)}
 .dshk-name{overflow:hidden;text-overflow:ellipsis}
+.dshk-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .dshk-file .dshk-name{color:var(--dsw-alias-label-secondary)}
 .dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .dshk-ftbtn[aria-pressed="true"]{background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary)}
@@ -439,6 +446,44 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
       );
     }
 
+    /** 终端图标：与 FolderIcon 同为描边风格（16 网格），保证两个 footer 按钮观感一致 */
+    function TerminalIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M2 4.5h12v8H2z" }),
+            jsxRuntime.jsx("path", { d: "M4.4 7.2l1.8 1.3-1.8 1.3" }),
+            jsxRuntime.jsx("path", { d: "M8.5 9.3h2.6" }),
+          ],
+        },
+      );
+    }
+
+    /** 展开箭头：对齐原生工作区树的 IconTriangleRightFill14（右向实心三角，展开时 rotate 90° 朝下） */
+    function ChevronIcon({ open }) {
+      return jsxRuntime.jsx(
+        "svg",
+        {
+          width: 14,
+          height: 14,
+          viewBox: "0 0 14 14",
+          "aria-hidden": true,
+          className: `dshk-arrow${open ? " dshk-arrow-open" : ""}`,
+          children: jsxRuntime.jsx("path", { d: "M4 3l5 4-5 4z", fill: "currentColor" }),
+        },
+      );
+    }
+
     /** 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?} */
     function TreeNode({ entry, depth, expanded, onToggle, onCopy }) {
       const info = entry.dir ? expanded[entry.path] : undefined;
@@ -448,7 +493,7 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
         title: entry.path,
         onClick: () => (entry.dir ? onToggle(entry) : onCopy(entry)),
         children: [
-          jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? (info ? "▾" : "▸") : "" }),
+          jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }),
           jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }),
         ],
       }, entry.path)];
@@ -478,21 +523,6 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
       const [toast, setToast] = react.useState("");
       const toastTimer = react.useRef(0);
       const abortsRef = react.useRef(new Set());
-      // 宽度跟随侧栏列（测量对话列左缘，同终端的跟随手法）
-      const [width, setWidth] = react.useState(null);
-
-      react.useLayoutEffect(() => {
-        const el = document.querySelector('[class*="_centerCol"]');
-        if (!el) return undefined;
-        const update = () => {
-          const r = el.getBoundingClientRect();
-          if (r.width > 0) setWidth(Math.max(260, Math.min(r.left, 380)));
-        };
-        update();
-        const ro = new ResizeObserver(update);
-        ro.observe(el);
-        return () => ro.disconnect();
-      }, []);
 
       const showToast = (msg) => {
         setToast(msg);
@@ -583,29 +613,20 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 
       return jsxRuntime.jsxs("div", {
         className: "dshk-tree",
-        style: width ? { width } : undefined,
         children: [
           jsxRuntime.jsxs("div", {
             className: "dshk-head",
             children: [
               jsxRuntime.jsx(FolderIcon, {}),
-              jsxRuntime.jsx("span", { className: "dshk-title", children: t("treeLabel") }),
-              cwd ? jsxRuntime.jsx("span", { className: "dshk-sub", title: cwd, children: cwd }) : null,
+              // 显示当前目录路径（不显示"文件树"文字），过长时省略号，hover 悬浮看全
+              jsxRuntime.jsx("span", { className: "dshk-dir", title: cwd ?? "", children: cwd ?? t("treeLabel") }),
               toast !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: toast }) : null,
-              jsxRuntime.jsx("span", { className: "dshk-spring" }),
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
                 title: t("treeRefresh"),
                 onClick: () => setNonce((n) => n + 1),
                 children: "⟳",
-              }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-btn",
-                title: t("treeClose"),
-                onClick: onClose,
-                children: "✕",
               }),
             ],
           }),
@@ -666,45 +687,80 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
-          open ? jsxRuntime.jsx(TerminalPanel, { cwd, onClose: () => setOpen(false) }) : null,
-          open
-            ? null
-            : jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-fab",
-                title: t("toggle"),
-                onClick: () => setOpen(true),
-                children: ">_",
-              }),
-        ],
-      });
-    }
-
-    /** sidebar.footer.action 入口：开关按钮 + 停靠面板（同组件持有状态，免跨槽同步） */
-    function FileTreeDock(props) {
-      const cwd = useCurrentCwd(props);
-      const [open, setOpen] = react.useState(false);
-      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
-        children: [
           jsxRuntime.jsx("button", {
             type: "button",
             className: "dshk-btn dshk-ftbtn",
             "aria-pressed": open,
-            title: t("treeToggle"),
+            title: t("toggle"),
             onClick: () => setOpen((v) => !v),
-            children: jsxRuntime.jsx(FolderIcon, {}),
+            children: jsxRuntime.jsx(TerminalIcon, {}),
           }),
-          open ? jsxRuntime.jsx(FileTreePanel, { cwd, onClose: () => setOpen(false) }) : null,
+          open ? jsxRuntime.jsx(TerminalPanel, { cwd, onClose: () => setOpen(false) }) : null,
         ],
+      });
+    }
+
+    /** sidebar.footer.action 入口：开关按钮。打开时临时注册进 sidebar.workspaces 单槽，
+     *  把侧边栏浏览区整体换成文件树；关闭时 dispose 注销、原生工作区列表自动回归。 */
+    function FileTreeDock(props) {
+      const cwd = useCurrentCwd(props);
+      const [open, setOpen] = react.useState(false);
+
+      react.useEffect(() => {
+        if (!open || !slotsCtx) return undefined;
+        // 注册文件树为 sidebar.workspaces occupant（遮蔽原生浏览器），返回值即 disposer。
+        // 动态注册若在运行时抛错（跨 fiber/生命周期约束），捕获并回滚 open，避免入口被错误边界退役。
+        let dispose;
+        try {
+          // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
+          dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
+            jsxRuntime.jsx(FileTreePanel, { cwd, onClose: () => setOpen(false), ...owner }),
+          );
+        } catch (error) {
+          console.error("[dsh-kit] 注册 sidebar.workspaces 文件树失败：", error);
+          setOpen(false);
+          return undefined;
+        }
+        // 诊断：谁在占据 sidebar.workspaces（判断是否真顶掉了原生浏览器）
+        return () => {
+          try {
+            dispose();
+          } catch {
+            // 忽略注销异常
+          }
+        };
+      }, [open, cwd]);
+
+      // Ctrl+E 切换文件树/工作区树（capture 阶段拦截，避免页面其它快捷键抢先）
+      react.useEffect(() => {
+        const onKey = (e) => {
+          if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && (e.key === "e" || e.code === "KeyE")) {
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+      }, []);
+
+      return jsxRuntime.jsx("button", {
+        type: "button",
+        className: "dshk-btn dshk-ftbtn",
+        "aria-pressed": open,
+        title: t("treeToggle"),
+        onClick: () => setOpen((v) => !v),
+        children: jsxRuntime.jsx(FolderIcon, {}),
       });
     }
 
     // ─────────── 插件体 ───────────
     function apply(ctx) {
+      slotsCtx = ctx;
       injectStyles();
-      ctx.slots.inject("shell.overlay", () =>
+      ctx.slots.inject("sidebar.footer.action", () =>
         ctx.slots.register(
-          { name: "shell.overlay", key: "dsh-kit-terminal", id: "dsh-kit-terminal", order: 50, label: t("label") },
+          { name: "sidebar.footer.action", id: "dsh-kit-terminal", order: 55, label: t("label") },
           TerminalDock,
         ),
       );
