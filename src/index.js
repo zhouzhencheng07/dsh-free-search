@@ -3,16 +3,19 @@
 // 当前能力：
 //   终端（terminal）——见下方协议注释；
 //   文件树（file tree）——GET /dsh-kit/tree?path=<绝对目录> 返回该层
-//     目录+文件的 JSON 列表（官方 browse RPC 只列目录不列文件，故自建）。
+//     目录+文件的 JSON 列表（官方 browse RPC 只列目录不列文件，故自建）；
+//   文件预览（file preview）——GET /dsh-kit/read?path=<绝对文件> 读取文本
+//     内容（限长 + 二进制探测），浏览器端在右侧 details 列展示。
 //
-// 浏览器半边（client/bundle.js）在 shell.overlay 槽位注册 VSCode 风格的
-// 底部终端面板 + 右下角悬浮按钮（Ctrl+` 切换），在 sidebar.footer.action
-// 槽位注册文件树开关按钮（面板停靠在侧边栏区域）。
+// 浏览器半边（client/bundle.js）在 sidebar.footer.action 槽位注册终端/文件树
+// 两个开关按钮：终端开合底部停靠面板（Ctrl+`），文件树临时接管侧边栏浏览区
+// （sidebar.workspaces 单槽），点击文件再把内容展示进右侧 details 列。
 //
-// 宿主半边（本文件）挂三个端点（webserver 默认只绑 loopback）：
+// 宿主半边（本文件）挂四个端点（webserver 默认只绑 loopback）：
 //   1) WebSocket /dsh-kit/terminal —— 每条连接一个 node-pty 会话；
 //   2) 静态 /dsh-kit/vendor/* —— xterm 官方预编译 UMD，按需加载；
-//   3) GET /dsh-kit/tree?path=… —— 单层目录列表（含文件），只读。
+//   3) GET /dsh-kit/tree?path=… —— 单层目录列表（含文件），只读；
+//   4) GET /dsh-kit/read?path=… —— 单文件文本内容，只读。
 //
 // 终端的工作目录由浏览器端传入（当前会话的 cwd），宿主侧校验后才启动 shell。
 //
@@ -90,6 +93,26 @@ function validateCwd(raw) {
   }
   if (!stat.isDirectory()) return { ok: false, message: `不是目录：${real}` }
   return { ok: true, path: real }
+}
+
+/** 校验浏览器传来的文件路径：绝对路径 + 存在 + 是文件，返回真实路径与大小 */
+function validateFile(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return { ok: false, message: '缺少文件路径' }
+  const resolved = path.resolve(raw.trim())
+  let real
+  try {
+    real = fs.realpathSync(resolved)
+  } catch {
+    return { ok: false, message: `文件不存在：${resolved}` }
+  }
+  let stat
+  try {
+    stat = fs.statSync(real)
+  } catch {
+    return { ok: false, message: `无法读取文件：${real}` }
+  }
+  if (!stat.isFile()) return { ok: false, message: `不是文件：${real}` }
+  return { ok: true, path: real, size: stat.size }
 }
 
 /** Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；其它平台用 $SHELL 或 bash。结果缓存。 */
@@ -231,6 +254,74 @@ export function apply(ctx) {
         },
       })
 
+      // ── 文件内容端点：GET /dsh-kit/read?path=<绝对文件> ──
+      // 只读单文件文本内容（限长 + 二进制探测）。点击文件树中的文件后，
+      // 浏览器端把内容展示进右侧 details 列（对话左移让位）。
+      const READ_LIMIT = 512 * 1024
+      const disposeRead = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/read',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const file = validateFile(url.searchParams.get('path') ?? '')
+          if (!file.ok) {
+            json(400, { error: file.message })
+            return
+          }
+          if (file.size > READ_LIMIT) {
+            // 大文件也回开头 512KB，让预览至少有内容可看
+            fs.open(file.path, 'r', (openError, fd) => {
+              if (openError) {
+                json(404, { error: `读取文件失败：${openError?.message ?? openError}` })
+                return
+              }
+              const buf = Buffer.alloc(READ_LIMIT)
+              fs.read(fd, buf, 0, READ_LIMIT, 0, (readError, bytesRead) => {
+                fs.close(fd, () => {})
+                if (readError) {
+                  json(404, { error: `读取文件失败：${readError?.message ?? readError}` })
+                  return
+                }
+                const head = buf.subarray(0, bytesRead)
+                const binary = head.includes(0)
+                json(200, {
+                  path: file.path,
+                  size: file.size,
+                  truncated: true,
+                  binary,
+                  content: binary ? null : head.toString('utf8'),
+                })
+              })
+            })
+            return
+          }
+          fs.readFile(file.path, (error, body) => {
+            if (error) {
+              json(404, { error: `读取文件失败：${error?.message ?? error}` })
+              return
+            }
+            // 二进制探测：头部出现 NUL 字节视为二进制，不返回文本内容
+            const head = body.subarray(0, 4096)
+            const binary = head.includes(0)
+            const content = binary ? null : body.toString('utf8')
+            json(200, { path: file.path, size: file.size, truncated: false, binary, content })
+          })
+        },
+      })
+
       // ── 终端 WebSocket 端点 ──
       let disposeUpgrade = null
       let disposeHttp = null
@@ -350,9 +441,10 @@ export function apply(ctx) {
       return () => {
         disposeVendor()
         disposeTree()
+        disposeRead()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
       }
-    }, 'dsh-kit: terminal endpoint + vendor assets + tree endpoint')
+    }, 'dsh-kit: terminal endpoint + vendor assets + tree/read endpoint')
   })
 }

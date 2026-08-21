@@ -11,7 +11,7 @@
 
 VSCode 风格的页内终端：
 
-- 右下角悬浮按钮 `>_` 或快捷键 **Ctrl+`** 打开/关闭底部终端面板
+- 侧边栏底部的终端开关 `>_` 或快捷键 **Ctrl+`** 打开/关闭底部终端面板
 - 终端自动打开在**当前会话的工作区目录**（会话 cwd，无会话时退回最近工作区路径）
 - Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；面板内可一键重启
 - 面板关闭 / 页面刷新即结束对应 shell 进程（不留孤儿进程）
@@ -20,9 +20,12 @@ VSCode 风格的页内终端：
 
 侧边栏底部的文件树开关（设置齿轮旁）：
 
-- 面板停靠在侧边栏区域，以**当前会话的工作区目录**为根浏览文件
-- 目录懒加载逐级展开；点击文件复制其绝对路径（方便粘贴做 @ 引用）
-- 数据走插件宿主的只读端点 `/dsh-kit/tree`（同源校验；webserver 仅 loopback 可达）
+- 面板复用侧边栏浏览区，以**当前会话的工作区目录**为根浏览文件
+- 目录懒加载逐级展开；**点击文件 → 右侧停靠面板预览文件内容（默认直接开满宽度，
+  对话左移让位，左侧边缘可拖动调宽/调窄，类似 GitHub 的文件视图）**；
+  头部带"复制路径"按钮
+- 数据走插件宿主的只读端点 `/dsh-kit/tree`（目录列表）与 `/dsh-kit/read`（文件内容，
+  512 KB 限长 + 二进制探测；均同源校验；webserver 仅 loopback 可达）
 
 ## 安装
 
@@ -31,8 +34,7 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
 本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层(而不是仅仅装成
-一个不生效的普通依赖)。安装后重启 `dsh web`,页面右下角出现终端入口,
-侧边栏底部出现文件树开关。
+一个不生效的普通依赖)。安装后重启 `dsh web`,侧边栏底部出现终端与文件树开关。
 
 ### 本地开发安装
 
@@ -43,14 +45,18 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
 
 ## 工作原理
 
-- `src/index.js`:宿主半边——挂三个端点:`/dsh-kit/terminal` WS 端点
+- `src/index.js`:宿主半边——挂四个端点:`/dsh-kit/terminal` WS 端点
   (`registerUpgrade`,升级前校验 Origin 同源;每条连接 = 一个 node-pty 会话,
   JSON 文本帧协议,见文件头注释)、`/dsh-kit/vendor/*` 静态资源(xterm 官方
   预编译 UMD)、`/dsh-kit/tree?path=…` 只读单层目录列表(官方 browse RPC 只列
-  目录不列文件,文件树走这里)。
+  目录不列文件,文件树走这里)、`/dsh-kit/read?path=…` 只读单文件文本内容
+  (512 KB 限长 + 二进制探测)。
 - `client/bundle.js`:浏览器半边(手写 ModuleLoader 格式 client bundle,无构建)——
-  在 `shell.overlay` 槽位注册终端悬浮入口(首次打开按需加载 vendor xterm),
-  在 `sidebar.footer.action` 槽位注册文件树开关(面板停靠侧边栏区域)。
+  在 `sidebar.footer.action` 槽位注册终端/文件树两个开关:终端底部停靠面板
+  (首次打开按需加载 vendor xterm);文件树临时接管 `sidebar.workspaces` 单槽,
+  点击文件后自绘右侧停靠面板预览内容——挂 `body.dshk-pane-open` 类 + `--dshk-pane-w`
+  变量,用 CSS 让中列(对话)右移让位(不依赖原生 details 列/ctx.layout,
+  因其 openDetails 固定 360 且 setDetails 对动态插件不可达)。
 - `cordis.patch.yml`:把 `dsh-kit` 插件行 insert 进 bundle 层。
 - 宿主侧 `node-pty`/`ws` 不声明依赖:运行时从 profile fallback node_modules 解析。
 

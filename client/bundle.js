@@ -7,6 +7,9 @@
 //   文件树：侧边栏底部按钮（文件夹图标）开合；打开时临时注册进单槽
 //     sidebar.workspaces——把侧边栏浏览区整体换成文件树，关闭时 dispose 注销、
 //     原生工作区列表自动回归。根目录 = 当前会话工作目录，数据走宿主半边 /dsh-kit/tree。
+//     点击文件 → 右侧停靠面板预览内容（默认开满宽度、对话左移让位、左缘可拖宽），
+//     数据走宿主半边 /dsh-kit/read。面板让位用 body.dshk-pane-open + --dshk-pane-w，
+//     自绘不依赖原生 details 列/ctx.layout（其 openDetails 固定 360）。
 // xterm 不打进 bundle，由宿主半边伺服 /dsh-kit/vendor/* 静态资源（官方预编译
 // UMD），首次打开终端面板时按需加载。
 //
@@ -55,6 +58,13 @@ window.__ModuleLoader__.load({
       treeTruncated: "条目过多，列表已截断",
       copied: "已复制路径",
       copyFail: "复制失败",
+      contentClose: "关闭预览",
+      contentCopy: "复制路径",
+      contentLoading: "加载中…",
+      contentBinary: "二进制文件，无法预览",
+      contentTruncated: "文件较大，仅显示前 512 KB",
+      contentFail: "读取失败",
+      contentEmpty: "（空文件）",
     };
     const en = {
       label: "Terminal",
@@ -76,6 +86,13 @@ window.__ModuleLoader__.load({
       treeTruncated: "Too many entries, list truncated",
       copied: "Path copied",
       copyFail: "Copy failed",
+      contentClose: "Close preview",
+      contentCopy: "Copy path",
+      contentLoading: "Loading…",
+      contentBinary: "Binary file, preview unavailable",
+      contentTruncated: "File is large, only first 512 KB shown",
+      contentFail: "Failed to read",
+      contentEmpty: "(empty file)",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
@@ -136,7 +153,7 @@ window.__ModuleLoader__.load({
 .dshk-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:13px}
 /* 让位布局：终端打开时把对话列顶起，内容不被遮挡（终端宽度即对话列宽） */
 body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})}
-[class*="_centerCol"]{transition:padding-bottom .18s ease}
+[class*="_centerCol"]{transition:padding-bottom .18s ease,margin-right .18s var(--ds-ease-in-out)}
 @media (prefers-reduced-motion:reduce){[class*="_centerCol"]{transition:none}}
 /* 文件树：作为 sidebar.workspaces 单槽 occupant 填满侧边栏浏览区（非浮层）。
    行/箭头对齐原生工作区树（Radius 8、padding 0 8、gap 6、hover 用 interactive-bg-hover） */
@@ -152,6 +169,17 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-file .dshk-name{color:var(--dsw-alias-label-secondary)}
 .dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .dshk-ftbtn[aria-pressed="true"]{background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary)}
+/* 文件预览面板：fixed 停靠右侧（自绘，不依赖原生 details 列，宽度自控 --dshk-pane-w） */
+.dshk-pane{position:fixed;top:0;right:0;bottom:0;width:var(--dshk-pane-w,560px);display:flex;flex-direction:column;min-width:0;background:var(--dsw-alias-bg-base);border-left:1px solid var(--dsw-alias-border-l2);box-shadow:-6px 0 20px rgba(0,0,0,.10);z-index:790;pointer-events:auto;transition:width .18s var(--ds-ease-in-out)}
+.dshk-pane[data-dragging]{transition:none}
+.dshk-pane-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 10px 12px}
+.dshk-pane-pre{margin:0;padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;tab-size:4;-webkit-overflow-scrolling:touch;user-select:text}
+/* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
+.dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
+.dshk-pane-handle:hover::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;background:var(--dsw-alias-interactive-bg-hover);border-radius:2px}
+/* 让位布局：面板打开时中列（对话）右侧让出 --dshk-pane-w，对话随之左移 */
+body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
+@media (prefers-reduced-motion:reduce){body.dshk-pane-open [class*="_centerCol"]{transition:none}}
 `;
 
     /** 注入 xterm.css（link）与本插件样式（style），幂等 */
@@ -485,13 +513,13 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
     }
 
     /** 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?} */
-    function TreeNode({ entry, depth, expanded, onToggle, onCopy }) {
+    function TreeNode({ entry, depth, expanded, onToggle, onOpenFile }) {
       const info = entry.dir ? expanded[entry.path] : undefined;
       const rows = [jsxRuntime.jsxs("div", {
         className: `dshk-row${entry.dir ? "" : " dshk-file"}`,
         style: { paddingLeft: 8 + depth * 14 },
         title: entry.path,
-        onClick: () => (entry.dir ? onToggle(entry) : onCopy(entry)),
+        onClick: () => (entry.dir ? onToggle(entry) : onOpenFile(entry.path)),
         children: [
           jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }),
           jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }),
@@ -506,7 +534,7 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
           rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeEmpty") }, `${entry.path}::empty`));
         } else {
           for (const child of info.entries) {
-            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onCopy }, child.path));
+            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onOpenFile }, child.path));
           }
           if (info.truncated) {
             rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeTruncated") }, `${entry.path}::truncated`));
@@ -516,19 +544,11 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
       return jsxRuntime.jsxs(jsxRuntime.Fragment, { children: rows });
     }
 
-    function FileTreePanel({ cwd, onClose }) {
+    function FileTreePanel({ cwd, onOpenFile }) {
       // expanded: 路径 → 目录单层状态；根目录就是 cwd
       const [expanded, setExpanded] = react.useState({});
       const [nonce, setNonce] = react.useState(0);
-      const [toast, setToast] = react.useState("");
-      const toastTimer = react.useRef(0);
       const abortsRef = react.useRef(new Set());
-
-      const showToast = (msg) => {
-        setToast(msg);
-        window.clearTimeout(toastTimer.current);
-        toastTimer.current = window.setTimeout(() => setToast(""), 1600);
-      };
 
       const loadDir = (dirPath) => {
         const controller = new AbortController();
@@ -566,17 +586,6 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
         };
       }, [cwd, nonce]);
 
-      // Esc 关闭面板
-      react.useEffect(() => {
-        const onKey = (e) => {
-          if (e.key === "Escape") onClose();
-        };
-        window.addEventListener("keydown", onKey, true);
-        return () => window.removeEventListener("keydown", onKey, true);
-      }, [onClose]);
-
-      react.useEffect(() => () => window.clearTimeout(toastTimer.current), []);
-
       const toggleDir = (entry) => {
         setExpanded((m) => {
           if (m[entry.path]) {
@@ -587,26 +596,6 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
           return { ...m, [entry.path]: { status: "loading" } };
         });
         if (!expanded[entry.path]) loadDir(entry.path);
-      };
-
-      const copyPath = (entry) => {
-        const done = () => showToast(t("copied"));
-        const fail = () => showToast(t("copyFail"));
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(entry.path).then(done, fail);
-        } else {
-          try {
-            const ta = document.createElement("textarea");
-            ta.value = entry.path;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand("copy");
-            ta.remove();
-            done();
-          } catch {
-            fail();
-          }
-        }
       };
 
       const rootInfo = cwd ? expanded[cwd] : undefined;
@@ -620,7 +609,6 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
               jsxRuntime.jsx(FolderIcon, {}),
               // 显示当前目录路径（不显示"文件树"文字），过长时省略号，hover 悬浮看全
               jsxRuntime.jsx("span", { className: "dshk-dir", title: cwd ?? "", children: cwd ?? t("treeLabel") }),
-              toast !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: toast }) : null,
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
@@ -644,14 +632,185 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
                       : jsxRuntime.jsxs(jsxRuntime.Fragment, {
                           children: [
                             rootInfo.entries.map((entry) =>
-                              jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onCopy: copyPath }, entry.path),
-                            ),
-                            rootInfo.truncated
+                              jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile }, entry.path),
+                            ),                            rootInfo.truncated
                               ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
                               : null,
                           ],
                         }),
           }),
+        ],
+      });
+    }
+
+    // ─────────── 文件内容预览（右侧停靠面板，自绘）───────────
+    // 点击文件树中的文件 → 打开右侧 fixed 停靠面板展示内容（不依赖原生 details
+    // 槽/ctx.layout：openDetails 默认宽只有 360 且无法从动态插件调 setDetails）。
+    // 让位布局：挂 body.dshk-pane-open 类 + 根节点设 --dshk-pane-w，
+    // 样式规则把中列（对话）margin-right 顶开面板宽度——对话左移，内容不被遮挡。
+    // 默认宽度即最大（左移到底），左缘拖拽手柄可收窄/放宽。
+    function FileContentPane({ path, cwd, onClose }) {
+      const [state, setState] = react.useState({ phase: "loading" });
+      const [toast, setToast] = react.useState("");
+      const [dragging, setDragging] = react.useState(false);
+      const toastTimer = react.useRef(0);
+      // 拖过的宽度（px）；0 = 未拖过，用 CSS fallback 默认宽度
+      const widthRef = react.useRef(0);
+      const dragRef = react.useRef(null);
+
+      // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
+      // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
+      react.useLayoutEffect(() => {
+        document.body.classList.add("dshk-pane-open");
+        // 默认即最大宽度：给对话列至少留 880px（含侧边栏），上限 720
+        const maxW = Math.min(720, Math.max(520, window.innerWidth - 880));
+        widthRef.current = maxW;
+        document.documentElement.style.setProperty("--dshk-pane-w", `${maxW}px`);
+        return () => {
+          document.body.classList.remove("dshk-pane-open");
+          document.documentElement.style.removeProperty("--dshk-pane-w");
+        };
+      }, []);
+
+      // 拖拽：window 级 pointermove/up，更新 --dshk-pane-w（对话让位同步）
+      react.useEffect(() => {
+        if (!dragging) return undefined;
+        const onMove = (e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const dx = d.startX - e.clientX; // 往左拖 → 面板变宽
+          const maxW = Math.min(720, Math.max(520, window.innerWidth - 880));
+          const w = Math.min(maxW, Math.max(320, d.startW + dx));
+          widthRef.current = w;
+          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        };
+        const onUp = () => {
+          dragRef.current = null;
+          setDragging(false);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+        };
+      }, [dragging]);
+
+      const onHandleDown = (e) => {
+        e.preventDefault();
+        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 560 };
+        setDragging(true);
+      };
+
+      react.useEffect(() => {
+        const controller = new AbortController();
+        setState({ phase: "loading" });
+        fetch(`/dsh-kit/read?path=${encodeURIComponent(path)}`, { signal: controller.signal })
+          .then(async (res) => {
+            const body = await res.json().catch(() => null);
+            if (!res.ok || !body || typeof body.content === "undefined") {
+              throw new Error((body && body.error) || `HTTP ${res.status}`);
+            }
+            return body;
+          })
+          .then((body) => {
+            if (controller.signal.aborted) return;
+            setState({ phase: "ready", body });
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) return;
+            setState({ phase: "error", error: String(error?.message ?? error) });
+          });
+        return () => controller.abort();
+      }, [path]);
+
+      react.useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+      const showToast = (msg) => {
+        setToast(msg);
+        window.clearTimeout(toastTimer.current);
+        toastTimer.current = window.setTimeout(() => setToast(""), 1600);
+      };
+
+      const copyPath = () => {
+        const done = () => showToast(t("copied"));
+        const fail = () => showToast(t("copyFail"));
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(path).then(done, fail);
+        } else {
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = path;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            done();
+          } catch {
+            fail();
+          }
+        }
+      };
+
+      const base = path.split(/[\\/]/).pop() || path;
+      const displayPath = cwd && path.startsWith(cwd) ? path.slice(cwd.length).replace(/^[\\/]/, "") : path;
+
+      let body;
+      if (state.phase === "loading") {
+        body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
+      } else if (state.phase === "error") {
+        body = jsxRuntime.jsx("div", { className: "dshk-note", title: state.error, children: `${t("contentFail")}：${state.error}` });
+      } else {
+        const b = state.body;
+        if (b.binary) {
+          body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentBinary") });
+        } else if (b.content === null || b.content === "") {
+          body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentEmpty") });
+        } else {
+          body = jsxRuntime.jsxs("div", {
+            className: "dshk-pane-body",
+            children: [
+              b.truncated ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentTruncated") }) : null,
+              jsxRuntime.jsx("pre", { className: "dshk-pane-pre", children: b.content }),
+            ],
+          });
+        }
+      }
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-pane",
+        "data-dragging": dragging || undefined,
+        children: [
+          jsxRuntime.jsx("div", {
+            className: "dshk-pane-handle",
+            onPointerDown: onHandleDown,
+          }),
+          jsxRuntime.jsxs("div", {
+            className: "dshk-head",
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
+              jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
+              toast !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: toast }) : null,
+              jsxRuntime.jsx("span", { className: "dshk-spring" }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("contentCopy"),
+                onClick: copyPath,
+                children: "⧉",
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("contentClose"),
+                onClick: onClose,
+                children: "✕",
+              }),
+            ],
+          }),
+          body,
         ],
       });
     }
@@ -701,10 +860,13 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
     }
 
     /** sidebar.footer.action 入口：开关按钮。打开时临时注册进 sidebar.workspaces 单槽，
-     *  把侧边栏浏览区整体换成文件树；关闭时 dispose 注销、原生工作区列表自动回归。 */
+     *  把侧边栏浏览区整体换成文件树；关闭时 dispose 注销、原生工作区列表自动回归。
+     *  点击文件时再注册进 details 单槽（原生右侧第三列），内容在右列展示、对话左移。 */
     function FileTreeDock(props) {
       const cwd = useCurrentCwd(props);
       const [open, setOpen] = react.useState(false);
+      // 当前打开预览的文件路径；null = 未打开任何文件
+      const [openFile, setOpenFile] = react.useState(null);
 
       react.useEffect(() => {
         if (!open || !slotsCtx) return undefined;
@@ -714,14 +876,13 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
         try {
           // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
           dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
-            jsxRuntime.jsx(FileTreePanel, { cwd, onClose: () => setOpen(false), ...owner }),
+            jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setOpenFile(p), ...owner }),
           );
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 文件树失败：", error);
           setOpen(false);
           return undefined;
         }
-        // 诊断：谁在占据 sidebar.workspaces（判断是否真顶掉了原生浏览器）
         return () => {
           try {
             dispose();
@@ -730,6 +891,22 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
           }
         };
       }, [open, cwd]);
+
+      // 关掉文件树时同步清掉文件预览（重开树不带残留预览）
+      react.useEffect(() => {
+        if (!open) setOpenFile(null);
+      }, [open]);
+
+      // Esc 分两层：先关文件预览，再关文件树（不拦截事件，避免挡掉其它 Esc 行为）
+      react.useEffect(() => {
+        const onKey = (e) => {
+          if (e.key !== "Escape") return;
+          if (openFile) setOpenFile(null);
+          else if (open) setOpen(false);
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+      }, [open, openFile]);
 
       // Ctrl+E 切换文件树/工作区树（capture 阶段拦截，避免页面其它快捷键抢先）
       react.useEffect(() => {
@@ -744,13 +921,21 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
         return () => window.removeEventListener("keydown", onKey, true);
       }, []);
 
-      return jsxRuntime.jsx("button", {
-        type: "button",
-        className: "dshk-btn dshk-ftbtn",
-        "aria-pressed": open,
-        title: t("treeToggle"),
-        onClick: () => setOpen((v) => !v),
-        children: jsxRuntime.jsx(FolderIcon, {}),
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
+        children: [
+          jsxRuntime.jsx("button", {
+            type: "button",
+            className: "dshk-btn dshk-ftbtn",
+            "aria-pressed": open,
+            title: t("treeToggle"),
+            onClick: () => setOpen((v) => !v),
+            children: jsxRuntime.jsx(FolderIcon, {}),
+          }),
+          // 文件预览：自绘右侧停靠面板直接渲染（挂 body 类让位，见 FileContentPane）
+          open && openFile
+            ? jsxRuntime.jsx(FileContentPane, { path: openFile, cwd, onClose: () => setOpenFile(null) })
+            : null,
+        ],
       });
     }
 
