@@ -345,11 +345,8 @@ export function apply(ctx) {
             res.end('dsh-kit terminal: WebSocket Upgrade Required')
           },
         })
-
-        console.log('dsh-kit: 终端端点已注册 /dsh-kit/terminal')
       }
 
-      console.log('dsh-kit: vendor 资源已注册 /dsh-kit/vendor/*')
       return () => {
         disposeVendor()
         disposeTree()
