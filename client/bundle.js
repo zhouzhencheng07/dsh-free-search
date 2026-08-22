@@ -65,6 +65,34 @@ window.__ModuleLoader__.load({
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
+      skillsLabel: "技能管理",
+      skRefresh: "刷新",
+      skLoading: "加载中…",
+      skFail: "加载失败",
+      skEmpty: "（此目录暂无技能）",
+      skNoDir: "（目录尚未创建，执行复制/移动时自动创建）",
+      skGroupPool: "技能池",
+      skGroupUser: "用户级",
+      skGroupProject: "工作区",
+      skOther: "其他来源（插件自带/运行时，只读）",
+      skNoCwdHint: "当前没有会话工作区：只显示用户级与技能池",
+      skDisabled: "已禁用",
+      skByPlugin: "随插件",
+      skView: "正文",
+      skHide: "收起",
+      skCopy: "复制到",
+      skMove: "移动到",
+      skDisable: "禁用",
+      skEnable: "启用",
+      skDelete: "删除",
+      skConfirmDelete: "确认删除？",
+      skYes: "确认",
+      skCancel: "取消",
+      skOverwrite: "目标已存在同名技能，覆盖？",
+      skOpFail: "操作失败",
+      skDone: "完成",
+      skTrashed: "已移入回收区",
+      skTrashNote: "删除的技能移入技能池 .trash/ 目录，可手动找回",
     };
     const en = {
       label: "Terminal",
@@ -93,6 +121,34 @@ window.__ModuleLoader__.load({
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
       contentEmpty: "(empty file)",
+      skillsLabel: "Skills",
+      skRefresh: "Refresh",
+      skLoading: "Loading…",
+      skFail: "Failed to load",
+      skEmpty: "(no skills here)",
+      skNoDir: "(directory not created yet; auto-created on copy/move)",
+      skGroupPool: "Skill pool",
+      skGroupUser: "User level",
+      skGroupProject: "Workspace",
+      skOther: "Other sources (plugin/runtime, read-only)",
+      skNoCwdHint: "No session workspace: showing user-level and pool only",
+      skDisabled: "Disabled",
+      skByPlugin: "Plugin-bundled",
+      skView: "View",
+      skHide: "Hide",
+      skCopy: "Copy to",
+      skMove: "Move to",
+      skDisable: "Disable",
+      skEnable: "Enable",
+      skDelete: "Delete",
+      skConfirmDelete: "Confirm delete?",
+      skYes: "Confirm",
+      skCancel: "Cancel",
+      skOverwrite: "A skill with the same name exists at the target. Overwrite?",
+      skOpFail: "Operation failed",
+      skDone: "Done",
+      skTrashed: "Moved to trash area",
+      skTrashNote: "Deleted skills go to <pool>/.trash/ and can be recovered manually",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
@@ -180,6 +236,29 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 /* 让位布局：面板打开时中列（对话）右侧让出 --dshk-pane-w，对话随之左移 */
 body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 @media (prefers-reduced-motion:reduce){body.dshk-pane-open [class*="_centerCol"]{transition:none}}
+/* 技能管理页（settings.section）：分组卡片 + 行内操作，全部走别名令牌随主题 */
+.dshk-sk{font-size:13px;color:var(--dsw-alias-label-primary);user-select:text}
+.dshk-sk-head{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.dshk-sk-title{font-weight:600;font-size:14px}
+.dshk-sk-status{color:var(--dsw-alias-label-tertiary);font-size:12px}
+.dshk-sk-group{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.dshk-sk-group-head{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:12px}
+.dshk-sk-group-dir{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.dshk-sk-row{padding:9px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dshk-sk-row:first-of-type{border-top:0}
+.dshk-sk-line1{display:flex;align-items:center;gap:6px;min-width:0}
+.dshk-sk-name{font-weight:600;white-space:nowrap}
+.dshk-sk-name[data-disabled]{color:var(--dsw-alias-label-tertiary);text-decoration:line-through}
+.dshk-sk-badge{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dshk-sk-badge-off{border-style:dashed;color:var(--dsw-alias-label-tertiary)}
+.dshk-sk-desc{margin-top:3px;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshk-sk-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px}
+.dshk-sk-btn{appearance:none;background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px;line-height:1;padding:4px 9px}
+.dshk-sk-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshk-sk-btn[data-danger="1"]{color:var(--dsw-alias-label-primary);font-weight:600;border-color:var(--dsw-alias-label-secondary)}
+.dshk-sk-btn[disabled]{opacity:.5;cursor:default}
+.dshk-sk-sel{height:26px;font-size:12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 4px;max-width:220px}
+.dshk-sk-pre{margin:8px 0 0;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
 `;
 
     /** 注入 xterm.css（link）与本插件样式（style），幂等 */
@@ -939,6 +1018,268 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
+    // ─────────── 技能管理页（settings.section）───────────
+    // 数据走宿主半边 GET /dsh-kit/skills（白名单根枚举+注册表归属增强）与
+    // POST /dsh-kit/skills/op（copy/move/delete/disable）。分组显示：
+    // 工作区(.agents|.dsh/skills) → 用户级($DSH_HOME|~/.agents) → 技能池；
+    // 插件自带/运行时来源只读展示。删除=移入池内 .trash，禁用=改 frontmatter 双键。
+    function fetchSkillsPage(cwd, signal) {
+      const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
+      return fetch(`/dsh-kit/skills${query}`, { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || !Array.isArray(body.groups)) {
+          throw new Error((body && body.error) || `HTTP ${res.status}`);
+        }
+        return body;
+      });
+    }
+
+    function postSkillOp(payload) {
+      return fetch("/dsh-kit/skills/op", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const error = new Error(body.error || `HTTP ${res.status}`);
+          error.status = res.status;
+          throw error;
+        }
+        return body;
+      });
+    }
+
+    function skRootTitle(id) {
+      if (id === "pool") return t("skGroupPool");
+      if (id === "user-dsh") return `${t("skGroupUser")} · $DSH_HOME/skills`;
+      if (id === "user-agents") return `${t("skGroupUser")} · ~/.agents/skills`;
+      return `${t("skGroupProject")} · ${id === "project-dsh" ? ".dsh/skills" : ".agents/skills"}`;
+    }
+
+    function defaultDest(groupId, groups) {
+      if (groupId !== "pool") return "pool";
+      const project = groups.find((g) => g.id.indexOf("project-") === 0 && g.exists);
+      return project ? project.id : "user-dsh";
+    }
+
+    function SkillContent({ file }) {
+      const [state, setState] = react.useState({ phase: "loading", text: "" });
+      react.useEffect(() => {
+        const controller = new AbortController();
+        setState({ phase: "loading", text: "" });
+        fetch(`/dsh-kit/read?path=${encodeURIComponent(file)}`, { signal: controller.signal })
+          .then(async (res) => {
+            const body = await res.json().catch(() => null);
+            if (!res.ok || !body) throw new Error((body && body.error) || `HTTP ${res.status}`);
+            return body;
+          })
+          .then((body) =>
+            setState({
+              phase: "ready",
+              text: body.binary ? t("contentBinary") : body.content ?? "",
+            }),
+          )
+          .catch((error) => {
+            if (!controller.signal.aborted) setState({ phase: "error", text: String(error?.message ?? error) });
+          });
+        return () => controller.abort();
+      }, [file]);
+      if (state.phase === "loading") return jsxRuntime.jsx("div", { className: "dshk-sk-status", style: { padding: "6px 0 0" }, children: t("skLoading") });
+      if (state.phase === "error")
+        return jsxRuntime.jsx("div", { className: "dshk-sk-status", style: { padding: "6px 0 0" }, children: `${t("contentFail")}：${state.text}` });
+      if (state.text.trim() === "") return jsxRuntime.jsx("div", { className: "dshk-sk-status", style: { padding: "6px 0 0" }, children: t("contentEmpty") });
+      return jsxRuntime.jsx("pre", { className: "dshk-sk-pre", children: state.text });
+    }
+
+    /** 单个技能行：名称/徽标 + 目标根选择 + 复制/移动/禁用/删除/正文 */
+    function SkillRow({ skill, groupId, groups, cwd, busy, runOp }) {
+      const [open, setOpen] = react.useState(false);
+      const [confirming, setConfirming] = react.useState(false);
+      const [dest, setDest] = react.useState(() => defaultDest(groupId, groups));
+      const targets = groups.filter((g) => g.id !== groupId);
+
+      const opTo = (op) => runOp({ op, src: skill.path, dest, cwd });
+      const onDisable = () => runOp({ op: "disable", src: skill.path, cwd, disabled: !skill.disabled });
+      const onDelete = () => {
+        if (!confirming) {
+          setConfirming(true);
+          return;
+        }
+        setConfirming(false);
+        runOp({ op: "delete", src: skill.path, cwd });
+      };
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-sk-row",
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-sk-line1",
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-sk-name", "data-disabled": skill.disabled || undefined, children: skill.name }),
+              skill.disabled ? jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", children: t("skDisabled") }) : null,
+              jsxRuntime.jsx("span", { className: "dshk-sk-badge", title: skill.file ?? skill.path, children: skill.kind === "dir" ? "SKILL.md" : ".md" }),
+            ],
+          }),
+          typeof skill.description === "string" && skill.description !== ""
+            ? jsxRuntime.jsx("div", { className: "dshk-sk-desc", title: skill.description, children: skill.description })
+            : null,
+          jsxRuntime.jsxs("div", {
+            className: "dshk-sk-actions",
+            children: [
+              jsxRuntime.jsx(
+                "select",
+                {
+                  className: "dshk-sk-sel",
+                  value: dest,
+                  disabled: busy,
+                  onChange: (e) => setDest(e.target.value),
+                  children: targets.map((g) =>
+                    jsxRuntime.jsx("option", { value: g.id, children: skRootTitle(g.id) }, g.id),
+                  ),
+                },
+              ),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, title: t("skCopy"), onClick: () => opTo("copy"), children: t("skCopy") }),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, title: t("skMove"), onClick: () => opTo("move"), children: t("skMove") }),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDisable, children: skill.disabled ? t("skEnable") : t("skDisable") }),
+              confirming
+                ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", "data-danger": "1", disabled: busy, onClick: onDelete, children: t("skConfirmDelete") })
+                : jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDelete, children: t("skDelete") }),
+              confirming
+                ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setConfirming(false), children: t("skCancel") })
+                : null,
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setOpen((v) => !v), children: open ? t("skHide") : t("skView") }),
+            ],
+          }),
+          open ? jsxRuntime.jsx(SkillContent, { file: skill.file }) : null,
+        ],
+      });
+    }
+
+    /** 只读展示注册表里非白名单根的技能（插件自带/运行时/custom 目录等） */
+    function ProviderRow({ item }) {
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-sk-row",
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-sk-line1",
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-sk-name", children: item.name }),
+              item.provider !== "" ? jsxRuntime.jsx("span", { className: "dshk-sk-badge", children: item.provider }) : null,
+              item.source !== "" ? jsxRuntime.jsx("span", { className: "dshk-sk-badge", children: item.source }) : null,
+              jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", children: t("skByPlugin") }),
+            ],
+          }),
+          typeof item.description === "string" && item.description !== ""
+            ? jsxRuntime.jsx("div", { className: "dshk-sk-desc", title: item.description, children: item.description })
+            : null,
+        ],
+      });
+    }
+
+    const SK_GROUP_RANK = { "project-agents": 0, "project-dsh": 1, "user-dsh": 2, "user-agents": 3, pool: 4 };
+
+    function SkillsManager(props) {
+      const cwd = useCurrentCwd(props);
+      const [data, setData] = react.useState(null);
+      const [error, setError] = react.useState("");
+      const [message, setMessage] = react.useState("");
+      const [busy, setBusy] = react.useState(false);
+      const [nonce, setNonce] = react.useState(0);
+
+      react.useEffect(() => {
+        const controller = new AbortController();
+        fetchSkillsPage(cwd ?? "", controller.signal)
+          .then((body) => {
+            setData(body);
+            setError("");
+          })
+          .catch((err) => {
+            if (!controller.signal.aborted) setError(String(err?.message ?? err));
+          });
+        return () => controller.abort();
+      }, [cwd, nonce]);
+
+      const runOp = async (payload) => {
+        if (busy) return;
+        setBusy(true);
+        setMessage("");
+        try {
+          try {
+            await postSkillOp(payload);
+          } catch (err) {
+            if (err && err.status === 409 && window.confirm(t("skOverwrite"))) {
+              await postSkillOp({ ...payload, overwrite: true });
+            } else {
+              setMessage(`${t("skOpFail")}：${err?.message ?? err}`);
+              return;
+            }
+          }
+          setMessage(payload.op === "delete" ? t("skTrashed") : t("skDone"));
+          setNonce((n) => n + 1);
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const groups = data
+        ? [...data.groups].sort((a, b) => (SK_GROUP_RANK[a.id] ?? 99) - (SK_GROUP_RANK[b.id] ?? 99))
+        : [];
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-sk",
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-sk-head",
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-sk-title", children: t("skillsLabel") }),
+              message !== "" ? jsxRuntime.jsx("span", { className: "dshk-sk-status", children: message }) : null,
+              error !== "" ? jsxRuntime.jsx("span", { className: "dshk-sk-status", title: error, children: `${t("skFail")}：${error}` }) : null,
+              jsxRuntime.jsx("span", { style: { flex: 1 } }),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, title: t("skRefresh"), onClick: () => setNonce((n) => n + 1), children: "⟳" }),
+            ],
+          }),
+          !cwd ? jsxRuntime.jsx("div", { className: "dshk-sk-status", style: { marginBottom: 8 }, children: t("skNoCwdHint") }) : null,
+          groups.map((group) =>
+            jsxRuntime.jsxs(
+              "div",
+              {
+                className: "dshk-sk-group",
+                children: [
+                  jsxRuntime.jsxs("div", {
+                    className: "dshk-sk-group-head",
+                    children: [
+                      jsxRuntime.jsx("span", { children: skRootTitle(group.id) }),
+                      jsxRuntime.jsx("span", { children: group.exists ? `· ${group.skills.length}` : "" }),
+                      jsxRuntime.jsx("span", { className: "dshk-sk-group-dir", title: group.dir, children: group.dir }),
+                    ],
+                  }),
+                  !group.exists
+                    ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skNoDir") })
+                    : group.skills.length === 0
+                      ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skEmpty") })
+                      : group.skills.map((skill) =>
+                          jsxRuntime.jsx(SkillRow, { skill, groupId: group.id, groups, cwd, busy, runOp }, skill.path),
+                        ),
+                  group.id === "pool" ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skTrashNote") }) : null,
+                ],
+              },
+              group.id,
+            ),
+          ),
+          data && Array.isArray(data.providers) && data.providers.length > 0
+            ? jsxRuntime.jsxs("div", {
+                className: "dshk-sk-group",
+                children: [
+                  jsxRuntime.jsx("div", { className: "dshk-sk-group-head", children: jsxRuntime.jsx("span", { children: t("skOther") }) }),
+                  data.providers.map((item, index) => jsxRuntime.jsx(ProviderRow, { item }, `${item.name}::${index}`)),
+                ],
+              })
+            : null,
+        ],
+      });
+    }
+
     // ─────────── 插件体 ───────────
     function apply(ctx) {
       slotsCtx = ctx;
@@ -953,6 +1294,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         ctx.slots.register(
           { name: "sidebar.footer.action", id: "dsh-kit-filetree", order: 60, label: t("treeLabel") },
           FileTreeDock,
+        ),
+      );
+      // 设置面板新增整页（settings.section 列表槽）：技能管理（M1 技能池）
+      ctx.slots.inject("settings.section", () =>
+        ctx.slots.register(
+          { name: "settings.section", id: "kit-skills", order: 40, label: () => t("skillsLabel") },
+          SkillsManager,
         ),
       );
     }

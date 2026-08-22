@@ -35,6 +35,8 @@ import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { applySkillPool } from './skill-pool.js'
+
 export const name = 'dsh-kit'
 
 const require = createRequire(import.meta.url)
@@ -167,6 +169,14 @@ const VENDOR_TYPES = new Map([
 ])
 
 export function apply(ctx) {
+  // 技能池端点（M1，见 src/skill-pool.js）：自带 webServer 注入与同源校验。
+  // skills 注册表是可选增强（归属展示），服务晚于本行就绪也无碍——注入回调捕获引用。
+  let skillsRegistry = null
+  ctx.inject(['skills'], (skillsCtx) => {
+    skillsRegistry = skillsCtx.skills
+  })
+  applySkillPool(ctx, { getRegistry: () => skillsRegistry })
+
   // webServer 可能在本插件 apply 之后才挂载，用动态注入等它就绪
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => {

@@ -27,6 +27,21 @@ VSCode 风格的页内终端：
 - 数据走插件宿主的只读端点 `/dsh-kit/tree`（目录列表）与 `/dsh-kit/read`（文件内容，
   512 KB 限长 + 二进制探测；均同源校验；webserver 仅 loopback 可达）
 
+### 技能管理（skill pool）
+
+设置面板新增"技能管理"页，把分散的技能收进一个可操作的界面：
+
+- 分组列出：**工作区**（`<项目>/.agents/skills`、`.dsh/skills`）、**用户级**
+  （`$DSH_HOME/skills`、`~/.agents/skills`）、**技能池**（`$DSH_HOME/skill-pool`，
+  不挂扫描根、DSH 不扫描，纯流通货架）；插件自带/运行时来源的技能以只读方式
+  列在"其他来源"，归属（provider/source）照实标注
+- 四个操作：**复制到 / 移动到**（任意根之间转移，同名冲突先确认再覆盖）、
+  **删除**（移入池内 `.trash/` 回收区，不直删）、**禁用/启用**（改 SKILL.md
+  frontmatter 的 `disable-model-invocation` + `user-invocable` 双键——注册表
+  原生机制，chokidar 热生效免重启；插件自带的技能无文件可改，操作置灰）
+- 点开任意技能可直接查看正文；数据走宿主端点 `/dsh-kit/skills`（枚举）与
+  `/dsh-kit/skills/op`（操作），全部经白名单路径校验 + 同源校验
+
 ## 安装
 
 ```bash
@@ -51,12 +66,17 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   预编译 UMD)、`/dsh-kit/tree?path=…` 只读单层目录列表(官方 browse RPC 只列
   目录不列文件,文件树走这里)、`/dsh-kit/read?path=…` 只读单文件文本内容
   (512 KB 限长 + 二进制探测)。
+- `src/skill-pool.js`:技能管理宿主半边——`GET /dsh-kit/skills` 枚举白名单根
+  (池/用户级/项目级)下的技能并附注册表归属增强,`POST /dsh-kit/skills/op`
+  执行复制/移动/删除(入池回收区)/禁用(frontmatter 双键);源必须是根直接子项、
+  全路径 realpath 后做包含校验。
 - `client/bundle.js`:浏览器半边(手写 ModuleLoader 格式 client bundle,无构建)——
   在 `sidebar.footer.action` 槽位注册终端/文件树两个开关:终端底部停靠面板
   (首次打开按需加载 vendor xterm);文件树临时接管 `sidebar.workspaces` 单槽,
   点击文件后自绘右侧停靠面板预览内容——挂 `body.dshk-pane-open` 类 + `--dshk-pane-w`
   变量,用 CSS 让中列(对话)右移让位(不依赖原生 details 列/ctx.layout,
-  因其 openDetails 固定 360 且 setDetails 对动态插件不可达)。
+  因其 openDetails 固定 360 且 setDetails 对动态插件不可达);另在
+  `settings.section` 槽位注册"技能管理"整页。
 - `cordis.patch.yml`:把 `dsh-kit` 插件行 insert 进 bundle 层。
 - 宿主侧 `node-pty`/`ws` 不声明依赖:运行时从 profile fallback node_modules 解析。
 

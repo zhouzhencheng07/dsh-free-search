@@ -35,6 +35,26 @@ A file-tree toggle at the sidebar foot (next to Settings):
   binary detection) endpoints (same-origin checked; the webserver binds
   loopback only)
 
+### Skill pool management
+
+A new "Skills" page in the settings panel:
+
+- Lists skills grouped by **workspace** (`<project>/.agents/skills`,
+  `.dsh/skills`), **user level** (`$DSH_HOME/skills`, `~/.agents/skills`) and
+  the **skill pool** (`$DSH_HOME/skill-pool` — not a scan root, DSH never reads
+  it; it is purely a shelf for moving skills between workspaces).
+  Plugin-bundled / runtime skills are listed read-only under "Other sources"
+  with their provider/source attribution.
+- Four operations: **copy to / move to** (between any roots, same-name
+  conflicts ask before overwrite), **delete** (moved into the pool's `.trash/`
+  area, never hard-deleted), and **disable/enable** (toggles
+  `disable-model-invocation` + `user-invocable` in the SKILL.md frontmatter —
+  the registry's native mechanism, hot-reloaded via chokidar without restart;
+  plugin-bundled skills have no files to edit, so their actions are disabled)
+- Click any skill to view its content inline. Data flows through host
+  endpoints `/dsh-kit/skills` (listing) and `/dsh-kit/skills/op` (operations),
+  both whitelist-path validated and same-origin checked.
+
 ## Install
 
 ```bash
@@ -62,6 +82,12 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   single-level directory listing (the official browse RPC lists directories
   only, so the file tree uses this), and a read-only `/dsh-kit/read?path=…`
   single-file text reader (512 KB cap + binary detection).
+- `src/skill-pool.js`: skill-management host side — `GET /dsh-kit/skills`
+  enumerates skills under the whitelist roots (pool / user / project) with
+  registry-based attribution enrichment, and `POST /dsh-kit/skills/op` performs
+  copy/move/delete (into the pool trash area)/disable (frontmatter keys).
+  Sources must be direct children of a root and every path is realpath-checked
+  for containment.
 - `client/bundle.js`: browser side (hand-written ModuleLoader-format client
   bundle, no build step) — registers two toggles on the `sidebar.footer.action`
   slot: the terminal (bottom-docked panel, lazy-loading the vendor xterm on
@@ -70,7 +96,8 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   preview panel — a `body.dshk-pane-open` class + `--dshk-pane-w` variable
   shift the conversation column aside via CSS, instead of the native details
   column / `ctx.layout`, because `openDetails()` is fixed at 360 and
-  `setDetails` is unreachable from dynamic plugins).
+  `setDetails` is unreachable from dynamic plugins); plus a full "Skills"
+  page registered on the `settings.section` slot.
 - `cordis.patch.yml`: inserts the `dsh-kit` row into the bundle layer.
 - Host-side `node-pty`/`ws` declare no dependencies: they resolve at runtime
   from the profile fallback node_modules.
