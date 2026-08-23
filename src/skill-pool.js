@@ -328,7 +328,7 @@ export function applySkillPool(ctx, hooks) {
               skill.root = root.id
               skill.rank = root.rank
             }
-            buckets.get(root.group).push({ id: root.id, dir: root.dir, exists, skills })
+            buckets.get(root.group).push({ id: root.id, dir: root.dir, exists, rank: root.rank, skills })
             if (exists) scannedDirs.push(root.dir)
           }
           // 三逻辑组：物理根聚合；同名跨根按 rank（小者优先）标注被覆盖

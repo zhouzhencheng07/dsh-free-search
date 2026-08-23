@@ -45,8 +45,9 @@ A new "Skills" page in the settings panel:
   purely a shelf for moving skills between workspaces). Plugin-bundled /
   runtime skills are listed read-only under "Other sources" with their
   provider/source attribution.
-- One line per skill: name + physical-root badge + truncated description +
-  all actions inline.
+- One line per skill: name + priority badge (e.g. `(200)`; the group head lists
+  roots as `.dsh/skills(100) | .agents/skills(200)` — lower rank wins) +
+  truncated description + all actions inline.
 - Operations: **Copy / Move** (click expands an inline destination picker —
   pick a root to execute; same-name conflicts ask before overwrite),
   **Delete** (permanent, guarded by an inline two-step confirm), and
@@ -60,6 +61,9 @@ A new "Skills" page in the settings panel:
 - Click any skill to view its details inline. Data flows through host
   endpoints `/dsh-kit/skills` (listing) and `/dsh-kit/skills/op` (operations),
   both whitelist-path validated and same-origin checked.
+- The "Skills" nav row uses a self-drawn layers icon (the official navIcon is
+  a hardcoded id map falling back to the gear; this is a cosmetic DOM swap by
+  label text that silently keeps the gear on failure).
 
 ## Install
 

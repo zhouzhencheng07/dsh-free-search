@@ -65,12 +65,13 @@ window.__ModuleLoader__.load({
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
-      skillsLabel: "技能管理",
+      skillsLabel: "技能",
       skRefresh: "刷新",
       skLoading: "加载中…",
       skFail: "加载失败",
       skEmpty: "（此组暂无技能）",
       skNotCreated: "未创建",
+      skRankTip: "所在位置的扫描优先级（数值越小越优先）",
       skWorkspace: "工作区",
       skUserLevel: "用户级",
       skPool: "技能池",
@@ -128,6 +129,7 @@ window.__ModuleLoader__.load({
       skFail: "Failed to load",
       skEmpty: "(no skills here)",
       skNotCreated: "not created",
+      skRankTip: "Scan priority of this location (lower wins)",
       skWorkspace: "Workspace",
       skUserLevel: "User level",
       skPool: "Skill pool",
@@ -1072,6 +1074,49 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return groupId === "user" ? t("skUserLevel") : t("skWorkspace");
     }
 
+    // ── 设置导航图标：官方 navIcon(id) 硬编码映射（models/agent-presets/plugins），
+    // 未知 id 一律回退齿轮。没有注册缝，这里按标签文字找到"技能"行，把行内第一个
+    // svg 换成自绘分层图标——纯外观增强：任何一步失败都静默保持齿轮。
+    const SKILL_ICON_HTML =
+      '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/>' +
+      '<path d="M1.8 8.1 8 11.2l6.2-3.1"/>' +
+      '<path d="M1.8 11.3 8 14.4l6.2-3.1"/>' +
+      "</svg>";
+
+    let iconSwapPending = false;
+    function swapSkillNavIcon() {
+      try {
+        const label = t("skillsLabel");
+        const rows = document.querySelectorAll('[role="dialog"][aria-modal="true"] nav button');
+        for (const row of rows) {
+          const span = row.querySelector("span");
+          if (!span || span.textContent !== label) continue;
+          const current = row.querySelector("svg");
+          if (!current || current.getAttribute("data-dshk-skill") === "1") return;
+          const holder = document.createElement("span");
+          holder.innerHTML = SKILL_ICON_HTML;
+          const icon = holder.firstElementChild;
+          if (!icon) return;
+          icon.setAttribute("data-dshk-skill", "1");
+          current.replaceWith(icon);
+          return;
+        }
+      } catch {
+        // 外观增强失败即保持默认齿轮
+      }
+    }
+    function scheduleSkillIconSwap() {
+      if (iconSwapPending) return;
+      iconSwapPending = true;
+      window.setTimeout(() => {
+        iconSwapPending = false;
+        swapSkillNavIcon();
+        window.setTimeout(swapSkillNavIcon, 250); // React 重渲染后的二次补换
+      }, 60);
+    }
+
     function SkillContent({ file }) {
       const [state, setState] = react.useState({ phase: "loading", text: "" });
       react.useEffect(() => {
@@ -1150,7 +1195,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             className: "dshk-sk-row",
             children: [
               jsxRuntime.jsx("span", { className: "dshk-sk-name", "data-disabled": skill.disabled || undefined, children: skill.name }),
-              groupId !== "pool" ? jsxRuntime.jsx("span", { className: "dshk-sk-badge", title: skRootShort(skill.root), children: skRootShort(skill.root) }) : null,
+              groupId !== "pool" && typeof skill.rank === "number"
+                ? jsxRuntime.jsx("span", { className: "dshk-sk-badge", title: `${skRootShort(skill.root)} · ${t("skRankTip")}`, children: `(${skill.rank})` })
+                : null,
               skill.disabled ? jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", children: t("skDisabled") }) : null,
               skill.shadowed ? jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", title: t("skShadowTip"), children: t("skShadowed") }) : null,
               typeof skill.description === "string" && skill.description !== ""
@@ -1284,8 +1331,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                         className: "dshk-sk-group-dir",
                         title: group.roots.map((root) => root.dir).join("\n"),
                         children: group.roots
-                          .map((root) => `${skRootShort(root.id)}${root.exists ? "" : `（${t("skNotCreated")}）`}`)
-                          .join(" · "),
+                          .map((root) =>
+                            root.id === "pool"
+                              ? `${root.dir}${root.exists ? "" : `（${t("skNotCreated")}）`}`
+                              : `${skRootShort(root.id)}(${root.rank})${root.exists ? "" : `（${t("skNotCreated")}）`}`,
+                          )
+                          .join(" | "),
                       }),
                     ],
                   }),
@@ -1332,13 +1383,15 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           FileTreeDock,
         ),
       );
-      // 设置面板新增整页（settings.section 列表槽）：技能管理（M1 技能池）
+      // 设置面板新增整页（settings.section 列表槽）：技能（M1 技能池）
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
           { name: "settings.section", id: "kit-skills", order: 40, label: () => t("skillsLabel") },
           SkillsManager,
         ),
       );
+      // 导航图标替换是点击驱动的轻量方案：打开设置/面板内切换都源于一次 click
+      document.addEventListener("click", scheduleSkillIconSwap, true);
     }
 
     exports.inject = ["slots"];
