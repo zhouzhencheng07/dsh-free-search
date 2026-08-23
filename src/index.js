@@ -550,7 +550,9 @@ export function apply(ctx) {
             return
           }
           ;(async () => {
-            const r = await runGit(['status', '--porcelain'], root)
+            // core.quotePath=false：porcelain 对非 ASCII 路径默认输出带引号的八进制
+            // 转义（如 "\346\234\233..."），关掉后输出原始 UTF-8 路径
+            const r = await runGit(['-c', 'core.quotePath=false', 'status', '--porcelain'], root)
             if (!r.ok) {
               json(200, { available: false })
               return
@@ -573,7 +575,7 @@ export function apply(ctx) {
               entries.push({ xy, path: p, abs: path.join(root, p) })
             }
             if (untrackedDirs.length > 0) {
-              const u = await runGit(['ls-files', '--others', '--exclude-standard', '--', ...untrackedDirs], root)
+              const u = await runGit(['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '--', ...untrackedDirs], root)
               if (u.ok) {
                 for (const f of u.out.split('\n')) {
                   const relFile = f.trim()
