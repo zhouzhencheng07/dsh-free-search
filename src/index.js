@@ -584,6 +584,18 @@ export function apply(ctx) {
                 }
               }
             }
+            // ±N 行数统计：一次 numstat 相对 HEAD 合并进条目（未跟踪文件不在其中，
+            // 无统计；二进制行为 "- - path" 跳过；重命名路径格式特殊，允许缺失）
+            const n = await runGit(['-c', 'core.quotePath=false', 'diff', 'HEAD', '--numstat'], root)
+            if (n.ok) {
+              const statMap = new Map()
+              for (const line of n.out.split('\n')) {
+                const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line)
+                if (!m || m[1] === '-' || m[2] === '-') continue
+                statMap.set(m[3], { a: Number(m[1]), d: Number(m[2]) })
+              }
+              for (const e of entries) e.stats = statMap.get(e.path) ?? null
+            }
             json(200, { available: true, root, entries })
           })()
         },

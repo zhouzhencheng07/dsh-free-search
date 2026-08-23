@@ -480,6 +480,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-gitbadge[data-k="M"]{color:#e2c08d}
 .dshk-gitbadge[data-k="R"]{color:#4daafc}
 .dshk-gitbadge[data-k="D"]{color:#e7757f}
+/* ±N 行数统计（更改清单行内） */
+.dshk-nums{flex:none;display:inline-flex;gap:4px;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:14px}
+.dshk-nadd{color:#73c991}
+.dshk-ndel{color:#e7757f}
 /* 「更改」清单（VSCode 源代码管理式） */
 .dshk-changes{margin:2px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
 .dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:11px}
@@ -1067,6 +1071,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                     children: [
                       jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
                       dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
+                      item.stats
+                        ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
+                            jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
+                            jsxRuntime.jsx("span", { className: "dshk-ndel", children: `−${item.stats.d}` }),
+                          ] })
+                        : null,
                       jsxRuntime.jsx(GitBadge, { xy: item.xy }),
                     ],
                   },
