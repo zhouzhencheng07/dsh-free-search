@@ -19,10 +19,15 @@
   ],
   "keywords": [
     "dsh",
+    "deepseek",
     "deepseek-harness",
+    "dsh-plugin",
     "plugin",
     "terminal",
-    "file-tree"
+    "file-tree",
+    "skills",
+    "skill-pool",
+    "settings"
   ],
   "dsh": {
     "bundle": {
