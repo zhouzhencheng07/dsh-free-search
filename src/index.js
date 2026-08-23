@@ -199,6 +199,7 @@ export function apply(ctx) {
     const Config = z.object({
       terminalEnabled: z.boolean().default(true),
       fileTreeEnabled: z.boolean().default(true),
+      sourceControlEnabled: z.boolean().default(true),
       skillsPageEnabled: z.boolean().default(true),
       terminalShortcut: z.string().default('Ctrl+`'),
       fileTreeShortcut: z.string().default('Ctrl+E'),

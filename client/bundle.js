@@ -62,6 +62,7 @@ window.__ModuleLoader__.load({
     const CFG_DEFAULTS = {
       terminalEnabled: true,
       fileTreeEnabled: true,
+      sourceControlEnabled: true,
       skillsPageEnabled: true,
       terminalShortcut: "Ctrl+`",
       fileTreeShortcut: "Ctrl+E",
@@ -115,6 +116,7 @@ window.__ModuleLoader__.load({
       return {
         terminalEnabled: v.terminalEnabled !== false,
         fileTreeEnabled: v.fileTreeEnabled !== false,
+        sourceControlEnabled: v.sourceControlEnabled !== false,
         skillsPageEnabled: v.skillsPageEnabled !== false,
         terminalShortcut:
           typeof v.terminalShortcut === "string" && parseCombo(v.terminalShortcut)
@@ -145,10 +147,8 @@ window.__ModuleLoader__.load({
       code: "代码",
       restart: "重新启动终端",
       close: "关闭终端面板",
-      toggle: "切换终端（Ctrl+`）",
       vendorFail: "终端组件加载失败",
       treeLabel: "文件树",
-      treeToggle: "切换文件树（Ctrl+E）",
       treeClose: "关闭文件树",
       treeRefresh: "刷新",
       treeLoading: "加载中…",
@@ -234,6 +234,8 @@ window.__ModuleLoader__.load({
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
       cfgFileTreeShortcutHint: "切换文件树的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
+      cfgSourceControlEnabled: "启用源代码管理",
+      cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
       cfgScShortcut: "源代码管理快捷键",
       cfgScShortcutHint: "切换源代码管理视图的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgCapturing: "按下组合键…（Esc 取消）",
@@ -257,10 +259,8 @@ window.__ModuleLoader__.load({
       code: "code",
       restart: "Restart terminal",
       close: "Close terminal panel",
-      toggle: "Toggle terminal (Ctrl+`)",
       vendorFail: "Failed to load terminal components",
       treeLabel: "Files",
-      treeToggle: "Toggle file tree (Ctrl+E)",
       treeClose: "Close file tree",
       treeRefresh: "Refresh",
       treeLoading: "Loading…",
@@ -346,6 +346,8 @@ window.__ModuleLoader__.load({
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
       cfgFileTreeShortcutHint: "Combo that toggles the file tree; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
+      cfgSourceControlEnabled: "Enable source control",
+      cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
       cfgScShortcut: "Source control shortcut",
       cfgScShortcutHint: "Combo that toggles the source control view; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgCapturing: "Press a combo… (Esc to cancel)",
@@ -485,7 +487,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cfg-chev[data-open]{transform:rotate(180deg)}
 .dshk-cfg-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}
 .dshk-cfg-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}
-.dshk-cfg-field ~ .dshk-cfg-field{border-top:1px solid var(--dsw-alias-border-l2)}
+.dshk-cfg-group ~ .dshk-cfg-group{border-top:1px solid var(--dsw-alias-border-l2)}
+.dshk-cfg-sub{margin-left:14px}
 .dshk-cfg-fhead{display:flex;align-items:center;gap:8px}
 .dshk-cfg-label{flex:1;min-width:0;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}
 .dshk-cfg-badges{display:inline-flex;align-items:center;gap:8px;flex:none;height:19px}
@@ -1705,7 +1708,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         type: "button",
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": ui.terminalOpen,
-        title: t("toggle"),
+        title: t("label"),
         onClick: () => {
           // 打开那一刻固定当时的会话工作区；面板存续期间不受会话/工作区切换影响，
           // 关闭（✕）即结束该 shell。
@@ -1722,7 +1725,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         type: "button",
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": ui.treeOpen,
-        title: t("treeToggle"),
+        title: t("treeLabel"),
         onClick: () => {
           // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表
           setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null, openFrom: null });
@@ -1766,7 +1769,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           // 入口排序（左→右）：文件树、源代码管理、终端
           ["filetree", cfg.fileTreeEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-filetree", order: 10 }, FileTreeEntry)],
-          ["scm", true, () =>
+          ["scm", cfg.sourceControlEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-scm", order: 11 }, ScmEntry)],
           ["terminal", cfg.terminalEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 12 }, TerminalEntry)],
@@ -1794,6 +1797,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           }
         };
       }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.skillsPageEnabled]);
+
+      // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉
+      react.useEffect(() => {
+        if (!cfg.terminalEnabled && ui.terminalOpen) setKitUi({ terminalOpen: false });
+        if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
+        if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
+      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled]);
 
       // 侧边栏浏览区占用：文件树与「更改」视图互斥共享 sidebar.workspaces 单槽
       // （gitOpen 时切换到更改页，✕ 关闭回到仍处打开状态的文件树）。
@@ -1863,7 +1873,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null, openFrom: null });
             return;
           }
-          if (scCombo && comboMatches(e, scCombo)) {
+          if (scCombo && cfg.sourceControlEnabled && comboMatches(e, scCombo)) {
             e.preventDefault();
             e.stopPropagation();
             // 源代码管理同语义：非 SCM 态 → 打开（收起文件树）；已是 → 关闭回会话列表
@@ -1893,7 +1903,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           ui.terminalOpen && cfg.terminalEnabled
             ? jsxRuntime.jsx(TerminalPanel, { cwd: ui.termCwd, onClose: () => setKitUi({ terminalOpen: false }) })
             : null,
-          ui.openFile && (ui.openFrom === "scm" || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
+          ui.openFile && ((ui.openFrom === "scm" && cfg.sourceControlEnabled) || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
             ? jsxRuntime.jsx(FileContentPane, {
                 path: ui.openFile,
                 source: ui.openFrom ?? "tree",
@@ -2256,10 +2266,18 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     const CFG_FIELDS = [
       { key: "terminalEnabled", kind: "bool" },
       { key: "fileTreeEnabled", kind: "bool" },
+      { key: "sourceControlEnabled", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
       { key: "scShortcut", kind: "combo" },
+    ];
+    // 分组渲染：开关行 + 该功能启用时才显示的子配置（所见即所得，保存才落盘生效）
+    const CFG_GROUPS = [
+      { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
+      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
+      { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
+      { switchKey: "skillsPageEnabled", fields: [] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>
@@ -2433,7 +2451,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               })
             : null;
 
-        const renderField = (field) => {
+        const renderField = (field, isSub) => {
           const spec = cfgSpec[field];
           const state = fieldState(field);
           const control =
@@ -2454,7 +2472,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                   children: capturing === field ? t("cfgCapturing") : state.text,
                 });
           return jsxRuntime.jsxs("div", {
-            className: "dshk-cfg-field",
+            className: isSub ? "dshk-cfg-field dshk-cfg-sub" : "dshk-cfg-field",
             children: [
               jsxRuntime.jsxs("div", {
                 className: "dshk-cfg-fhead",
@@ -2517,7 +2535,23 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                     available && !writable
                       ? jsxRuntime.jsx("p", { className: "dshk-cfg-status", role: "status", children: t("readOnly") })
                       : null,
-                    available ? CFG_FIELDS.map((f) => renderField(f.key)) : null,
+                    available
+                      ? CFG_GROUPS.map((group) => {
+                          // 勾选启用才展开该功能的子配置（草稿态即时显隐，保存落盘生效）
+                          const on = fieldState(group.switchKey).text === "true";
+                          return jsxRuntime.jsxs(
+                            "div",
+                            {
+                              className: "dshk-cfg-group",
+                              children: [
+                                renderField(group.switchKey),
+                                on ? group.fields.map((f) => renderField(f, true)) : null,
+                              ],
+                            },
+                            group.switchKey,
+                          );
+                        })
+                      : null,
                     available
                       ? jsxRuntime.jsxs("div", {
                           className: "dshk-cfg-footer",
