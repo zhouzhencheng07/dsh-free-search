@@ -246,6 +246,7 @@ window.__ModuleLoader__.load({
       treeEmpty: "(empty)",
       treeFail: "Failed to load",
       treeTruncated: "Too many entries, list truncated",
+      chgTitle: "Changes",
       contentClose: "Close preview",
       contentDiff: "View diff",
       contentText: "Back to text",
@@ -479,6 +480,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-gitbadge[data-k="M"]{color:#e2c08d}
 .dshk-gitbadge[data-k="R"]{color:#4daafc}
 .dshk-gitbadge[data-k="D"]{color:#e7757f}
+/* 「更改」清单（VSCode 源代码管理式） */
+.dshk-changes{margin:2px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
+.dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:11px}
 .dshk-diff{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;padding:4px 0;white-space:pre;overflow-x:auto;user-select:text;color:var(--dsw-alias-label-secondary)}
 .dshk-diff-add{color:#0dbc79;background:rgba(13,188,121,.08)}
 .dshk-diff-del{color:#cd3131;background:rgba(205,49,49,.08)}
@@ -811,6 +815,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
+    /** git 状态轮询周期（①+③ 刷新机制）：可见时低频拉取，回窗口/聚焦立即补一次 */
+    const GIT_POLL_MS = 4000;
+
     function FolderIcon() {
       return jsxRuntime.jsx(
         "svg",
@@ -907,9 +914,35 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       // expanded: 路径 → 目录单层状态；根目录就是 cwd
       const [expanded, setExpanded] = react.useState({});
       const [nonce, setNonce] = react.useState(0);
-      // git 状态：绝对路径 → xy（任务4）；null = 未加载，空 Map = 非 git/无变更
+      // git 状态：绝对路径 → xy；null = 未加载，空 Map = 非 git/无变更
       const [gitMap, setGitMap] = react.useState(null);
+      const [gitRoot, setGitRoot] = react.useState(null);
       const abortsRef = react.useRef(new Set());
+      // 拉取 git 状态落到 gitMap/gitRoot；每次渲染重赋以捕获最新 cwd
+      const gitFetchRef = react.useRef(null);
+      gitFetchRef.current = () => {
+        if (!cwd) return;
+        const c = new AbortController();
+        abortsRef.current.add(c);
+        fetchGitStatus(cwd, c.signal)
+          .then((gitBody) => {
+            abortsRef.current.delete(c);
+            if (c.signal.aborted) return;
+            if (!gitBody.available) {
+              setGitMap(new Map());
+              setGitRoot(null);
+              return;
+            }
+            const m = new Map();
+            for (const e of gitBody.entries ?? []) m.set(e.abs, e.xy);
+            setGitMap(m);
+            setGitRoot(gitBody.root ?? null);
+          })
+          .catch(() => {
+            abortsRef.current.delete(c);
+            if (!c.signal.aborted) setGitMap(new Map());
+          });
+      };
 
       const loadDir = (dirPath) => {
         const controller = new AbortController();
@@ -941,30 +974,32 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         }
         setExpanded({ [cwd]: { status: "loading" } });
         loadDir(cwd);
-        // 任务4：打开/刷新时拉一次 git 状态做徽标
+        // 打开/⟳ 时立即拉一次 git 状态（此后由轮询 effect 接管）
         setGitMap(null);
-        const gc = new AbortController();
-        abortsRef.current.add(gc);
-        fetchGitStatus(cwd, gc.signal)
-          .then((gitBody) => {
-            if (gc.signal.aborted) return;
-            if (!gitBody.available) {
-              setGitMap(new Map());
-              return;
-            }
-            const m = new Map();
-            for (const e of gitBody.entries ?? []) m.set(e.abs, e.xy);
-            setGitMap(m);
-          })
-          .catch(() => {
-            if (!gc.signal.aborted) setGitMap(new Map());
-          })
-          .finally(() => abortsRef.current.delete(gc));
+        setGitRoot(null);
+        if (gitFetchRef.current) gitFetchRef.current();
         return () => {
           abortsRef.current.forEach((c) => c.abort());
           abortsRef.current.clear();
         };
       }, [cwd, nonce]);
+
+      // 刷新机制（①+③，用户定 2026-08-23）：面板可见时每 GIT_POLL_MS 拉一次
+      // git 状态；标签页转回可见 / 窗口聚焦时立即补一次。隐藏时完全静默。
+      react.useEffect(() => {
+        if (!cwd) return undefined;
+        const tick = () => {
+          if (document.visibilityState !== "hidden" && gitFetchRef.current) gitFetchRef.current();
+        };
+        const timer = window.setInterval(tick, GIT_POLL_MS);
+        document.addEventListener("visibilitychange", tick);
+        window.addEventListener("focus", tick);
+        return () => {
+          window.clearInterval(timer);
+          document.removeEventListener("visibilitychange", tick);
+          window.removeEventListener("focus", tick);
+        };
+      }, [cwd]);
 
       const toggleDir = (entry) => {
         setExpanded((m) => {
@@ -979,6 +1014,53 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       };
 
       const rootInfo = cwd ? expanded[cwd] : undefined;
+
+      /** 「更改」清单（VSCode 源代码管理式）：所有脏文件，点击直达预览+diff */
+      const changeList = [];
+      if (gitMap && gitMap.size > 0) {
+        for (const [abs, xy] of gitMap) changeList.push({ abs, xy });
+      }
+      const renderChanges = () => {
+        if (changeList.length === 0) return null;
+        return jsxRuntime.jsxs(
+          "div",
+          {
+            className: "dshk-changes",
+            children: [
+              jsxRuntime.jsxs("div", {
+                className: "dshk-chg-head",
+                children: [
+                  jsxRuntime.jsx("span", { children: t("chgTitle") }),
+                  jsxRuntime.jsx("span", { className: "dshk-sk-status", children: String(changeList.length) }),
+                ],
+              }),
+              changeList.map((item) => {
+                const rel =
+                  gitRoot && item.abs.startsWith(gitRoot)
+                    ? item.abs.slice(gitRoot.length).replace(/^[\\/]/, "")
+                    : item.abs;
+                const segs = rel.split(/[\\/]/);
+                const name = segs[segs.length - 1];
+                const dir = segs.slice(0, -1).join("/");
+                return jsxRuntime.jsxs(
+                  "div",
+                  {
+                    className: "dshk-row dshk-chg-row",
+                    title: item.abs,
+                    onClick: () => onOpenFile(item.abs),
+                    children: [
+                      jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
+                      dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
+                      jsxRuntime.jsx(GitBadge, { xy: item.xy }),
+                    ],
+                  },
+                  item.abs,
+                );
+              }),
+            ],
+          },
+        );
+      };
 
       return jsxRuntime.jsxs("div", {
         className: "dshk-tree",
@@ -1000,8 +1082,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           }),
           jsxRuntime.jsx("div", {
             className: "dshk-tree-body",
-            children:
-              !cwd
+            children: jsxRuntime.jsxs(jsxRuntime.Fragment, {
+              children: [
+                renderChanges(),
+                !cwd
                 ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("noCwd") })
                 : !rootInfo || rootInfo.status === "loading"
                   ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
@@ -1018,6 +1102,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                               : null,
                           ],
                         }),
+              ],
+            }),
           }),
         ],
       });
@@ -1036,6 +1122,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const [xy, setXy] = react.useState(null);
       const [mode, setMode] = react.useState("text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
+      const [diffNonce, setDiffNonce] = react.useState(0);
       // 任务3：编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
       const [draft, setDraft] = react.useState("");
@@ -1045,21 +1132,39 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const widthRef = react.useRef(0);
       const dragRef = react.useRef(null);
 
-      // 路径切换：重置视图与 git 状态；拉一次该文件在项目里的 git 状态
-      react.useEffect(() => {
-        setMode("text");
-        setXy(null);
-        setDiff({ phase: "loading" });
-        if (!cwd) return undefined;
+      // git 状态获取（轮询版）：路径/打开时立即一次，可见期间每 GIT_POLL_MS 跟随，
+      // 转回可见/聚焦立即补；处于 diff 视图时顺带重拉 diff，AI 边改边看也能跟上
+      const xyFetchRef = react.useRef(null);
+      xyFetchRef.current = () => {
+        if (!cwd) return;
         const c = new AbortController();
         fetchGitStatus(cwd, c.signal)
           .then((b) => {
             if (c.signal.aborted || !b.available) return;
             const hit = (b.entries ?? []).find((e) => e.abs === path);
-            if (hit) setXy(hit.xy);
+            setXy(hit ? hit.xy : null);
           })
           .catch(() => {});
-        return () => c.abort();
+      };
+      react.useEffect(() => {
+        setMode("text");
+        setXy(null);
+        setDiff({ phase: "loading" });
+        if (!cwd) return undefined;
+        if (xyFetchRef.current) xyFetchRef.current();
+        const tick = () => {
+          if (document.visibilityState === "hidden") return;
+          if (xyFetchRef.current) xyFetchRef.current();
+          if (mode === "diff") setDiffNonce((n) => n + 1);
+        };
+        const timer = window.setInterval(tick, GIT_POLL_MS);
+        document.addEventListener("visibilitychange", tick);
+        window.addEventListener("focus", tick);
+        return () => {
+          window.clearInterval(timer);
+          document.removeEventListener("visibilitychange", tick);
+          window.removeEventListener("focus", tick);
+        };
       }, [path, cwd]);
 
       // diff 懒加载：切到 diff 视图才请求
@@ -1081,7 +1186,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             if (!c.signal.aborted) setDiff({ phase: "error", error: String(error?.message ?? error) });
           });
         return () => c.abort();
-      }, [mode, path, cwd]);
+      }, [mode, path, cwd, diffNonce]);
 
       // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
       // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
@@ -1244,6 +1349,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             setState((s) => ({ ...s, body: { ...s.body, content: draft, mtimeMs: typeof b.mtimeMs === "number" ? b.mtimeMs : s.body.mtimeMs } }));
             setEditing(false);
             flashToast(t("editSaved"));
+            if (xyFetchRef.current) xyFetchRef.current(); // 保存后立即刷新 git 状态（⇄ 出现）
           })
           .catch((error) => {
             flashToast(`${t("editFail")}：${error?.message ?? error}`);

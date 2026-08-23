@@ -571,7 +571,8 @@ export function apply(ctx) {
       })
 
       // GET /dsh-kit/git/diff?path=<绝对文件>&cwd=<工作目录> →
-      //   {available:true, diff:<原文>}；未跟踪 {available:true, untracked:true}；
+      //   {available:true, diff:<原文>}——基线为 git diff HEAD，即相对上次提交的
+      //   全部未提交改动（含已暂存）；未跟踪 {available:true, untracked:true}；
       //   无变更 {available:true, clean:true}
       const disposeGitDiff = webCtx.webServer.register({
         kind: 'exact',
@@ -621,7 +622,7 @@ export function apply(ctx) {
               json(200, { available: true, untracked: true })
               return
             }
-            runGit(['diff', '--', rel], root).then((d) => {
+            runGit(['diff', 'HEAD', '--', rel], root).then((d) => {
               json(200, { available: true, xy: line.slice(0, 2), diff: d.ok ? d.out : null })
             })
           })
