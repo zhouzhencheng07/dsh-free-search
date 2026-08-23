@@ -51,8 +51,9 @@ function dshHome() {
   return env && env.trim() !== '' ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
-/** 自 start 向上找 .git（目录或文件都算），找不到退回 start 本身（对齐 skill-filesystem 语义） */
-function findProjectRoot(start) {
+/** 自 start 向上找 .git（目录或文件都算），找不到退回 start 本身（对齐 skill-filesystem 语义）。
+ *  任务4 的 git 端点也用它定位项目根。 */
+export function findProjectRoot(start) {
   let current = start
   for (;;) {
     try {
