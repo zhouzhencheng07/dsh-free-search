@@ -1,4 +1,4 @@
-// dsh-kit 技能池宿主半边（M1）
+// dsh-kit 技能池宿主半边（M1.1）
 //
 // 设计稿：docs/dsh-kit-next-features.md §1。技能池 $DSH_HOME/skill-pool 不挂任何
 // 扫描根（DSH 不会把它当技能源），只作为工作区之间流通的仓库货架；本模块提供
@@ -6,12 +6,14 @@
 //
 // 端点（同源校验同 index.js；webserver 默认只绑 loopback）：
 //   GET  /dsh-kit/skills?cwd=<会话cwd>
-//       枚举白名单根下的文件系统技能（含禁用态），并附注册表中非白名单来源的
-//       技能（插件自带/运行时/custom 目录——只读展示）。cwd 缺省时不含项目组。
+//       按三个逻辑组返回：workspace（.dsh/.agents 两根聚合）、user（$DSH_HOME 与
+//       ~/.agents 两根聚合）、pool。每个技能带 root（物理根）、rank（DSH 扫描
+//       优先级，越小越优先）、shadowed（同名跨根时非最优者）。另附注册表中非
+//       白名单来源的技能（插件自带/运行时/custom 目录——只读展示）。
 //   POST /dsh-kit/skills/op   body 为 JSON：
-//       {op:'copy',  src, dest, overwrite?}   复制到目标根（dest=根id）
+//       {op:'copy',  src, dest, overwrite?}   复制到目标根（dest=物理根 id）
 //       {op:'move',  src, dest, overwrite?}   复制校验后移除源（数据先落目标再撤源）
-//       {op:'delete', src}                    移入 <pool>/.trash/<时间戳>-<名>，不直删
+//       {op:'delete', src}                    直接永久删除（客户端两步确认兜底）
 //       {op:'disable', src, disabled}         改 SKILL.md frontmatter 双键：
 //                                             disable-model-invocation:true +
 //                                             user-invocable:false（chokidar 热生效）；
@@ -28,10 +30,21 @@ import os from 'node:os'
 import path from 'node:path'
 
 const POOL_DIRNAME = 'skill-pool'
-const TRASH_DIRNAME = '.trash'
 
-/** 根 id 常量（与浏览器半边约定一致） */
-export const ROOT_IDS = ['pool', 'user-dsh', 'user-agents', 'project-agents', 'project-dsh']
+/**
+ * 物理根定义：group = 所属逻辑分组；rank = DSH 扫描优先级（数值越小越优先，
+ * 对齐 dsh-skill-filesystem 的 roots() 常量；pool 不是扫描根，不参与排序）。
+ */
+const PHYSICAL_ROOTS = [
+  { id: 'project-dsh', group: 'workspace', rank: 100 },
+  { id: 'project-agents', group: 'workspace', rank: 200 },
+  { id: 'user-dsh', group: 'user', rank: 400 },
+  { id: 'user-agents', group: 'user', rank: 500 },
+  { id: 'pool', group: 'pool', rank: null },
+]
+
+/** 逻辑分组展示顺序：工作区 → 用户级 → 技能池 */
+const GROUP_ORDER = ['workspace', 'user', 'pool']
 
 function dshHome() {
   const env = process.env.DSH_HOME
@@ -53,24 +66,24 @@ function findProjectRoot(start) {
   }
 }
 
-/** 解析全部白名单根；cwd 缺省则无项目组 */
+/** 解析全部白名单物理根（带逻辑分组与 rank）；cwd 缺省则无项目组 */
 export function resolveRoots(cwd) {
   const home = dshHome()
-  const roots = [
-    { id: 'pool', dir: path.join(home, POOL_DIRNAME) },
-    { id: 'user-dsh', dir: path.join(home, 'skills') },
-    { id: 'user-agents', dir: path.join(os.homedir(), '.agents', 'skills') },
-  ]
+  const dirById = {
+    pool: path.join(home, POOL_DIRNAME),
+    'user-dsh': path.join(home, 'skills'),
+    'user-agents': path.join(os.homedir(), '.agents', 'skills'),
+  }
   if (typeof cwd === 'string' && cwd.trim() !== '') {
     try {
       const projectRoot = findProjectRoot(fs.realpathSync(path.resolve(cwd.trim())))
-      roots.push({ id: 'project-agents', dir: path.join(projectRoot, '.agents', 'skills') })
-      roots.push({ id: 'project-dsh', dir: path.join(projectRoot, '.dsh', 'skills') })
+      dirById['project-agents'] = path.join(projectRoot, '.agents', 'skills')
+      dirById['project-dsh'] = path.join(projectRoot, '.dsh', 'skills')
     } catch {
       // cwd 非法就没有项目组
     }
   }
-  return roots
+  return PHYSICAL_ROOTS.filter((def) => dirById[def.id] !== undefined).map((def) => ({ ...def, dir: dirById[def.id] }))
 }
 
 function isDir(p) {
@@ -306,18 +319,35 @@ export function applySkillPool(ctx, hooks) {
           const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
           const cwd = url.searchParams.get('cwd') ?? ''
           const roots = resolveRoots(cwd)
-          const groups = []
           const scannedDirs = []
-          const scannedEntries = new Set()
+          const buckets = new Map(GROUP_ORDER.map((id) => [id, []]))
           for (const root of roots) {
             const exists = isDir(root.dir)
             const skills = exists ? scanRoot(root) : []
             for (const skill of skills) {
-              scannedEntries.add(skill.path.toLowerCase())
-              scannedEntries.add((skill.file ?? '').toLowerCase())
+              skill.root = root.id
+              skill.rank = root.rank
             }
+            buckets.get(root.group).push({ id: root.id, dir: root.dir, exists, skills })
             if (exists) scannedDirs.push(root.dir)
-            groups.push({ id: root.id, dir: root.dir, exists, skills })
+          }
+          // 三逻辑组：物理根聚合；同名跨根按 rank（小者优先）标注被覆盖
+          const groups = GROUP_ORDER.map((id) => {
+            const rootsOf = buckets.get(id)
+            return { id, roots: rootsOf, skills: rootsOf.flatMap((r) => r.skills) }
+          })
+          const winner = new Map()
+          for (const group of groups) {
+            for (const skill of group.skills) {
+              if (typeof skill.rank !== 'number') continue
+              const cur = winner.get(skill.name)
+              if (cur === undefined || skill.rank < cur) winner.set(skill.name, skill.rank)
+            }
+          }
+          for (const group of groups) {
+            for (const skill of group.skills) {
+              skill.shadowed = typeof skill.rank === 'number' && winner.get(skill.name) < skill.rank
+            }
           }
           // 注册表增强：插件自带 / 运行时 / custom 等不在白名单根里的技能，只读展示。
           const providers = []
@@ -422,18 +452,9 @@ export function applySkillPool(ctx, hooks) {
                 jsonOf(res, 400, { error: '源不是白名单根下的技能条目' })
                 return
               }
-              const trashDir = path.join(dshHome(), POOL_DIRNAME, TRASH_DIRNAME)
-              fs.mkdirSync(trashDir, { recursive: true })
-              const name = path.basename(located.real)
-              const target = path.join(trashDir, `${Date.now()}-${name}`)
-              try {
-                fs.renameSync(located.real, target)
-              } catch {
-                // 跨盘等场景退化为复制后移除
-                fs.cpSync(located.real, target, { recursive: true })
-                fs.rmSync(located.real, { recursive: true, force: true })
-              }
-              jsonOf(res, 200, { ok: true, op: 'delete', trashedTo: target })
+              // 直接永久删除（客户端两步确认兜底误触）
+              fs.rmSync(located.real, { recursive: true, force: true })
+              jsonOf(res, 200, { ok: true, op: 'delete' })
               return
             }
 

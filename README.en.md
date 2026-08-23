@@ -39,19 +39,25 @@ A file-tree toggle at the sidebar foot (next to Settings):
 
 A new "Skills" page in the settings panel:
 
-- Lists skills grouped by **workspace** (`<project>/.agents/skills`,
-  `.dsh/skills`), **user level** (`$DSH_HOME/skills`, `~/.agents/skills`) and
-  the **skill pool** (`$DSH_HOME/skill-pool` — not a scan root, DSH never reads
-  it; it is purely a shelf for moving skills between workspaces).
-  Plugin-bundled / runtime skills are listed read-only under "Other sources"
-  with their provider/source attribution.
-- Four operations: **copy to / move to** (between any roots, same-name
-  conflicts ask before overwrite), **delete** (moved into the pool's `.trash/`
-  area, never hard-deleted), and **disable/enable** (toggles
-  `disable-model-invocation` + `user-invocable` in the SKILL.md frontmatter —
-  the registry's native mechanism, hot-reloaded via chokidar without restart;
-  plugin-bundled skills have no files to edit, so their actions are disabled)
-- Click any skill to view its content inline. Data flows through host
+- **Three groups**: **Workspace** (`.agents/skills` + `.dsh/skills` merged),
+  **User level** (`$DSH_HOME/skills`, `~/.agents/skills`) and the
+  **Skill pool** (`$DSH_HOME/skill-pool` — not a scan root, DSH never reads it;
+  purely a shelf for moving skills between workspaces). Plugin-bundled /
+  runtime skills are listed read-only under "Other sources" with their
+  provider/source attribution.
+- One line per skill: name + physical-root badge + truncated description +
+  all actions inline.
+- Operations: **Copy / Move** (click expands an inline destination picker —
+  pick a root to execute; same-name conflicts ask before overwrite),
+  **Delete** (permanent, guarded by an inline two-step confirm), and
+  **Disable/Enable** (toggles `disable-model-invocation` + `user-invocable`
+  in the SKILL.md frontmatter — the registry's native mechanism, hot-reloaded
+  via chokidar; pool skills offer no disable since the pool is never scanned;
+  plugin-bundled skills have no files to edit, so their actions are disabled).
+- **Priority visualization**: DSH resolves same-name skills by scan-root rank
+  (`.dsh`(100) > `.agents`(200) > `$DSH_HOME`(400) > `~/.agents`(500));
+  shadowed copies get a dashed "Shadowed" badge with a hover explanation.
+- Click any skill to view its details inline. Data flows through host
   endpoints `/dsh-kit/skills` (listing) and `/dsh-kit/skills/op` (operations),
   both whitelist-path validated and same-origin checked.
 

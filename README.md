@@ -31,15 +31,20 @@ VSCode 风格的页内终端：
 
 设置面板新增"技能管理"页，把分散的技能收进一个可操作的界面：
 
-- 分组列出：**工作区**（`<项目>/.agents/skills`、`.dsh/skills`）、**用户级**
-  （`$DSH_HOME/skills`、`~/.agents/skills`）、**技能池**（`$DSH_HOME/skill-pool`，
-  不挂扫描根、DSH 不扫描，纯流通货架）；插件自带/运行时来源的技能以只读方式
-  列在"其他来源"，归属（provider/source）照实标注
-- 四个操作：**复制到 / 移动到**（任意根之间转移，同名冲突先确认再覆盖）、
-  **删除**（移入池内 `.trash/` 回收区，不直删）、**禁用/启用**（改 SKILL.md
-  frontmatter 的 `disable-model-invocation` + `user-invocable` 双键——注册表
-  原生机制，chokidar 热生效免重启；插件自带的技能无文件可改，操作置灰）
-- 点开任意技能可直接查看正文；数据走宿主端点 `/dsh-kit/skills`（枚举）与
+- **三组显示**：**工作区**（`<项目>/.agents/skills` 与 `.dsh/skills` 两根聚合）、
+  **用户级**（`$DSH_HOME/skills`、`~/.agents/skills`）、**技能池**
+  （`$DSH_HOME/skill-pool`，不挂扫描根、DSH 不扫描，纯流通货架）；
+  插件自带/运行时来源的技能以只读方式列在"其他来源"，归属（provider/source）
+  照实标注
+- 每个技能一行：名称 + 物理根徽标 + 描述（截断悬停看全文）+ 全部操作；
+- 操作：**复制 / 移动**（点击后行下展开目标位置选择条，点选即执行；同名冲突先
+  确认再覆盖）、**删除**（直接删除，两步确认防误触）、**禁用/启用**（改 SKILL.md
+  frontmatter 的 `disable-model-invocation` + `user-invocable` 双键——注册表原生
+  机制，chokidar 热生效免重启；池内技能不提供禁用——池本就不被扫描；插件自带
+  的技能无文件可改，操作置灰）
+- **优先级可视化**：DSH 同名技能按扫描根 rank 取胜（`.dsh`(100) > `.agents`(200)
+  > `$DSH_HOME`(400) > `~/.agents`(500)），被覆盖者打"被覆盖"虚线徽标并悬浮说明
+- 点开任意技能可直接查看详情内容；数据走宿主端点 `/dsh-kit/skills`（枚举）与
   `/dsh-kit/skills/op`（操作），全部经白名单路径校验 + 同源校验
 
 ## 安装

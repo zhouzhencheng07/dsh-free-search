@@ -69,30 +69,31 @@ window.__ModuleLoader__.load({
       skRefresh: "刷新",
       skLoading: "加载中…",
       skFail: "加载失败",
-      skEmpty: "（此目录暂无技能）",
-      skNoDir: "（目录尚未创建，执行复制/移动时自动创建）",
-      skGroupPool: "技能池",
-      skGroupUser: "用户级",
-      skGroupProject: "工作区",
+      skEmpty: "（此组暂无技能）",
+      skNotCreated: "未创建",
+      skWorkspace: "工作区",
+      skUserLevel: "用户级",
+      skPool: "技能池",
       skOther: "其他来源（插件自带/运行时，只读）",
       skNoCwdHint: "当前没有会话工作区：只显示用户级与技能池",
       skDisabled: "已禁用",
+      skShadowed: "被覆盖",
+      skShadowTip: "同名技能在更高优先级位置生效（优先级：.dsh > .agents > $DSH_HOME/skills > ~/.agents/skills）",
       skByPlugin: "随插件",
-      skView: "正文",
       skHide: "收起",
-      skCopy: "复制到",
-      skMove: "移动到",
+      skView: "详情",
+      skCopy: "复制",
+      skMove: "移动",
+      skPickTarget: "选择目标位置",
       skDisable: "禁用",
       skEnable: "启用",
       skDelete: "删除",
       skConfirmDelete: "确认删除？",
-      skYes: "确认",
       skCancel: "取消",
       skOverwrite: "目标已存在同名技能，覆盖？",
       skOpFail: "操作失败",
       skDone: "完成",
-      skTrashed: "已移入回收区",
-      skTrashNote: "删除的技能移入技能池 .trash/ 目录，可手动找回",
+      skDeleted: "已删除",
     };
     const en = {
       label: "Terminal",
@@ -126,29 +127,30 @@ window.__ModuleLoader__.load({
       skLoading: "Loading…",
       skFail: "Failed to load",
       skEmpty: "(no skills here)",
-      skNoDir: "(directory not created yet; auto-created on copy/move)",
-      skGroupPool: "Skill pool",
-      skGroupUser: "User level",
-      skGroupProject: "Workspace",
+      skNotCreated: "not created",
+      skWorkspace: "Workspace",
+      skUserLevel: "User level",
+      skPool: "Skill pool",
       skOther: "Other sources (plugin/runtime, read-only)",
       skNoCwdHint: "No session workspace: showing user-level and pool only",
       skDisabled: "Disabled",
+      skShadowed: "Shadowed",
+      skShadowTip: "A same-name skill at a higher-priority location takes effect (priority: .dsh > .agents > $DSH_HOME/skills > ~/.agents/skills)",
       skByPlugin: "Plugin-bundled",
-      skView: "View",
       skHide: "Hide",
-      skCopy: "Copy to",
-      skMove: "Move to",
+      skView: "Details",
+      skCopy: "Copy",
+      skMove: "Move",
+      skPickTarget: "Pick destination",
       skDisable: "Disable",
       skEnable: "Enable",
       skDelete: "Delete",
       skConfirmDelete: "Confirm delete?",
-      skYes: "Confirm",
       skCancel: "Cancel",
       skOverwrite: "A skill with the same name exists at the target. Overwrite?",
       skOpFail: "Operation failed",
       skDone: "Done",
-      skTrashed: "Moved to trash area",
-      skTrashNote: "Deleted skills go to <pool>/.trash/ and can be recovered manually",
+      skDeleted: "Deleted",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
@@ -236,29 +238,32 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 /* 让位布局：面板打开时中列（对话）右侧让出 --dshk-pane-w，对话随之左移 */
 body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 @media (prefers-reduced-motion:reduce){body.dshk-pane-open [class*="_centerCol"]{transition:none}}
-/* 技能管理页（settings.section）：分组卡片 + 行内操作，全部走别名令牌随主题 */
+/* 技能管理页（settings.section）：三分组卡片；技能行单行布局，操作不换行、描述先收缩 */
 .dshk-sk{font-size:13px;color:var(--dsw-alias-label-primary);user-select:text}
 .dshk-sk-head{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
 .dshk-sk-title{font-weight:600;font-size:14px}
 .dshk-sk-status{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .dshk-sk-group{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:12px;overflow:hidden}
 .dshk-sk-group-head{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:12px}
-.dshk-sk-group-dir{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
-.dshk-sk-row{padding:9px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
-.dshk-sk-row:first-of-type{border-top:0}
-.dshk-sk-line1{display:flex;align-items:center;gap:6px;min-width:0}
-.dshk-sk-name{font-weight:600;white-space:nowrap}
+.dshk-sk-group-dir{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;text-align:right}
+/* 单行：名称/徽标 flex:none，描述 flex:1 收缩截断，操作区不换行 */
+.dshk-sk-row{display:flex;align-items:center;gap:8px;padding:7px 12px;min-width:0}
+.dshk-sk-row ~ .dshk-sk-row{border-top:1px solid var(--dsw-alias-border-l1)}
+.dshk-sk-name{font-weight:600;white-space:nowrap;flex:none}
 .dshk-sk-name[data-disabled]{color:var(--dsw-alias-label-tertiary);text-decoration:line-through}
-.dshk-sk-badge{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dshk-sk-badge{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);white-space:nowrap;font-family:ui-monospace,Consolas,monospace}
 .dshk-sk-badge-off{border-style:dashed;color:var(--dsw-alias-label-tertiary)}
-.dshk-sk-desc{margin-top:3px;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshk-sk-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px}
-.dshk-sk-btn{appearance:none;background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px;line-height:1;padding:4px 9px}
+.dshk-sk-desc{flex:1;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.dshk-sk-actions{flex:none;display:flex;align-items:center;gap:5px}
+.dshk-sk-btn{appearance:none;background:transparent;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px;line-height:1;padding:4px 9px;white-space:nowrap}
 .dshk-sk-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshk-sk-btn[data-danger="1"]{color:var(--dsw-alias-label-primary);font-weight:600;border-color:var(--dsw-alias-label-secondary)}
 .dshk-sk-btn[disabled]{opacity:.5;cursor:default}
-.dshk-sk-sel{height:26px;font-size:12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 4px;max-width:220px}
-.dshk-sk-pre{margin:8px 0 0;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
+/* 展开式目标选择条：点复制/移动后出现在该行下方（同一时间只展开一行） */
+.dshk-sk-target{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border-top:1px dashed var(--dsw-alias-border-l1);background:var(--dsw-alias-fill-l2)}
+.dshk-sk-target-label{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshk-sk-detail{padding:2px 12px 10px}
+.dshk-sk-pre{margin:0;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
 `;
 
     /** 注入 xterm.css（link）与本插件样式（style），幂等 */
@@ -1050,17 +1055,21 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    function skRootTitle(id) {
-      if (id === "pool") return t("skGroupPool");
-      if (id === "user-dsh") return `${t("skGroupUser")} · $DSH_HOME/skills`;
-      if (id === "user-agents") return `${t("skGroupUser")} · ~/.agents/skills`;
-      return `${t("skGroupProject")} · ${id === "project-dsh" ? ".dsh/skills" : ".agents/skills"}`;
+    /** 物理根短标签（行内徽标与目标选择条共用） */
+    const SK_ROOT_SHORT = {
+      "project-dsh": ".dsh/skills",
+      "project-agents": ".agents/skills",
+      "user-dsh": "$DSH_HOME/skills",
+      "user-agents": "~/.agents/skills",
+    };
+
+    function skRootShort(id) {
+      return SK_ROOT_SHORT[id] ?? id;
     }
 
-    function defaultDest(groupId, groups) {
-      if (groupId !== "pool") return "pool";
-      const project = groups.find((g) => g.id.indexOf("project-") === 0 && g.exists);
-      return project ? project.id : "user-dsh";
+    function skGroupTitle(groupId) {
+      if (groupId === "pool") return t("skPool");
+      return groupId === "user" ? t("skUserLevel") : t("skWorkspace");
     }
 
     function SkillContent({ file }) {
@@ -1092,14 +1101,35 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return jsxRuntime.jsx("pre", { className: "dshk-sk-pre", children: state.text });
     }
 
-    /** 单个技能行：名称/徽标 + 目标根选择 + 复制/移动/禁用/删除/正文 */
-    function SkillRow({ skill, groupId, groups, cwd, busy, runOp }) {
+    /** 展开式目标选择条：点选物理根即执行（不存在的根由宿主按需创建） */
+    function TargetPicker({ roots, mode, onPick }) {
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-sk-target",
+        children: [
+          jsxRuntime.jsxs("span", { className: "dshk-sk-target-label", children: [mode === "copy" ? t("skCopy") : t("skMove"), " · ", t("skPickTarget")] }),
+          roots.map((root) =>
+            jsxRuntime.jsx(
+              "button",
+              { type: "button", className: "dshk-sk-btn", title: root.dir, onClick: () => onPick(root.id), children: root.id === "pool" ? t("skPool") : skRootShort(root.id) },
+              root.id,
+            ),
+          ),
+        ],
+      });
+    }
+
+    /**
+     * 单个技能行（单行布局）：名称+徽标+描述截断+复制/移动/禁用/删除/详情。
+     * 池内技能没有禁用按钮（池不被扫描，禁用无意义）；复制/移动展开目标选择条
+     * （picker 状态提升到页面级，同一时间只允许一行展开）。
+     */
+    function SkillRow({ skill, groupId, allRoots, cwd, busy, runOp, picker, setPicker }) {
       const [open, setOpen] = react.useState(false);
       const [confirming, setConfirming] = react.useState(false);
-      const [dest, setDest] = react.useState(() => defaultDest(groupId, groups));
-      const targets = groups.filter((g) => g.id !== groupId);
+      const pickerOpen = picker !== null && picker.key === skill.path && (picker.mode === "copy" || picker.mode === "move");
+      const targets = allRoots.filter((root) => root.id !== skill.root);
 
-      const opTo = (op) => runOp({ op, src: skill.path, dest, cwd });
+      const startPicker = (mode) => setPicker(pickerOpen ? null : { key: skill.path, mode });
       const onDisable = () => runOp({ op: "disable", src: skill.path, cwd, disabled: !skill.disabled });
       const onDelete = () => {
         if (!confirming) {
@@ -1109,49 +1139,44 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         setConfirming(false);
         runOp({ op: "delete", src: skill.path, cwd });
       };
+      const pickDest = (rootId) => {
+        setPicker(null);
+        runOp({ op: picker.mode, src: skill.path, dest: rootId, cwd });
+      };
 
-      return jsxRuntime.jsxs("div", {
-        className: "dshk-sk-row",
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
           jsxRuntime.jsxs("div", {
-            className: "dshk-sk-line1",
+            className: "dshk-sk-row",
             children: [
               jsxRuntime.jsx("span", { className: "dshk-sk-name", "data-disabled": skill.disabled || undefined, children: skill.name }),
+              groupId !== "pool" ? jsxRuntime.jsx("span", { className: "dshk-sk-badge", title: skRootShort(skill.root), children: skRootShort(skill.root) }) : null,
               skill.disabled ? jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", children: t("skDisabled") }) : null,
-              jsxRuntime.jsx("span", { className: "dshk-sk-badge", title: skill.file ?? skill.path, children: skill.kind === "dir" ? "SKILL.md" : ".md" }),
-            ],
-          }),
-          typeof skill.description === "string" && skill.description !== ""
-            ? jsxRuntime.jsx("div", { className: "dshk-sk-desc", title: skill.description, children: skill.description })
-            : null,
-          jsxRuntime.jsxs("div", {
-            className: "dshk-sk-actions",
-            children: [
-              jsxRuntime.jsx(
-                "select",
-                {
-                  className: "dshk-sk-sel",
-                  value: dest,
-                  disabled: busy,
-                  onChange: (e) => setDest(e.target.value),
-                  children: targets.map((g) =>
-                    jsxRuntime.jsx("option", { value: g.id, children: skRootTitle(g.id) }, g.id),
-                  ),
-                },
-              ),
-              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, title: t("skCopy"), onClick: () => opTo("copy"), children: t("skCopy") }),
-              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, title: t("skMove"), onClick: () => opTo("move"), children: t("skMove") }),
-              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDisable, children: skill.disabled ? t("skEnable") : t("skDisable") }),
-              confirming
-                ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", "data-danger": "1", disabled: busy, onClick: onDelete, children: t("skConfirmDelete") })
-                : jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDelete, children: t("skDelete") }),
-              confirming
-                ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setConfirming(false), children: t("skCancel") })
+              skill.shadowed ? jsxRuntime.jsx("span", { className: "dshk-sk-badge dshk-sk-badge-off", title: t("skShadowTip"), children: t("skShadowed") }) : null,
+              typeof skill.description === "string" && skill.description !== ""
+                ? jsxRuntime.jsx("span", { className: "dshk-sk-desc", title: skill.description, children: skill.description })
                 : null,
-              jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setOpen((v) => !v), children: open ? t("skHide") : t("skView") }),
+              jsxRuntime.jsxs("div", {
+                className: "dshk-sk-actions",
+                children: [
+                  jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => startPicker("copy"), children: t("skCopy") }),
+                  jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => startPicker("move"), children: t("skMove") }),
+                  groupId !== "pool"
+                    ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDisable, children: skill.disabled ? t("skEnable") : t("skDisable") })
+                    : null,
+                  confirming
+                    ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", "data-danger": "1", disabled: busy, onClick: onDelete, children: t("skConfirmDelete") })
+                    : jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: onDelete, children: t("skDelete") }),
+                  confirming
+                    ? jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setConfirming(false), children: t("skCancel") })
+                    : null,
+                  jsxRuntime.jsx("button", { type: "button", className: "dshk-sk-btn", disabled: busy, onClick: () => setOpen((v) => !v), children: open ? t("skHide") : t("skView") }),
+                ],
+              }),
             ],
           }),
-          open ? jsxRuntime.jsx(SkillContent, { file: skill.file }) : null,
+          pickerOpen ? jsxRuntime.jsx(TargetPicker, { roots: targets, mode: picker.mode, onPick: pickDest }) : null,
+          open ? jsxRuntime.jsx("div", { className: "dshk-sk-detail", children: jsxRuntime.jsx(SkillContent, { file: skill.file }) }) : null,
         ],
       });
     }
@@ -1177,7 +1202,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    const SK_GROUP_RANK = { "project-agents": 0, "project-dsh": 1, "user-dsh": 2, "user-agents": 3, pool: 4 };
+    const SK_GROUP_RANK = { workspace: 0, user: 1, pool: 2 };
 
     function SkillsManager(props) {
       const cwd = useCurrentCwd(props);
@@ -1186,6 +1211,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const [message, setMessage] = react.useState("");
       const [busy, setBusy] = react.useState(false);
       const [nonce, setNonce] = react.useState(0);
+      // 展开中的复制/移动目标选择条（{key,mode}）；单值保证同一时间只展开一行
+      const [picker, setPicker] = react.useState(null);
 
       react.useEffect(() => {
         const controller = new AbortController();
@@ -1215,7 +1242,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               return;
             }
           }
-          setMessage(payload.op === "delete" ? t("skTrashed") : t("skDone"));
+          setMessage(payload.op === "delete" ? t("skDeleted") : t("skDone"));
+          setPicker(null);
           setNonce((n) => n + 1);
         } finally {
           setBusy(false);
@@ -1225,6 +1253,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const groups = data
         ? [...data.groups].sort((a, b) => (SK_GROUP_RANK[a.id] ?? 99) - (SK_GROUP_RANK[b.id] ?? 99))
         : [];
+      const allRoots = data ? groups.flatMap((group) => group.roots) : [];
 
       return jsxRuntime.jsxs("div", {
         className: "dshk-sk",
@@ -1249,19 +1278,26 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                   jsxRuntime.jsxs("div", {
                     className: "dshk-sk-group-head",
                     children: [
-                      jsxRuntime.jsx("span", { children: skRootTitle(group.id) }),
-                      jsxRuntime.jsx("span", { children: group.exists ? `· ${group.skills.length}` : "" }),
-                      jsxRuntime.jsx("span", { className: "dshk-sk-group-dir", title: group.dir, children: group.dir }),
+                      jsxRuntime.jsx("span", { children: skGroupTitle(group.id) }),
+                      jsxRuntime.jsx("span", { children: `· ${group.skills.length}` }),
+                      jsxRuntime.jsx("span", {
+                        className: "dshk-sk-group-dir",
+                        title: group.roots.map((root) => root.dir).join("\n"),
+                        children: group.roots
+                          .map((root) => `${skRootShort(root.id)}${root.exists ? "" : `（${t("skNotCreated")}）`}`)
+                          .join(" · "),
+                      }),
                     ],
                   }),
-                  !group.exists
-                    ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skNoDir") })
-                    : group.skills.length === 0
-                      ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skEmpty") })
-                      : group.skills.map((skill) =>
-                          jsxRuntime.jsx(SkillRow, { skill, groupId: group.id, groups, cwd, busy, runOp }, skill.path),
+                  group.skills.length === 0
+                    ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skEmpty") })
+                    : group.skills.map((skill) =>
+                        jsxRuntime.jsx(
+                          SkillRow,
+                          { skill, groupId: group.id, allRoots, cwd, busy, runOp, picker, setPicker },
+                          skill.path,
                         ),
-                  group.id === "pool" ? jsxRuntime.jsx("div", { className: "dshk-sk-row dshk-sk-status", children: t("skTrashNote") }) : null,
+                      ),
                 ],
               },
               group.id,
