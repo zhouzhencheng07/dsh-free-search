@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
       skillsPageEnabled: true,
       terminalShortcut: "Ctrl+`",
       fileTreeShortcut: "Ctrl+E",
-      scShortcut: "Ctrl+Shift+G",
+      scShortcut: "Ctrl+G",
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -160,7 +160,6 @@ window.__ModuleLoader__.load({
       scChanges: "更改",
       scEmpty: "（没有更改）",
       scNotGit: "当前目录不是 git 仓库",
-      scOpen: "打开源代码管理",
       scInit: "初始化仓库",
       scInitFail: "初始化失败",
       scStage: "暂存",
@@ -273,7 +272,6 @@ window.__ModuleLoader__.load({
       scChanges: "Changes",
       scEmpty: "(no changes)",
       scNotGit: "This folder is not in a git repository",
-      scOpen: "Show source control",
       scInit: "Initialize Repository",
       scInitFail: "git init failed",
       scStage: "Stage",
@@ -1012,7 +1010,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     }
 
     /** 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?} */
-    function TreeNode({ entry, depth, expanded, onToggle, onOpenFile, gitMap }) {
+    function TreeNode({ entry, depth, expanded, onToggle, onOpenFile }) {
       const info = entry.dir ? expanded[entry.path] : undefined;
       const rows = [jsxRuntime.jsxs("div", {
         className: `dshk-row${entry.dir ? "" : " dshk-file"}`,
@@ -1022,9 +1020,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         children: [
           jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }),
           jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }),
-          !entry.dir && gitMap && gitMap.has(entry.path)
-            ? jsxRuntime.jsx(GitBadge, { xy: gitMap.get(entry.path) })
-            : null,
         ],
       }, entry.path)];
       if (entry.dir && info) {
@@ -1036,7 +1031,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeEmpty") }, `${entry.path}::empty`));
         } else {
           for (const child of info.entries) {
-            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onOpenFile, gitMap }, child.path));
+            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onOpenFile }, child.path));
           }
           if (info.truncated) {
             rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeTruncated") }, `${entry.path}::truncated`));
@@ -1048,40 +1043,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
     function FileTreePanel({ cwd, onOpenFile }) {
       // expanded: 路径 → 目录单层状态；根目录就是 cwd
+      // expanded: 路径 → 目录单层状态；根目录就是 cwd
       const [expanded, setExpanded] = react.useState({});
       // 供 nonce 刷新 effect 读取最新展开集合（保留展开状态用）
       const expandedRef = react.useRef({});
       expandedRef.current = expanded;
       const [nonce, setNonce] = react.useState(0);
-      // git 状态：绝对路径 → xy；null = 未加载，空 Map = 非 git/无变更
-      const [gitMap, setGitMap] = react.useState(null);
-      const [gitRoot, setGitRoot] = react.useState(null);
       const abortsRef = react.useRef(new Set());
-      // 拉取 git 状态落到 gitMap/gitRoot；每次渲染重赋以捕获最新 cwd
-      const gitFetchRef = react.useRef(null);
-      gitFetchRef.current = () => {
-        if (!cwd) return;
-        const c = new AbortController();
-        abortsRef.current.add(c);
-        fetchGitStatus(cwd, c.signal)
-          .then((gitBody) => {
-            abortsRef.current.delete(c);
-            if (c.signal.aborted) return;
-            if (!gitBody.available) {
-              setGitMap(new Map());
-              setGitRoot(null);
-              return;
-            }
-            const m = new Map();
-            for (const e of gitBody.entries ?? []) m.set(e.abs, e.xy);
-            setGitMap(m);
-            setGitRoot(gitBody.root ?? null);
-          })
-          .catch(() => {
-            abortsRef.current.delete(c);
-            if (!c.signal.aborted) setGitMap(new Map());
-          });
-      };
 
       const loadDir = (dirPath) => {
         const controller = new AbortController();
@@ -1107,16 +1075,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       react.useEffect(() => {
         abortsRef.current.forEach((c) => c.abort());
         abortsRef.current.clear();
-        setGitMap(null);
-        setGitRoot(null);
         if (!cwd) {
           setExpanded({});
           return undefined;
         }
         setExpanded({ [cwd]: { status: "loading" } });
         loadDir(cwd);
-        // 打开/⟳ 时立即拉一次 git 状态（此后由轮询 effect 接管）
-        if (gitFetchRef.current) gitFetchRef.current();
         return () => {
           abortsRef.current.forEach((c) => c.abort());
           abortsRef.current.clear();
@@ -1127,7 +1091,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       // 展开过的目录才需要刷新；未展开的下层等用户点开时自然拉最新）
       react.useEffect(() => {
         if (!nonce || !cwd) return undefined;
-        if (gitFetchRef.current) gitFetchRef.current();
         const keys = Object.keys(expandedRef.current);
         const next = {};
         for (const k of keys) next[k] = { status: "loading" };
@@ -1135,23 +1098,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         for (const k of keys) loadDir(k);
         return undefined;
       }, [nonce]);
-
-      // 刷新机制（①+③，用户定 2026-08-23）：面板可见时每 GIT_POLL_MS 拉一次
-      // git 状态；标签页转回可见 / 窗口聚焦时立即补一次。隐藏时完全静默。
-      react.useEffect(() => {
-        if (!cwd) return undefined;
-        const tick = () => {
-          if (document.visibilityState !== "hidden" && gitFetchRef.current) gitFetchRef.current();
-        };
-        const timer = window.setInterval(tick, GIT_POLL_MS);
-        document.addEventListener("visibilitychange", tick);
-        window.addEventListener("focus", tick);
-        return () => {
-          window.clearInterval(timer);
-          document.removeEventListener("visibilitychange", tick);
-          window.removeEventListener("focus", tick);
-        };
-      }, [cwd]);
 
       const toggleDir = (entry) => {
         setExpanded((m) => {
@@ -1179,13 +1125,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
-                title: t("scOpen"),
-                onClick: () => setKitUi({ gitOpen: true }),
-                children: jsxRuntime.jsx(BranchIcon, {}),
-              }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-btn",
                 title: t("treeRefresh"),
                 onClick: () => setNonce((n) => n + 1),
                 children: "⟳",
@@ -1206,7 +1145,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                     : jsxRuntime.jsxs(jsxRuntime.Fragment, {
                         children: [
                           rootInfo.entries.map((entry) =>
-                            jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile, gitMap }, entry.path),
+                            jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile }, entry.path),
                           ),
                           rootInfo.truncated
                             ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
@@ -1866,8 +1805,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
           dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
             ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner }),
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "scm" }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree" }), ...owner }),
           );
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
