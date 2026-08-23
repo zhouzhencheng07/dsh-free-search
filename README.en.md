@@ -10,28 +10,24 @@ dsh stays stock.
 
 ### Terminal
 
-A VSCode-style in-page terminal:
+A terminal toggle on the composer tool row or **Ctrl+`** opens/closes the
+bottom terminal panel:
 
-- `>_` toggle at the sidebar foot or **Ctrl+`** opens/closes the bottom
-  terminal panel
 - Opens in the **current session's workspace directory** (session cwd; falls
   back to the most recent workspace path)
-- On Windows prefers pwsh (PowerShell 7+), falls back to powershell.exe;
-  one-click restart inside the panel
+- On Windows prefers pwsh (PowerShell 7+), falls back to powershell.exe
 - Closing the panel / refreshing the page ends the shell process (no orphans)
 
 ### File tree
 
-A file-tree toggle at the sidebar foot (next to Settings):
+A file-tree toggle on the composer tool row:
 
 - The panel takes over the sidebar browsing area, rooted at the **current
-  session's workspace directory**
-- Directories expand lazily level by level; **clicking a file opens it in a
-  right-docked panel for preview/editing (opens at full width by default — the
-  conversation shifts left to make room; drag the left edge to widen/narrow —
-  GitHub-like file view)**; a "copy path" button sits in the panel head;
-  ✎ enters edit mode (draft-based save, mtime CAS conflict asks to reload,
-  truncated previews are not editable)
+  session's workspace directory**, expanding lazily level by level
+- Clicking a file opens a right-docked preview/edit panel: the conversation
+  column steps aside, drag the left edge to widen/narrow; ✎ enters edit mode
+  (draft-based save, mtime CAS conflict asks to reload, truncated previews are
+  not editable), ✕ closes back
 - Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
   `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection)
   and `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard
@@ -40,8 +36,8 @@ A file-tree toggle at the sidebar foot (next to Settings):
 
 ### Source control
 
-A source-control toggle on the composer tool row (default **Ctrl+.**), a
-VSCode-style in-page git workbench:
+A source-control toggle on the composer tool row (default **Ctrl+.**), an
+in-page git workbench:
 
 - Shares the sidebar browsing slot with the file tree (one at a time); while
   visible, the changes list **refreshes silently in the background** — AI edits
@@ -93,6 +89,26 @@ A new "Skills" page in the settings panel:
   a hardcoded id map falling back to the gear; this is a cosmetic DOM swap by
   label text that silently keeps the gear on failure).
 
+### Web search
+
+A host-side capability merged in from
+[dsh-free-search](https://github.com/zhouzhencheng07/dsh-free-search) v0.2.0
+(that repository stays at v0.2.0 and no longer evolves on its own):
+
+- Registers the **free-search** provider on the dsh web seam, replacing the
+  base layer's pinned `deepseek-official` (which costs one paid DeepSeek model
+  call per search)
+- A keyless engine chain fails over by priority: **Tavily** (keyless; set
+  `TAVILY_API_KEY` for keyed quota) → **Sogou** (general fallback), with four
+  domain engines — **GitHub / arXiv / StackExchange / Hacker News** — joining
+  first when a query strongly signals their domain. Zero configuration.
+- The agent's `web_search` tool keeps producing native citation cards
+  (`sources[]` renders as usual)
+- The "Enable web search" switch on the settings card: on = the free engine
+  chain, off = the official default channel (`deepseek-official`); changes
+  apply after restart. A later profile patch can also pin `searchProvider`
+  to anything
+
 ### Settings card
 
 The dsh-kit card under the official Settings → plugin configuration page
@@ -115,26 +131,6 @@ The dsh-kit card under the official Settings → plugin configuration page
   when off, the agent's searches go through the official default channel;
   this switch applies after restart
 
-### Web search
-
-A host-side capability merged in from
-[dsh-free-search](https://github.com/zhouzhencheng07/dsh-free-search) v0.2.0
-(that repository stays at v0.2.0 and no longer evolves on its own):
-
-- Registers the **free-search** provider on the dsh web seam, replacing the
-  base layer's pinned `deepseek-official` (which costs one paid DeepSeek model
-  call per search)
-- A keyless engine chain fails over by priority: **Tavily** (keyless; set
-  `TAVILY_API_KEY` for keyed quota) → **Sogou** (general fallback), with four
-  domain engines — **GitHub / arXiv / StackExchange / Hacker News** — joining
-  first when a query strongly signals their domain. Zero configuration.
-- The agent's `web_search` tool keeps producing native citation cards
-  (`sources[]` renders as usual)
-- The "Enable web search" switch on the settings card: on = the free engine
-  chain, off = the official default channel (`deepseek-official`); changes
-  apply after restart. A later profile patch can also pin `searchProvider`
-  to anything
-
 ## Install
 
 ```bash
@@ -142,9 +138,9 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
 The package declares `dsh.bundle.patch`, so it is activated as a profile bundle
-layer (not just an inert dependency). Restart `dsh web` after installing; a
-terminal toggle and a file-tree toggle appear at the sidebar foot, and the
-agent's `web_search` switches to the free multi-source chain.
+layer (not just an inert dependency). Restart `dsh web` after installing; three
+toggles — Files / Source Control / Terminal — appear on the composer tool row,
+and the agent's `web_search` switches to the free multi-source chain.
 
 ### Local development
 
@@ -155,14 +151,15 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
 
 ## How it works
 
-- `src/index.js`: host side — mounts four endpoints: a `/dsh-kit/terminal`
+- `src/index.js`: host side — mounts these endpoints: a `/dsh-kit/terminal`
   WebSocket endpoint via `ctx.webServer.registerUpgrade` (Origin same-origin
   check before upgrade; each connection = one node-pty session, JSON text-frame
   protocol, see the file-header comment), static `/dsh-kit/vendor/*` assets
   (official prebuilt xterm UMD), a read-only `/dsh-kit/tree?path=…`
   single-level directory listing (the official browse RPC lists directories
-  only, so the file tree uses this), and a read-only `/dsh-kit/read?path=…`
-  single-file text reader (512 KB cap + binary detection).
+  only, so the file tree uses this), a read-only `/dsh-kit/read?path=…`
+  single-file text reader (512 KB cap + binary detection), and `/dsh-kit/write`
+  edit save (cwd-subtree validation + mtime CAS).
 - `src/skill-pool.js`: skill-management host side — `GET /dsh-kit/skills`
   enumerates skills under the whitelist roots (pool / user / project) with
   registry-based attribution enrichment, and `POST /dsh-kit/skills/op` performs
@@ -170,15 +167,15 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   Sources must be direct children of a root and every path is realpath-checked
   for containment.
 - `client/bundle.js`: browser side (hand-written ModuleLoader-format client
-  bundle, no build step) — registers two toggles on the `sidebar.footer.action`
-  slot: the terminal (bottom-docked panel, lazy-loading the vendor xterm on
-  first open) and the file tree (temporarily takes over the
-  `sidebar.workspaces` slot; clicking a file opens a self-drawn right-docked
-  preview panel — a `body.dshk-pane-open` class + `--dshk-pane-w` variable
-  shift the conversation column aside via CSS, instead of the native details
-  column / `ctx.layout`, because `openDetails()` is fixed at 360 and
-  `setDetails` is unreachable from dynamic plugins); plus a full "Skills"
-  page registered on the `settings.section` slot.
+  bundle, no build step) — registers three toggles (Files / Source Control /
+  Terminal) on the `conversation.input.left` slot; the file tree and source
+  control share the `sidebar.workspaces` slot, and clicking a file opens a
+  self-drawn right-docked preview/edit/diff panel — a `body.dshk-pane-open`
+  class + `--dshk-pane-w` variable shift the conversation column aside via
+  CSS, instead of the native details column / `ctx.layout`, because
+  `openDetails()` is fixed at 360 and `setDetails` is unreachable from dynamic
+  plugins); plus the Skills page on the `settings.section` slot and the plugin
+  settings card on `settings.plugin.item`.
 - `src/web-search.js` + `src/engine-chain.js` + `src/engines/*`: web-search
   host side (merged verbatim from dsh-free-search v0.2.0) — registers the
   `free-search` provider on the web seam, gated by the settings card's

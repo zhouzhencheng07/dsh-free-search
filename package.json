@@ -1,6 +1,6 @@
 {
   "name": "dsh-kit",
-  "version": "0.4.0",
+  "version": "0.3.0",
   "description": "Page capability kit for DeepSeek Harness (dsh): composer-docked file tree / source control / terminal panels for the current session workspace, plus free multi-source web search (merged from dsh-free-search)",
   "license": "MIT",
   "type": "module",
