@@ -1,7 +1,7 @@
 {
   "name": "dsh-kit",
   "version": "0.4.0",
-  "description": "Page capability kit for DeepSeek Harness (dsh): composer-docked file tree / source control / terminal panels for the current session workspace",
+  "description": "Page capability kit for DeepSeek Harness (dsh): composer-docked file tree / source control / terminal panels for the current session workspace, plus free multi-source web search (merged from dsh-free-search)",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.js",
@@ -27,7 +27,10 @@
     "file-tree",
     "skills",
     "skill-pool",
-    "settings"
+    "settings",
+    "search",
+    "web-search",
+    "tavily"
   ],
   "dsh": {
     "bundle": {

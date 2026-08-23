@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
       fileTreeEnabled: true,
       sourceControlEnabled: true,
       skillsPageEnabled: true,
+      searchEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+.",
@@ -118,6 +119,7 @@ window.__ModuleLoader__.load({
         fileTreeEnabled: v.fileTreeEnabled !== false,
         sourceControlEnabled: v.sourceControlEnabled !== false,
         skillsPageEnabled: v.skillsPageEnabled !== false,
+        searchEnabled: v.searchEnabled !== false,
         terminalShortcut:
           typeof v.terminalShortcut === "string" && parseCombo(v.terminalShortcut)
             ? v.terminalShortcut
@@ -223,13 +225,15 @@ window.__ModuleLoader__.load({
       skDone: "完成",
       skDeleted: "已删除",
       cfgTitle: "套件（dsh-kit）",
-      cfgDesc: "终端 / 文件树 / 技能页的功能开关与快捷键。",
+      cfgDesc: "终端 / 文件树 / 技能页 / 网页搜索的功能开关与快捷键。",
       cfgTerminalEnabled: "启用终端",
       cfgTerminalEnabledHint: "关闭后隐藏输入框旁的终端按钮，快捷键一并失效。",
       cfgFileTreeEnabled: "启用文件树",
       cfgFileTreeEnabledHint: "关闭后隐藏输入框旁的文件树按钮，快捷键一并失效。",
       cfgSkillsPageEnabled: "启用技能页",
       cfgSkillsPageEnabledHint: "关闭后设置里不再显示「技能」页；技能本身不受影响。",
+      cfgSearchEnabled: "启用网页搜索",
+      cfgSearchEnabledHint: "免费多源搜索（free-search）。关闭后 AI 的 web_search 走官方默认渠道；变更重启后生效。",
       cfgTerminalShortcut: "终端快捷键",
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
@@ -335,13 +339,15 @@ window.__ModuleLoader__.load({
       skDone: "Done",
       skDeleted: "Deleted",
       cfgTitle: "Kit (dsh-kit)",
-      cfgDesc: "Feature switches and shortcuts for terminal / files / skills.",
+      cfgDesc: "Feature switches and shortcuts for terminal / files / skills / web search.",
       cfgTerminalEnabled: "Enable terminal",
       cfgTerminalEnabledHint: "Hides the terminal button next to the composer and disables its shortcut.",
       cfgFileTreeEnabled: "Enable file tree",
       cfgFileTreeEnabledHint: "Hides the file-tree button next to the composer and disables its shortcut.",
       cfgSkillsPageEnabled: "Enable skills page",
       cfgSkillsPageEnabledHint: "Removes the Skills entry from Settings (skills themselves are unaffected).",
+      cfgSearchEnabled: "Enable web search",
+      cfgSearchEnabledHint: "Free multi-source web search (free-search). When off, the agent's web_search uses the official default channel; changes apply after restart.",
       cfgTerminalShortcut: "Terminal shortcut",
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
@@ -2268,17 +2274,20 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       { key: "fileTreeEnabled", kind: "bool" },
       { key: "sourceControlEnabled", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
+      { key: "searchEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
       { key: "scShortcut", kind: "combo" },
     ];
     // 分组渲染：开关行 + 该功能启用时才显示的子配置（所见即所得，保存才落盘生效）
-    // 组顺序 = 入口按钮顺序：文件树 → 源代码管理 → 终端 → 技能页
+    // 组顺序 = 入口按钮顺序：文件树 → 源代码管理 → 终端 → 技能页；网页搜索是
+    // 宿主侧能力（无浏览器入口按钮），放最后。
     const CFG_GROUPS = [
       { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
+      { switchKey: "searchEnabled", fields: [] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>

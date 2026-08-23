@@ -21,11 +21,32 @@ VSCode 风格的页内终端：
 侧边栏底部的文件树开关（设置齿轮旁）：
 
 - 面板复用侧边栏浏览区，以**当前会话的工作区目录**为根浏览文件
-- 目录懒加载逐级展开；**点击文件 → 右侧停靠面板预览文件内容（默认直接开满宽度，
+- 目录懒加载逐级展开；**点击文件 → 右侧停靠面板预览/编辑文件内容（默认直接开满宽度，
   对话左移让位，左侧边缘可拖动调宽/调窄，类似 GitHub 的文件视图）**；
-  头部带"复制路径"按钮
-- 数据走插件宿主的只读端点 `/dsh-kit/tree`（目录列表）与 `/dsh-kit/read`（文件内容，
-  512 KB 限长 + 二进制探测；均同源校验；webserver 仅 loopback 可达）
+  头部带"复制路径"按钮；✎ 进编辑态（草稿保存，mtime CAS 冲突时询问重载，
+  截断预览不可编辑）
+- 数据走插件宿主端点 `/dsh-kit/tree`（目录列表）、`/dsh-kit/read`（文件内容，
+  512 KB 限长 + 二进制探测）与 `/dsh-kit/write`（编辑保存：cwd 子树校验 +
+  mtime CAS 防并发覆盖；均同源校验；webserver 仅 loopback 可达）
+
+### 源代码管理（source control）
+
+输入框工具行的源代码管理开关（默认 **Ctrl+.**），VSCode 式的页内 git 工作台：
+
+- 与文件树共用侧边栏浏览位（二选一打开）；改动列表在可见期间**静默自动刷新**
+  ——AI 的改动无闪动实时出现
+- 分组显示**暂存的更改 / 更改**（未跟踪文件标 `U`），组头可折叠；每行含名称、
+  目录提示、`+N −N` 行数统计与状态徽标
+- 行悬停操作：**暂存 ＋ / 取消暂存 － / 放弃 ↩**（放弃为破坏性操作，二次确认）；
+  顶部提交框提交已暂存内容，暂存区为空时提供「提交全部」（先 `add -A` 再
+  commit），Enter 直提
+- 点击文件进右侧停靠面板看 **diff 视图**：完整文件着色渲染（删除红 / 新增绿，
+  非原始补丁），超大文件回退原始 diff
+- 非 git 目录一键**初始化仓库**（幂等）；中文等非 ASCII 文件名完整支持
+  （`core.quotePath=false`）
+- 数据走宿主端点 `/dsh-kit/git/status`、`/dsh-kit/git/diff`、`/dsh-kit/git/init`
+  与 `/dsh-kit/git/op`（stage/unstage/discard/stageAll/commit；直接 spawn git CLI
+  不引库，全部同源校验）
 
 ### 技能管理（skill pool）
 
@@ -51,6 +72,37 @@ VSCode 风格的页内终端：
 - 设置导航里"技能"使用自绘分层图标（官方 navIcon 按 id 硬编码映射、未知 id 一律
   齿轮，这里按标签文字做纯外观替换，失败静默回退）
 
+### 设置卡（settings）
+
+官方设置页「插件配置」里的 dsh-kit 卡片（命名空间 `dsh-kit`）：
+
+- 功能开关：终端 / 文件树 / 源代码管理 / 技能页 / 网页搜索，各自独立——关闭即
+  隐藏对应入口按钮并失效快捷键，已打开的视图立即归位；「技能页」关闭后设置导航
+  不再显示技能页（技能本身不受影响）
+- 快捷键自定义：终端 **Ctrl+/**、文件树 **Ctrl+,**、源代码管理 **Ctrl+.**——点
+  「修改」进入录制态，下一个组合键即为新键（Esc 取消）
+- 开关启用才展开其子配置项（所见即所得）；键被用户层覆盖时标「已覆盖」，可一键
+  恢复默认
+- 草稿模型照官方 CardForm 规范：编辑只暂存草稿、保存才写入，写后回读校验落盘；
+  只读部署给出提示
+- 「网页搜索」由宿主半边消费（其余开关均在浏览器端门控）：关闭时 `web_search`
+  走官方默认渠道；此开关变更重启后生效
+
+### 网页搜索（web search）
+
+自 [dsh-free-search](https://github.com/zhouzhencheng07/dsh-free-search)
+v0.2.0 并入的宿主侧能力（该仓库停留在 v0.2.0，不再单独演进）：
+
+- 向 DSH 的 web seam 注册 **free-search** 免费搜索源，替换 base 层钉死的
+  `deepseek-official`（后者每次搜索消耗一次付费 DeepSeek 模型调用）
+- 免 key 引擎链按优先级自动故障转移：**Tavily**（免 key，设了 `TAVILY_API_KEY`
+  则走带 key 配额）→ **Sogou**（通用兜底），另有 **GitHub / arXiv /
+  StackExchange / Hacker News** 四个领域引擎在查询强信号时优先参与——全部免配置
+- AI 的 `web_search` 工具照常产出原生引用卡片（`sources[]` 原样渲染）
+- 设置卡「启用网页搜索」开关：开=免费引擎链，关=走官方默认渠道
+  （`deepseek-official`）；变更重启后生效。后续 profile patch 也可把
+  `searchProvider` 钉回任意源
+
 ## 安装
 
 ```bash
@@ -58,7 +110,8 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
 本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层(而不是仅仅装成
-一个不生效的普通依赖)。安装后重启 `dsh web`,侧边栏底部出现终端与文件树开关。
+一个不生效的普通依赖)。安装后重启 `dsh web`,侧边栏底部出现终端与文件树开关,
+AI 的 `web_search` 同时切到免费多源搜索。
 
 ### 本地开发安装
 
@@ -86,7 +139,14 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   变量,用 CSS 让中列(对话)右移让位(不依赖原生 details 列/ctx.layout,
   因其 openDetails 固定 360 且 setDetails 对动态插件不可达);另在
   `settings.section` 槽位注册"技能管理"整页。
-- `cordis.patch.yml`:把 `dsh-kit` 插件行 insert 进 bundle 层。
+- `src/web-search.js` + `src/engine-chain.js` + `src/engines/*`:网页搜索宿主
+  半边(自 dsh-free-search v0.2.0 原样并入)——向 web seam 注册 `free-search`
+  provider,受设置卡 `searchEnabled` 门控(启动期定夺:开=引擎链,关=同 id
+  转发官方渠道);引擎链按优先级自动故障转移,领域引擎(GitHub/arXiv/
+  StackExchange/HN)查询强信号时才参与。
+- `cordis.patch.yml`:把 `dsh-kit` 插件行 insert 进 bundle 层,并把 web 行的
+  `searchProvider` 由 base 层钉死的 `deepseek-official` 改为 `free-search`
+  (后续 profile patch 可再钉回任意源)。
 - 宿主侧 `node-pty`/`ws` 不声明依赖:运行时从 profile fallback node_modules 解析。
 
 ## 环境要求

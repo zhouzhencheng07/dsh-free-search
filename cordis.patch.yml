@@ -1,6 +1,13 @@
-# dsh-kit bundle patch: register the kit plugin row.
-# The plugin module is this package itself (package.json main); the bare name
-# resolves from the profile's node_modules after `dsh plugin add`.
+# dsh-kit bundle patch: register the kit plugin row, and route the web seam's
+# search capability to the free-search provider merged from dsh-free-search
+# (src/web-search.js). The base layer pins `searchProvider: deepseek-official`
+# (a paid DeepSeek model call per search); this patch replaces that row's
+# config — `searchProvider` is its only base key — with our free engine chain.
+# A later profile patch can pin any provider back.
+- id: web
+  config:
+    searchProvider: free-search
+
 - insert:
     - id: dsh-kit
       name: dsh-kit

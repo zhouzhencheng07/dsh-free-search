@@ -5,12 +5,17 @@
 //   文件树（file tree）——GET /dsh-kit/tree?path=<绝对目录> 返回该层
 //     目录+文件的 JSON 列表（官方 browse RPC 只列目录不列文件，故自建）；
 //   文件预览（file preview）——GET /dsh-kit/read?path=<绝对文件> 读取文本
-//     内容（限长 + 二进制探测），浏览器端在右侧 details 列展示。
+//     内容（限长 + 二进制探测），浏览器端在右侧 details 列展示；
+//   网页搜索（web search）——自 dsh-free-search v0.2.0 并入：向 web seam 注册
+//     'free-search' provider（免费引擎链），实现见 src/web-search.js +
+//     src/engine-chain.js + src/engines/*。
 //
 // 浏览器半边（client/bundle.js）：终端/文件树入口按钮注册在对话输入框工具行
 // （conversation.input.left），面板本体挂 shell.overlay 全帧浮层；终端开合底部
 // 停靠面板（Ctrl+`），文件树临时接管侧边栏浏览区（sidebar.workspaces 单槽）。
-// 插件设置卡（dsh-kit 命名空间，settings.plugin.item）提供功能开关与快捷键自定义。
+// 插件设置卡（dsh-kit 命名空间，settings.plugin.item）提供功能开关与快捷键自定义；
+// 其中 searchEnabled 由宿主消费（开=免费引擎链，关=转发官方渠道，重启后生效），
+// 其余开关浏览器端消费。
 //
 // 宿主半边（本文件）挂四个端点（webserver 默认只绑 loopback）：
 //   1) WebSocket /dsh-kit/terminal —— 每条连接一个 node-pty 会话；
@@ -42,6 +47,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { applySkillPool, findProjectRoot } from './skill-pool.js'
+import { applyWebSearch } from './web-search.js'
 
 export const name = 'dsh-kit'
 
@@ -201,14 +207,24 @@ export function apply(ctx) {
       fileTreeEnabled: z.boolean().default(true),
       sourceControlEnabled: z.boolean().default(true),
       skillsPageEnabled: z.boolean().default(true),
+      searchEnabled: z.boolean().default(true),
       terminalShortcut: z.string().default('Ctrl+/'),
       fileTreeShortcut: z.string().default('Ctrl+,'),
       scShortcut: z.string().default('Ctrl.'),
     })
+    // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
+    // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）。改开关
+    // 重启后生效（onChange 保持 no-op，不热切换）。其余开关全在浏览器端门控
+    // 入口按钮，宿主不读。先注册设置层再挂搜索，确保注入回调读到的是已落定值。
+    let readSettings = () => ({})
     installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
-      setSource: () => {},
+      setSource: (current) => { readSettings = current },
       onChange: () => {},
     })
+    applyWebSearch(ctx, { getEnabled: () => readSettings().searchEnabled !== false })
+  } else {
+    // 设置层不可用：按开启处理直接挂链（可用性优先）
+    applyWebSearch(ctx)
   }
 
   // 技能池端点（M1，见 src/skill-pool.js）：自带 webServer 注入与同源校验。

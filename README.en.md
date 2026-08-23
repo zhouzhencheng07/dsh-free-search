@@ -26,14 +26,42 @@ A file-tree toggle at the sidebar foot (next to Settings):
 
 - The panel takes over the sidebar browsing area, rooted at the **current
   session's workspace directory**
-- Directories expand lazily level by level; **clicking a file previews its
-  content in a right-docked panel (opens at full width by default — the
+- Directories expand lazily level by level; **clicking a file opens it in a
+  right-docked panel for preview/editing (opens at full width by default — the
   conversation shifts left to make room; drag the left edge to widen/narrow —
-  GitHub-like file view)**; a "copy path" button sits in the preview head
-- Data comes from the plugin host's read-only `/dsh-kit/tree` (directory
-  listing) and `/dsh-kit/read` (file content, 512 KB cap with truncation +
-  binary detection) endpoints (same-origin checked; the webserver binds
-  loopback only)
+  GitHub-like file view)**; a "copy path" button sits in the panel head;
+  ✎ enters edit mode (draft-based save, mtime CAS conflict asks to reload,
+  truncated previews are not editable)
+- Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
+  `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection)
+  and `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard
+  against concurrent overwrites) endpoints (same-origin checked; the webserver
+  binds loopback only)
+
+### Source control
+
+A source-control toggle on the composer tool row (default **Ctrl+.**), a
+VSCode-style in-page git workbench:
+
+- Shares the sidebar browsing slot with the file tree (one at a time); while
+  visible, the changes list **refreshes silently in the background** — AI edits
+  appear live without flicker
+- Groups **Staged Changes / Changes** (untracked files marked `U`) with
+  collapsible headers; each row shows name, folder hint, `+N −N` stats and a
+  status badge
+- Hover actions: **Stage ＋ / Unstage － / Discard ↩** (discard is destructive,
+  guarded by an inline two-step confirm); a commit box at the top commits staged
+  content and offers **Commit All** when nothing is staged (`add -A` first),
+  Enter submits
+- Click a file to open the docked **diff view**: full-file colored rendering
+  (removed red / added green, not a raw patch); very large files fall back to
+  the raw diff
+- Not a repository? One-click **Initialize Repository** (idempotent);
+  non-ASCII filenames fully supported (`core.quotePath=false`)
+- Data flows through host endpoints `/dsh-kit/git/status`, `/dsh-kit/git/diff`,
+  `/dsh-kit/git/init` and `/dsh-kit/git/op`
+  (stage/unstage/discard/stageAll/commit; spawns the git CLI directly, no
+  library; all same-origin checked)
 
 ### Skill pool management
 
@@ -65,6 +93,48 @@ A new "Skills" page in the settings panel:
   a hardcoded id map falling back to the gear; this is a cosmetic DOM swap by
   label text that silently keeps the gear on failure).
 
+### Settings card
+
+The dsh-kit card under the official Settings → plugin configuration page
+(namespace `dsh-kit`):
+
+- Feature switches — terminal / file tree / source control / skills page /
+  web search — each independent: turning one off hides its entry button and
+  disables its shortcut, instantly resetting any open view; the skills-page
+  switch removes the Skills entry from the settings nav (skills themselves are
+  unaffected)
+- Shortcut customization: terminal **Ctrl+/**, file tree **Ctrl+,**, source
+  control **Ctrl+.** — click Change to enter recording mode; the next key combo
+  becomes the new shortcut (Esc cancels)
+- A switch's child options stay collapsed until enabled (WYSIWYG); keys
+  overridden at the user layer carry an "Overridden" badge with one-click
+  reset to default
+- CardForm-style draft model: edits stage locally and persist on save, with a
+  write-then-read-back check; read-only deployments show a notice
+- The web-search switch is consumed host-side (all others gate browser-side):
+  when off, the agent's searches go through the official default channel;
+  this switch applies after restart
+
+### Web search
+
+A host-side capability merged in from
+[dsh-free-search](https://github.com/zhouzhencheng07/dsh-free-search) v0.2.0
+(that repository stays at v0.2.0 and no longer evolves on its own):
+
+- Registers the **free-search** provider on the dsh web seam, replacing the
+  base layer's pinned `deepseek-official` (which costs one paid DeepSeek model
+  call per search)
+- A keyless engine chain fails over by priority: **Tavily** (keyless; set
+  `TAVILY_API_KEY` for keyed quota) → **Sogou** (general fallback), with four
+  domain engines — **GitHub / arXiv / StackExchange / Hacker News** — joining
+  first when a query strongly signals their domain. Zero configuration.
+- The agent's `web_search` tool keeps producing native citation cards
+  (`sources[]` renders as usual)
+- The "Enable web search" switch on the settings card: on = the free engine
+  chain, off = the official default channel (`deepseek-official`); changes
+  apply after restart. A later profile patch can also pin `searchProvider`
+  to anything
+
 ## Install
 
 ```bash
@@ -73,7 +143,8 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 
 The package declares `dsh.bundle.patch`, so it is activated as a profile bundle
 layer (not just an inert dependency). Restart `dsh web` after installing; a
-terminal toggle and a file-tree toggle appear at the sidebar foot.
+terminal toggle and a file-tree toggle appear at the sidebar foot, and the
+agent's `web_search` switches to the free multi-source chain.
 
 ### Local development
 
@@ -108,7 +179,16 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   column / `ctx.layout`, because `openDetails()` is fixed at 360 and
   `setDetails` is unreachable from dynamic plugins); plus a full "Skills"
   page registered on the `settings.section` slot.
-- `cordis.patch.yml`: inserts the `dsh-kit` row into the bundle layer.
+- `src/web-search.js` + `src/engine-chain.js` + `src/engines/*`: web-search
+  host side (merged verbatim from dsh-free-search v0.2.0) — registers the
+  `free-search` provider on the web seam, gated by the settings card's
+  `searchEnabled` (decided at startup: on = engine chain, off = same-id
+  forwarding to the official channel); the engine chain fails over
+  by priority and domain engines only join on strong query signals.
+- `cordis.patch.yml`: inserts the `dsh-kit` row into the bundle layer and
+  rewrites the web row's `searchProvider` from the base layer's pinned
+  `deepseek-official` to `free-search` (a later profile patch can pin any
+  provider back).
 - Host-side `node-pty`/`ws` declare no dependencies: they resolve at runtime
   from the profile fallback node_modules.
 
