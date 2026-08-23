@@ -653,7 +653,7 @@ export function apply(ctx) {
               json(200, { available: true, untracked: true })
               return
             }
-            runGit(['diff', 'HEAD', '--', rel], root).then((d) => {
+            runGit(['-c', 'core.quotePath=false', 'diff', 'HEAD', '--', rel], root).then((d) => {
               json(200, { available: true, xy: line.slice(0, 2), diff: d.ok ? d.out : null })
             })
           })
@@ -706,6 +706,96 @@ export function apply(ctx) {
               return
             }
             json(200, { created: true, root: dir.path })
+          })
+        },
+      })
+
+      // POST /dsh-kit/git/op {cwd, op, path?, message?, all?}：源代码管理的写操作集
+      //   stage(path)      = git add -- <rel>
+      //   unstage(path)    = git restore --staged -- <rel>
+      //   discard(path)    = git restore -- <rel>（放弃未暂存改动，破坏性；前端已二次确认）
+      //   stageAll         = git add -A
+      //   commit(message, all?) = 可选先 add -A（暂存区为空时的"提交全部"），再 commit -m
+      const disposeGitOp = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/git/op',
+        handler: async (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'POST') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          if (!sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          let raw = ''
+          req.on('data', (c) => {
+            raw += c
+            if (raw.length > 65536) req.destroy()
+          })
+          req.on('end', async () => {
+            let body
+            try {
+              body = JSON.parse(raw)
+            } catch {
+              json(400, { error: 'bad json' })
+              return
+            }
+            const dir = validateCwd(String(body?.cwd ?? ''))
+            if (!dir.ok) {
+              json(400, { error: dir.message })
+              return
+            }
+            const root = gitRootFor(dir.path)
+            if (!root) {
+              json(400, { error: '不是 git 仓库' })
+              return
+            }
+            const op = String(body?.op ?? '')
+            const pathOp = op === 'stage' || op === 'unstage' || op === 'discard'
+            let rel = null
+            if (pathOp) {
+              const file = validateFile(String(body?.path ?? ''))
+              if (!file.ok) {
+                json(400, { error: file.message })
+                return
+              }
+              rel = path.relative(root, file.path)
+              if (rel.startsWith('..') || path.isAbsolute(rel)) {
+                json(400, { error: '文件不在项目根内' })
+                return
+              }
+            }
+            let r
+            if (op === 'stage') r = await runGit(['add', '--', rel], root)
+            else if (op === 'unstage') r = await runGit(['restore', '--staged', '--', rel], root)
+            else if (op === 'discard') r = await runGit(['restore', '--', rel], root)
+            else if (op === 'stageAll') r = await runGit(['add', '-A'], root)
+            else if (op === 'commit') {
+              const msg = String(body?.message ?? '').trim()
+              if (msg === '') {
+                json(400, { error: '缺少提交信息' })
+                return
+              }
+              if (body.all === true) await runGit(['add', '-A'], root)
+              r = await runGit(['commit', '-m', msg], root)
+              if (!r.ok && /nothing to commit/i.test(r.err + r.out)) {
+                json(200, { ok: true, empty: true })
+                return
+              }
+            } else {
+              json(400, { error: 'unknown op' })
+              return
+            }
+            if (!r.ok) {
+              json(500, { error: `git ${op} 失败：${(r.err || r.out || '').trim()}` })
+              return
+            }
+            json(200, { ok: true })
           })
         },
       })
@@ -834,6 +924,7 @@ export function apply(ctx) {
         disposeGitStatus()
         disposeGitDiff()
         disposeGitInit()
+        disposeGitOp()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
       }

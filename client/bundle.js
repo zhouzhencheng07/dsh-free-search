@@ -158,6 +158,15 @@ window.__ModuleLoader__.load({
       scOpen: "打开源代码管理",
       scInit: "初始化仓库",
       scInitFail: "初始化失败",
+      scStage: "暂存",
+      scUnstage: "取消暂存",
+      scDiscard: "放弃更改",
+      scDiscardConfirm: "放弃该文件的未暂存改动？此操作不可恢复。",
+      cmtPlaceholder: "提交信息（必填）",
+      scCommit: "提交",
+      scCommitAll: "提交全部更改",
+      cmtAllConfirm: "暂存区为空，将暂存并提交全部更改（含新文件）。继续？",
+      committed: "已提交",
       contentClose: "关闭预览",
       edit: "编辑",
       editSave: "保存",
@@ -262,6 +271,15 @@ window.__ModuleLoader__.load({
       scOpen: "Show source control",
       scInit: "Initialize Repository",
       scInitFail: "git init failed",
+      scStage: "Stage",
+      scUnstage: "Unstage",
+      scDiscard: "Discard changes",
+      scDiscardConfirm: "Discard unstaged changes in this file? This cannot be undone.",
+      cmtPlaceholder: "Commit message (required)",
+      scCommit: "Commit",
+      scCommitAll: "Commit All",
+      cmtAllConfirm: "Nothing staged. Stage ALL changes (including untracked) and commit?",
+      committed: "Committed",
       contentClose: "Close preview",
       contentDiff: "View diff",
       contentText: "Back to text",
@@ -499,6 +517,21 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-nums{flex:none;display:inline-flex;gap:4px;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:14px}
 .dshk-nadd{color:#73c991}
 .dshk-ndel{color:#e7757f}
+/* 提交框 + 行悬停操作 + 可折叠组头（源代码管理） */
+.dshk-cmt{display:flex;gap:6px;padding:8px 8px 2px}
+.dshk-cmt-input{flex:1;min-width:0;height:30px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1.5;padding:0 10px}
+.dshk-cmt-input:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
+.dshk-chg-head{cursor:pointer;user-select:none}
+.dshk-chg-chev{flex:none;font-size:9px;line-height:1;color:var(--dsw-alias-label-tertiary);transition:transform .15s var(--ds-ease-in-out);display:inline-block}
+.dshk-chg-chev[data-open]{transform:rotate(90deg)}
+.dshk-rowact{display:none;gap:2px;align-items:center}
+.dshk-chg-row:hover .dshk-rowact{display:inline-flex}
+.dshk-rowact button{appearance:none;width:20px;height:20px;font-size:11px;line-height:1;border:0;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.dshk-rowact button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 全文件着色 diff：完整内容内联渲染，删除红/新增绿/上下文正常 */
+.dshk-inline{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-all;padding:4px 0;user-select:text;color:var(--dsw-alias-label-secondary)}
+.dshk-il-add{color:#0dbc79;background:rgba(13,188,121,.08)}
+.dshk-il-del{color:#cd3131;background:rgba(205,49,49,.08)}
 /* 「更改」清单（VSCode 源代码管理式） */
 .dshk-changes{margin:2px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
 .dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:11px}
@@ -850,6 +883,48 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     /** git 状态轮询周期（①+③ 刷新机制）：可见时低频拉取，回窗口/聚焦立即补一次 */
     const GIT_POLL_MS = 4000;
 
+    /**
+     * 把 unified patch 的 hunk 套回完整新文件内容，产出全文件着色行：
+     * [type, text]，type ∈ ctx | add | del。上下文行来自新文件本体，
+     * 删除行插在原位、不推进新文件游标。hunk 与内容对不上时返回 null（调用方回退原始 patch）。
+     */
+    function buildInlineRows(patch, newLines) {
+      const lines = String(patch ?? "").split("\n");
+      const rows = [];
+      let idx = 0;
+      let i = 0;
+      let seenHunk = false;
+      while (i < lines.length && !/^@@ /.test(lines[i])) i++;
+      for (; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith("diff ") || line.startsWith("index ")) break;
+        const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+        if (m) {
+          seenHunk = true;
+          const newStart = parseInt(m[1], 10);
+          if (newStart < idx + 1) return null; // hunk 乱序，放弃内联
+          while (idx < newStart - 1) {
+            if (idx >= newLines.length) return null;
+            rows.push(["ctx", newLines[idx++]]);
+          }
+          continue;
+        }
+        if (line.startsWith("+")) {
+          rows.push(["add", line.slice(1)]);
+          idx++;
+        } else if (line.startsWith("-")) {
+          rows.push(["del", line.slice(1)]);
+        } else if (line.startsWith(" ")) {
+          if (idx >= newLines.length) return null;
+          rows.push(["ctx", newLines[idx] === undefined ? line.slice(1) : newLines[idx]]);
+          idx++;
+        }
+        // "\ No newline at end of file" 等杂项行忽略
+      }
+      while (idx < newLines.length) rows.push(["ctx", newLines[idx++]]);
+      return seenHunk ? rows : null;
+    }
+
     function FolderIcon() {
       return jsxRuntime.jsx(
         "svg",
@@ -1146,6 +1221,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     function GitChangesPanel({ cwd, onOpenFile }) {
       const [data, setData] = react.useState(null); // null=加载中；{available, root?, entries?}
       const [initializing, setInitializing] = react.useState(false);
+      const [msg, setMsg] = react.useState("");
+      const [busy, setBusy] = react.useState(false);
+      const [collapsed, setCollapsed] = react.useState({});
       const fetchRef = react.useRef(null);
       fetchRef.current = () => {
         if (!cwd) return;
@@ -1171,6 +1249,42 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
       }, [cwd]);
 
+      /** 写操作（暂存/取消暂存/放弃/提交）：可选二次确认，成功后静默刷新状态 */
+      const runOp = async (payload, confirmText) => {
+        if (busy || !cwd) return false;
+        if (confirmText !== undefined && confirmText !== null && !window.confirm(confirmText)) return false;
+        setBusy(true);
+        try {
+          const res = await fetch("/dsh-kit/git/op", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cwd, ...payload }),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok || !b.ok) throw new Error(b.error || `HTTP ${res.status}`);
+          if (fetchRef.current) fetchRef.current();
+          return true;
+        } catch (error) {
+          flashToast(`${t("skOpFail")}：${error?.message ?? error}`);
+          return false;
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const doCommit = async () => {
+        const message = msg.trim();
+        if (message === "" || busy || !available) return false;
+        // 暂存区为空 → 提交全部更改（含新文件），需确认；否则只提交已暂存
+        const all = stagedList.length === 0;
+        const okDone = await runOp({ op: "commit", message, all }, all ? t("cmtAllConfirm") : undefined);
+        if (okDone) {
+          setMsg("");
+          flashToast(t("committed"));
+        }
+        return okDone;
+      };
+
       const available = data !== null && data.available === true;
       const entries = available && Array.isArray(data.entries) ? data.entries : [];
       const root = available ? data.root ?? null : null;
@@ -1182,11 +1296,11 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         first.push(e);
       }
       const groups = [
-        { title: t("scStaged"), list: stagedList },
-        { title: t("scChanges"), list: workList },
+        { key: "staged", title: t("scStaged"), list: stagedList, isStaged: true },
+        { key: "work", title: t("scChanges"), list: workList, isStaged: false },
       ].filter((g) => g.list.length > 0);
 
-      const renderRow = (item) => {
+      const renderRow = (item, isStaged) => {
         const rel =
           root && item.abs.startsWith(root)
             ? item.abs.slice(root.length).replace(/^[\\/]/, "")
@@ -1194,6 +1308,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         const segs = rel.split(/[\\/]/);
         const name = segs[segs.length - 1];
         const dir = segs.slice(0, -1).join("/");
+        const isUntracked = String(item.xy).trim() === "?";
         return jsxRuntime.jsxs(
           "div",
           {
@@ -1203,6 +1318,15 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             children: [
               jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
               dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
+              // 悬停操作（对标 VSCode 行内命令）：暂存＋ / 放弃↩ / 取消暂存－
+              jsxRuntime.jsxs("span", { className: "dshk-rowact", children: [
+                isStaged
+                  ? jsxRuntime.jsx("button", { type: "button", title: t("scUnstage"), disabled: busy, onClick: (e) => { e.stopPropagation(); runOp({ op: "unstage", path: item.abs }); }, children: "－" })
+                  : jsxRuntime.jsx("button", { type: "button", title: t("scStage"), disabled: busy, onClick: (e) => { e.stopPropagation(); runOp({ op: "stage", path: item.abs }); }, children: "＋" }),
+                !isStaged && !isUntracked
+                  ? jsxRuntime.jsx("button", { type: "button", title: t("scDiscard"), disabled: busy, onClick: (e) => { e.stopPropagation(); runOp({ op: "discard", path: item.abs }, t("scDiscardConfirm")); }, children: "↩" })
+                  : null,
+              ] }),
               item.stats
                 ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
                     jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
@@ -1270,26 +1394,52 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                           }),
                         }),
                       ] })
-                    : groups.length === 0
-                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("scEmpty") })
-                      : jsxRuntime.jsxs(jsxRuntime.Fragment, {
-                          children: groups.map((group) =>
-                            jsxRuntime.jsxs(
-                              "div",
-                              {
-                                className: "dshk-changes",
-                                children: [
-                                  jsxRuntime.jsxs("div", { className: "dshk-chg-head", children: [
-                                    jsxRuntime.jsx("span", { children: group.title }),
-                                    jsxRuntime.jsx("span", { className: "dshk-sk-status", children: String(group.list.length) }),
-                                  ] }),
-                                  group.list.map(renderRow),
-                                ],
-                              },
-                              group.title,
-                            ),
-                          ),
-                        }),
+                    : jsxRuntime.jsxs(jsxRuntime.Fragment, {
+                        children: [
+                          // 提交框：暂存空=提交全部（需确认），否则只提交已暂存
+                          jsxRuntime.jsxs("div", { className: "dshk-cmt", children: [
+                            jsxRuntime.jsx("input", {
+                              className: "dshk-cmt-input",
+                              placeholder: t("cmtPlaceholder"),
+                              value: msg,
+                              onChange: (e) => setMsg(e.target.value),
+                              onKeyDown: (e) => { if (e.key === "Enter") doCommit(); },
+                            }),
+                            jsxRuntime.jsx("button", {
+                              type: "button",
+                              className: "dshk-btn-save",
+                              disabled: msg.trim() === "" || busy,
+                              title: stagedList.length > 0 ? t("scCommit") : t("scCommitAll"),
+                              onClick: doCommit,
+                              children: t(stagedList.length > 0 ? "scCommit" : "scCommitAll"),
+                            }),
+                          ] }),
+                          groups.length === 0
+                            ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("scEmpty") })
+                            : groups.map((group) => {
+                                const isOpen = !collapsed[group.key];
+                                return jsxRuntime.jsxs(
+                                  "div",
+                                  {
+                                    className: "dshk-changes",
+                                    children: [
+                                      jsxRuntime.jsxs("div", {
+                                        className: "dshk-chg-head",
+                                        onClick: () => setCollapsed((c) => ({ ...c, [group.key]: !c[group.key] })),
+                                        children: [
+                                          jsxRuntime.jsx("span", { className: "dshk-chg-chev", "data-open": isOpen || undefined, children: "▶" }),
+                                          jsxRuntime.jsx("span", { children: group.title }),
+                                          jsxRuntime.jsx("span", { className: "dshk-sk-status", children: String(group.list.length) }),
+                                        ],
+                                      }),
+                                      isOpen ? group.list.map((item) => renderRow(item, group.isStaged)) : null,
+                                    ],
+                                  },
+                                  group.key,
+                                );
+                              }),
+                        ],
+                      }),
           }),
         ],
       });
@@ -1308,7 +1458,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const [xy, setXy] = react.useState(null);
       const [mode, setMode] = react.useState("text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
-      const [diffNonce, setDiffNonce] = react.useState(0);
       // 任务3：编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
       const [draft, setDraft] = react.useState("");
@@ -1318,8 +1467,26 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const widthRef = react.useRef(0);
       const dragRef = react.useRef(null);
 
+      // diff 拉取（静默版）：已有内容时后台更新不闪「加载中」，数据到位再整体替换
+      const diffFetchRef = react.useRef(null);
+      diffFetchRef.current = () => {
+        const c = new AbortController();
+        fetch(`/dsh-kit/git/diff?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd ?? path)}`, { signal: c.signal })
+          .then(async (res) => {
+            const b = await res.json().catch(() => null);
+            if (!res.ok || !b || b.available !== true) throw new Error(b?.error ?? `HTTP ${res.status}`);
+            return b;
+          })
+          .then((b) => {
+            if (!c.signal.aborted)
+              setDiff({ phase: "ready", untracked: b.untracked === true, clean: b.clean === true, text: typeof b.diff === "string" ? b.diff : null });
+          })
+          .catch((error) => {
+            if (!c.signal.aborted && error?.name !== "AbortError") setDiff({ phase: "error", error: String(error?.message ?? error) });
+          });
+      };
       // git 状态获取（轮询版）：路径/打开时立即一次，可见期间每 GIT_POLL_MS 跟随，
-      // 转回可见/聚焦立即补；处于 diff 视图时顺带重拉 diff，AI 边改边看也能跟上
+      // 转回可见/聚焦立即补；处于 diff 视图时顺带静默重拉 diff，AI 边改边看也能跟上
       const xyFetchRef = react.useRef(null);
       xyFetchRef.current = () => {
         if (!cwd) return;
@@ -1341,7 +1508,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         const tick = () => {
           if (document.visibilityState === "hidden") return;
           if (xyFetchRef.current) xyFetchRef.current();
-          if (mode === "diff") setDiffNonce((n) => n + 1);
+          if (mode === "diff" && diffFetchRef.current) diffFetchRef.current();
         };
         const timer = window.setInterval(tick, GIT_POLL_MS);
         document.addEventListener("visibilitychange", tick);
@@ -1353,26 +1520,15 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
       }, [path, cwd]);
 
-      // diff 懒加载：切到 diff 视图才请求
+      // diff 视图挂载/停留期间：进入时拉一次，之后由轮询静默跟随（不闪加载态）
       react.useEffect(() => {
-        if (mode !== "diff") return undefined;
-        const c = new AbortController();
-        setDiff({ phase: "loading" });
-        fetch(`/dsh-kit/git/diff?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd ?? path)}`, { signal: c.signal })
-          .then(async (res) => {
-            const b = await res.json().catch(() => null);
-            if (!res.ok || !b || b.available !== true) throw new Error(b?.error ?? `HTTP ${res.status}`);
-            return b;
-          })
-          .then((b) => {
-            if (!c.signal.aborted)
-              setDiff({ phase: "ready", untracked: b.untracked === true, clean: b.clean === true, text: typeof b.diff === "string" ? b.diff : null });
-          })
-          .catch((error) => {
-            if (!c.signal.aborted) setDiff({ phase: "error", error: String(error?.message ?? error) });
-          });
-        return () => c.abort();
-      }, [mode, path, cwd, diffNonce]);
+        if (mode !== "diff" || !cwd) return undefined;
+        if (diffFetchRef.current) diffFetchRef.current();
+        const timer = window.setInterval(() => {
+          if (document.visibilityState !== "hidden" && diffFetchRef.current) diffFetchRef.current();
+        }, GIT_POLL_MS);
+        return () => window.clearInterval(timer);
+      }, [mode, path, cwd]);
 
       // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
       // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
@@ -1445,13 +1601,29 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const base = path.split(/[\\/]/).pop() || path;
       const displayPath = cwd && path.startsWith(cwd) ? path.slice(cwd.length).replace(/^[\\/]/, "") : path;
 
-      /** diff 视图：按行首 +/-/@@ 着色（自绘，不引库） */
+      /** diff 视图：优先全文件着色（hunk 套回完整内容，删除红/新增绿）；
+       *  截断大文件或 hunk 对不上时回退原始 patch 渲染 */
       const renderDiffView = () => {
         if (diff.phase === "loading") return jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
         if (diff.phase === "error")
           return jsxRuntime.jsx("div", { className: "dshk-note", title: diff.error, children: `${t("diffFail")}：${diff.error}` });
         if (diff.untracked) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffUntracked") });
         if (diff.clean || diff.text === null) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffEmpty") });
+
+        const newLines =
+          state.body && !state.body.truncated && typeof state.body.content === "string" ? state.body.content.split("\n") : null;
+        const rows = newLines ? buildInlineRows(diff.text, newLines) : null;
+        if (rows) {
+          return jsxRuntime.jsx(
+            "div",
+            {
+              className: "dshk-inline",
+              children: rows.map(([type, text], i) =>
+                jsxRuntime.jsx("div", { className: `dshk-il-${type}`, children: text === "" ? " " : text }, i),
+              ),
+            },
+          );
+        }
         const lines = diff.text.split("\n");
         return jsxRuntime.jsx("div", {
           className: "dshk-diff",
