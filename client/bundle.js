@@ -150,11 +150,14 @@ window.__ModuleLoader__.load({
       treeEmpty: "（空目录）",
       treeFail: "加载失败",
       treeTruncated: "条目过多，列表已截断",
-      chgTitle: "更改",
-      chgEmpty: "（没有更改）",
-      chgNotGit: "不是 git 仓库",
-      openChg: "打开更改视图",
-      chgClose: "关闭更改视图",
+      scTitle: "源代码管理",
+      scStaged: "暂存的更改",
+      scChanges: "更改",
+      scEmpty: "（没有更改）",
+      scNotGit: "当前目录不是 git 仓库",
+      scOpen: "打开源代码管理",
+      scInit: "初始化仓库",
+      scInitFail: "初始化失败",
       contentClose: "关闭预览",
       edit: "编辑",
       editSave: "保存",
@@ -251,11 +254,14 @@ window.__ModuleLoader__.load({
       treeEmpty: "(empty)",
       treeFail: "Failed to load",
       treeTruncated: "Too many entries, list truncated",
-      chgTitle: "Changes",
-      chgEmpty: "(no changes)",
-      chgNotGit: "Not a git repository",
-      openChg: "Show changes view",
-      chgClose: "Close changes view",
+      scTitle: "Source Control",
+      scStaged: "Staged Changes",
+      scChanges: "Changes",
+      scEmpty: "(no changes)",
+      scNotGit: "This folder is not in a git repository",
+      scOpen: "Show source control",
+      scInit: "Initialize Repository",
+      scInitFail: "git init failed",
       contentClose: "Close preview",
       contentDiff: "View diff",
       contentText: "Back to text",
@@ -815,6 +821,19 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
+    /** 在目录初始化仓库（源代码管理空态按钮用；已是仓库则幂等返回 created:false） */
+    function fetchGitInit(cwd) {
+      return fetch("/dsh-kit/git/init", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      }).then(async (res) => {
+        const b = await res.json().catch(() => ({}));
+        if (!res.ok || typeof b.created !== "boolean") throw new Error(b.error || `HTTP ${res.status}`);
+        return b;
+      });
+    }
+
     /** 文件行尾的 git 状态小徽标（M/A/D/R/U） */
     function GitBadge({ xy }) {
       const s = String(xy).trim();
@@ -1080,7 +1099,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
-                title: t("openChg"),
+                title: t("scOpen"),
                 onClick: () => setKitUi({ gitOpen: true }),
                 children: jsxRuntime.jsx(BranchIcon, {}),
               }),
@@ -1119,11 +1138,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    // ─────────── 更改视图（sidebar.workspaces 的 git 模式，VSCode 源代码管理式）───────────
-    // 文件树头部分支按钮进入；占用与文件树相同的单槽（互斥），✕ 关闭回到文件树。
-    // 数据=完整 status entries（含 stats ±N），轮询节奏同 ①+③。
-    function GitChangesPanel({ cwd, onOpenFile, onClose }) {
+    // ─────────── 源代码管理视图（sidebar.workspaces 的 git 模式，对标 VSCode SCM）───────────
+    // 文件树头部分支按钮进入；与文件树互斥占用同一单槽，**无 ✕**——原文件树入口
+    // 按钮（及 Ctrl+E）就是切换开关：树 ⇄ 源代码管理 来回切。
+    // 布局对标 VSCode：标题行（分支图标+名称+条目数+⟳）→「暂存的更改」组 →「更改」组
+    // （未跟踪 U 归入更改组）；非 git 目录给「初始化仓库」按钮（POST /git/init，幂等）。
+    function GitChangesPanel({ cwd, onOpenFile }) {
       const [data, setData] = react.useState(null); // null=加载中；{available, root?, entries?}
+      const [initializing, setInitializing] = react.useState(false);
       const fetchRef = react.useRef(null);
       fetchRef.current = () => {
         if (!cwd) return;
@@ -1152,6 +1174,60 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const available = data !== null && data.available === true;
       const entries = available && Array.isArray(data.entries) ? data.entries : [];
       const root = available ? data.root ?? null : null;
+      // 分组：暂存（xy 第一列非空格且非 ??）与其余（含未跟踪 U），对标 VSCode 两组
+      const stagedList = [];
+      const workList = [];
+      for (const e of entries) {
+        const first = e.xy && e.xy[0] !== " " && e.xy[0] !== "?" ? stagedList : workList;
+        first.push(e);
+      }
+      const groups = [
+        { title: t("scStaged"), list: stagedList },
+        { title: t("scChanges"), list: workList },
+      ].filter((g) => g.list.length > 0);
+
+      const renderRow = (item) => {
+        const rel =
+          root && item.abs.startsWith(root)
+            ? item.abs.slice(root.length).replace(/^[\\/]/, "")
+            : item.path;
+        const segs = rel.split(/[\\/]/);
+        const name = segs[segs.length - 1];
+        const dir = segs.slice(0, -1).join("/");
+        return jsxRuntime.jsxs(
+          "div",
+          {
+            className: "dshk-row dshk-chg-row",
+            title: item.abs,
+            onClick: () => onOpenFile(item.abs),
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
+              dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
+              item.stats
+                ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
+                    jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
+                    jsxRuntime.jsx("span", { className: "dshk-ndel", children: `−${item.stats.d}` }),
+                  ] })
+                : null,
+              jsxRuntime.jsx(GitBadge, { xy: item.xy }),
+            ],
+          },
+          item.abs,
+        );
+      };
+
+      const initRepo = async () => {
+        if (initializing || !cwd) return;
+        setInitializing(true);
+        try {
+          await fetchGitInit(cwd);
+          if (fetchRef.current) fetchRef.current();
+        } catch (error) {
+          flashToast(`${t("scInitFail")}：${error?.message ?? error}`);
+        } finally {
+          setInitializing(false);
+        }
+      };
 
       return jsxRuntime.jsxs("div", {
         className: "dshk-tree",
@@ -1160,7 +1236,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             className: "dshk-head",
             children: [
               jsxRuntime.jsx(BranchIcon, {}),
-              jsxRuntime.jsx("span", { className: "dshk-dir", title: root ?? "", children: t("chgTitle") }),
+              jsxRuntime.jsx("span", { className: "dshk-dir", title: root ?? "", children: t("scTitle") }),
               available && entries.length > 0
                 ? jsxRuntime.jsx("span", { className: "dshk-status", children: String(entries.length) })
                 : null,
@@ -1172,13 +1248,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 onClick: () => { if (fetchRef.current) fetchRef.current(); },
                 children: "⟳",
               }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-btn",
-                title: t("chgClose"),
-                onClick: onClose,
-                children: "✕",
-              }),
             ],
           }),
           jsxRuntime.jsx("div", {
@@ -1189,39 +1258,37 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 : data === null
                   ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
                   : !available
-                    ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("chgNotGit") })
-                    : entries.length === 0
-                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("chgEmpty") })
+                    ? jsxRuntime.jsxs("div", { style: { padding: "16px 10px", textAlign: "center" }, children: [
+                        jsxRuntime.jsx("div", { className: "dshk-note", style: { padding: 0 }, children: t("scNotGit") }),
+                        jsxRuntime.jsx("div", { style: { marginTop: 10 } , children:
+                          jsxRuntime.jsx("button", {
+                            type: "button",
+                            className: "dshk-btn-save",
+                            disabled: initializing,
+                            onClick: initRepo,
+                            children: t(initializing ? "saving" : "scInit"),
+                          }),
+                        }),
+                      ] })
+                    : groups.length === 0
+                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("scEmpty") })
                       : jsxRuntime.jsxs(jsxRuntime.Fragment, {
-                          children: entries.map((item) => {
-                            const rel =
-                              root && item.abs.startsWith(root)
-                                ? item.abs.slice(root.length).replace(/^[\\/]/, "")
-                                : item.path;
-                            const segs = rel.split(/[\\/]/);
-                            const name = segs[segs.length - 1];
-                            const dir = segs.slice(0, -1).join("/");
-                            return jsxRuntime.jsxs(
+                          children: groups.map((group) =>
+                            jsxRuntime.jsxs(
                               "div",
                               {
-                                className: "dshk-row dshk-chg-row",
-                                title: item.abs,
-                                onClick: () => onOpenFile(item.abs),
+                                className: "dshk-changes",
                                 children: [
-                                  jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
-                                  dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
-                                  item.stats
-                                    ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
-                                        jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
-                                        jsxRuntime.jsx("span", { className: "dshk-ndel", children: `−${item.stats.d}` }),
-                                      ] })
-                                    : null,
-                                  jsxRuntime.jsx(GitBadge, { xy: item.xy }),
+                                  jsxRuntime.jsxs("div", { className: "dshk-chg-head", children: [
+                                    jsxRuntime.jsx("span", { children: group.title }),
+                                    jsxRuntime.jsx("span", { className: "dshk-sk-status", children: String(group.list.length) }),
+                                  ] }),
+                                  group.list.map(renderRow),
                                 ],
                               },
-                              item.abs,
-                            );
-                          }),
+                              group.title,
+                            ),
+                          ),
                         }),
           }),
         ],
@@ -1573,11 +1640,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return jsxRuntime.jsx("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
-        "aria-pressed": ui.treeOpen,
+        // 树或源代码管理占用侧边栏时都算按下态
+        "aria-pressed": ui.treeOpen || ui.gitOpen,
         title: t("treeToggle"),
         onClick: () => {
-          // 开树时退出更改视图（两者互斥共享侧边栏浏览区）；开关都清预览
-          setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null });
+          // 三态循环：无 → 文件树 → 源代码管理 → 回文件树（VSCode 活动栏式切换）
+          if (ui.gitOpen) setKitUi({ gitOpen: false, treeOpen: true, openFile: null });
+          else if (ui.treeOpen) setKitUi({ treeOpen: false, gitOpen: true, openFile: null });
+          else setKitUi({ treeOpen: true, openFile: null });
         },
         children: jsxRuntime.jsx(FolderIcon, {}),
       });
@@ -1639,7 +1709,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
           dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
             ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), onClose: () => setKitUi({ gitOpen: false }), ...owner })
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner })
               : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner }),
           );
         } catch (error) {
@@ -1691,8 +1761,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            // 与文件树入口同语义：开树即退出更改视图（互斥单槽）
-            setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null });
+            // 与文件树入口同语义：三态循环 无→树→源代码管理
+            if (kitUi.gitOpen) setKitUi({ gitOpen: false, treeOpen: true, openFile: null });
+            else if (kitUi.treeOpen) setKitUi({ treeOpen: false, gitOpen: true, openFile: null });
+            else setKitUi({ treeOpen: true, openFile: null });
             return;
           }
           if (e.key === "Escape") {

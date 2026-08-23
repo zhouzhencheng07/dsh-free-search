@@ -660,6 +660,56 @@ export function apply(ctx) {
         },
       })
 
+      // POST /dsh-kit/git/init {cwd}：在目录初始化仓库（仅当尚无 .git 时执行；
+      // 已是仓库则幂等返回 created:false）。供源代码管理视图的空态按钮使用。
+      const disposeGitInit = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/git/init',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'POST') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          if (!sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          let raw = ''
+          req.on('data', (c) => {
+            raw += c
+            if (raw.length > 4096) req.destroy()
+          })
+          req.on('end', async () => {
+            let body
+            try {
+              body = JSON.parse(raw)
+            } catch {
+              json(400, { error: 'bad json' })
+              return
+            }
+            const dir = validateCwd(String(body?.cwd ?? ''))
+            if (!dir.ok) {
+              json(400, { error: dir.message })
+              return
+            }
+            if (gitRootFor(dir.path)) {
+              json(200, { created: false, root: dir.path })
+              return
+            }
+            const r = await runGit(['init'], dir.path)
+            if (!r.ok) {
+              json(500, { error: `git init 失败：${r.err || r.out || 'unknown'}` })
+              return
+            }
+            json(200, { created: true, root: dir.path })
+          })
+        },
+      })
+
       // ── 终端 WebSocket 端点 ──
       // 一条 WS 连接 = 一个 pty 会话；连接关闭即杀进程（面板语义见文件头注释）。
       let disposeUpgrade = null
@@ -783,6 +833,7 @@ export function apply(ctx) {
         disposeWrite()
         disposeGitStatus()
         disposeGitDiff()
+        disposeGitInit()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
       }
