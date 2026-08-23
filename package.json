@@ -1,6 +1,6 @@
 {
   "name": "dsh-kit",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Page capability kit for DeepSeek Harness (dsh): VSCode-style terminal panel and sidebar file tree in the current session workspace, more toggles later",
   "license": "MIT",
   "type": "module",
