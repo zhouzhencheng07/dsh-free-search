@@ -549,24 +549,41 @@ export function apply(ctx) {
             json(200, { available: false })
             return
           }
-          runGit(['status', '--porcelain'], root).then((r) => {
+          ;(async () => {
+            const r = await runGit(['status', '--porcelain'], root)
             if (!r.ok) {
               json(200, { available: false })
               return
             }
-            const entries = r.out
-              .split('\n')
-              .filter((line) => line.length > 3)
-              .map((line) => {
-                const xy = line.slice(0, 2)
-                let p = line.slice(3).trimEnd()
-                // 重命名行取 "old -> new" 的新路径
-                const arrow = p.indexOf(' -> ')
-                if (arrow >= 0) p = p.slice(arrow + 4)
-                return { xy, path: p, abs: path.join(root, p) }
-              })
+            const entries = []
+            const untrackedDirs = []
+            for (const line of r.out.split('\n')) {
+              if (line.length <= 3) continue
+              const xy = line.slice(0, 2)
+              let p = line.slice(3).trimEnd()
+              // 重命名行取 "old -> new" 的新路径
+              const arrow = p.indexOf(' -> ')
+              if (arrow >= 0) p = p.slice(arrow + 4)
+              // 整个目录未跟踪时 porcelain 只给 '?? dir/'——展开为其中的具体文件，
+              // 否则前端会拿目录路径去当文件预览/diff（报"不是文件"）
+              if (xy === '??' && /[\\/]$/.test(p)) {
+                untrackedDirs.push(p.replace(/[\\/]+$/, ''))
+                continue
+              }
+              entries.push({ xy, path: p, abs: path.join(root, p) })
+            }
+            if (untrackedDirs.length > 0) {
+              const u = await runGit(['ls-files', '--others', '--exclude-standard', '--', ...untrackedDirs], root)
+              if (u.ok) {
+                for (const f of u.out.split('\n')) {
+                  const relFile = f.trim()
+                  if (relFile === '') continue
+                  entries.push({ xy: '??', path: relFile, abs: path.join(root, relFile) })
+                }
+              }
+            }
             json(200, { available: true, root, entries })
-          })
+          })()
         },
       })
 
