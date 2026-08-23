@@ -22,21 +22,18 @@
 //
 // 协议（JSON 文本帧，双向）：
 //   浏览器 → 宿主：
-//     {t:'init', cwd, cols, rows}   连接后第一条：接线池中该 cwd 的 shell，没有则新建
+//     {t:'init', cwd, cols, rows}   连接后第一条：校验 cwd 并启动 shell
 //     {t:'i', d}                    键盘输入（原样写入 pty）
 //     {t:'r', cols, rows}           面板尺寸变化
-//     {t:'kill', cwd}               终止该 cwd 的 shell 并清出池
 //   宿主 → 浏览器：
-//     {t:'started', shell, cwd}     接线就绪（新建或 attach）
-//     {t:'replay', d}               attach 时补发的历史输出（≤256KB 缓冲）
+//     {t:'started', shell, cwd}     pty 就绪
 //     {t:'o', d}                    输出
 //     {t:'exit', exitCode}          进程退出（随后服务端关闭连接）
 //     {t:'error', message}          致命错误（随后关闭连接）
 //
-// shell 保活（任务1）：池按 realpath(cwd) 键控（容量 4，LRU 淘汰）。面板关闭/
-// 页面刷新只 detach 不杀——长命令继续跑、输出持续进回放缓冲；重开面板或切回
-// 工作区时重新接线并补发缓冲。只有「终止」（{t:'kill'}）、进程自然退出或池
-// 淘汰才真正结束 shell。同一 cwd 同时只有一个接线位（后连者接管）。
+// 工作区语义（2026-08-23 用户定稿）：浏览器端在「打开终端」那一刻把当时的
+// 工作目录固定下来传给本端点；面板存续期间无论怎么切换会话/工作区都不会
+// 重连或换 shell，直到用户关闭面板（连接关闭即杀进程）。
 
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -631,73 +628,25 @@ export function apply(ctx) {
         },
       })
 
-      // ── 终端 WebSocket 端点（任务1：shell 保活）──
+      // ── 终端 WebSocket 端点 ──
+      // 一条 WS 连接 = 一个 pty 会话；连接关闭即杀进程（面板语义见文件头注释）。
       let disposeUpgrade = null
       let disposeHttp = null
       if (pty && WebSocketServer) {
         const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 
-        // ── shell 池：realpath(cwd) 键控，断开只 detach 不杀，重连 attach + 回放 ──
-        const POOL_LIMIT = 4
-        const REPLAY_LIMIT = 256 * 1024 // 回放缓冲上限（字节），超出从头裁半
-        const shellPool = new Map()
-
-        const wsOpen = (w) => w && w.readyState === w.OPEN
-        const wsSend = (w, obj) => {
-          try {
-            w.send(JSON.stringify(obj))
-          } catch {
-            // 连接正在断开，忽略
-          }
-        }
-        /** 追加输出到回放缓冲；超限粗裁（回放用途对精度不敏感） */
-        function appendReplay(entry, d) {
-          entry.buffer += d
-          if (Buffer.byteLength(entry.buffer) > REPLAY_LIMIT) {
-            entry.buffer = entry.buffer.slice(-Math.floor(REPLAY_LIMIT / 2))
-          }
-          entry.bufBytes = Buffer.byteLength(entry.buffer)
-        }
-        /** 给池项接上输出/退出监听：输出无论是否有人接线都进缓冲 */
-        function wireEntry(entry) {
-          entry.dataSub = entry.proc.onData((d) => {
-            appendReplay(entry, d)
-            if (wsOpen(entry.ws)) wsSend(entry.ws, { t: 'o', d })
-          })
-          entry.exitSub = entry.proc.onExit(({ exitCode }) => {
-            entry.exited = true
-            if (wsOpen(entry.ws)) wsSend(entry.ws, { t: 'exit', exitCode })
-            try {
-              entry.dataSub.dispose()
-            } catch {}
-            try {
-              entry.exitSub.dispose()
-            } catch {}
-            entry.ws = null
-            if (shellPool.get(entry.cwd) === entry) shellPool.delete(entry.cwd)
-          })
-        }
-        function killEntry(entry) {
-          try {
-            entry.proc.kill()
-          } catch {
-            // 已退出
-          }
-          // onExit 里会再删一次；这里同步删让 LRU/重建路径立即可见
-          if (shellPool.get(entry.cwd) === entry) shellPool.delete(entry.cwd)
-        }
-        /** 池容量 LRU：Map 迭代序即插入序，队首最旧 */
-        function enforceLimit() {
-          while (shellPool.size > POOL_LIMIT) {
-            const oldestKey = shellPool.keys().next().value
-            killEntry(shellPool.get(oldestKey))
-          }
-        }
-
-        /** 一条 WS 连接 = 一个接线位 */
         wss.on('connection', (ws) => {
-          let bound = null // 本连接当前接线的池项
+          let proc = null
           let dead = false
+          const send = (obj) => {
+            if (!dead && ws.readyState === ws.OPEN) {
+              try {
+                ws.send(JSON.stringify(obj))
+              } catch {
+                // 连接正在断开，忽略
+              }
+            }
+          }
 
           ws.on('message', (raw) => {
             let msg
@@ -709,94 +658,63 @@ export function apply(ctx) {
             if (!msg || typeof msg !== 'object') return
 
             if (msg.t === 'init') {
-              if (dead || bound) return
+              if (proc) return
               const dir = validateCwd(msg.cwd)
               if (!dir.ok) {
-                wsSend(ws, { t: 'error', message: dir.message })
+                send({ t: 'error', message: dir.message })
                 ws.close(1008, 'invalid cwd')
                 return
               }
+              const shell = resolveShell()
               const cols = clampDim(msg.cols, 2, 500, 80)
               const rows = clampDim(msg.rows, 2, 300, 24)
-
-              let entry = shellPool.get(dir.path)
-              if (entry && !entry.exited) {
-                // attach：另一连接还占着接线位则接管（单接线位，后到者赢）
-              } else {
-                if (entry) {
-                  // exited 残留：清掉再新建
-                  shellPool.delete(dir.path)
-                  entry = null
-                }
-                const shell = resolveShell()
-                try {
-                  const proc = pty.spawn(shell.file, shell.args, {
-                    name: 'xterm-256color',
-                    cols,
-                    rows,
-                    cwd: dir.path,
-                    env: { ...process.env, TERM: 'xterm-256color' },
-                  })
-                  entry = { cwd: dir.path, label: shell.label, proc, dataSub: null, exitSub: null, exited: false, buffer: '', bufBytes: 0, ws }
-                  shellPool.set(dir.path, entry)
-                  wireEntry(entry)
-                } catch (error) {
-                  wsSend(ws, { t: 'error', message: `启动 shell 失败：${error?.message ?? error}` })
-                  ws.close(1011, 'spawn failed')
-                  return
-                }
-              }
-
-              bound = entry
-              entry.ws = ws
-              // LRU 触碰：重新插入把该项挪到队尾
-              shellPool.delete(dir.path)
-              shellPool.set(dir.path, entry)
-              enforceLimit()
-
-              wsSend(ws, { t: 'started', shell: entry.label, cwd: dir.path })
-              if (entry.buffer !== '') wsSend(ws, { t: 'replay', d: entry.buffer })
               try {
-                entry.proc.resize(cols, rows)
+                proc = pty.spawn(shell.file, shell.args, {
+                  name: 'xterm-256color',
+                  cols,
+                  rows,
+                  cwd: dir.path,
+                  env: { ...process.env, TERM: 'xterm-256color' },
+                })
+              } catch (error) {
+                send({ t: 'error', message: `启动 shell 失败：${error?.message ?? error}` })
+                ws.close(1011, 'spawn failed')
+                return
+              }
+              send({ t: 'started', shell: shell.label, cwd: dir.path })
+              proc.onData((data) => send({ t: 'o', d: data }))
+              proc.onExit(({ exitCode }) => {
+                send({ t: 'exit', exitCode })
+                try {
+                  ws.close(1000, 'exited')
+                } catch {
+                  // 已关闭
+                }
+              })
+              return
+            }
+
+            if (!proc) return
+            if (msg.t === 'i' && typeof msg.d === 'string') {
+              proc.write(msg.d)
+            } else if (msg.t === 'r') {
+              try {
+                proc.resize(clampDim(msg.cols, 2, 500, 80), clampDim(msg.rows, 2, 300, 24))
               } catch {
                 // 进程可能刚退出
               }
-              return
-            }
-
-            if (msg.t === 'i' && typeof msg.d === 'string') {
-              if (bound) {
-                try {
-                  bound.proc.write(msg.d)
-                } catch {
-                  // 进程可能刚退出
-                }
-              }
-              return
-            }
-            if (msg.t === 'r') {
-              if (bound) {
-                try {
-                  bound.proc.resize(clampDim(msg.cols, 2, 500, 80), clampDim(msg.rows, 2, 300, 24))
-                } catch {
-                  // 进程可能刚退出
-                }
-              }
-              return
-            }
-            if (msg.t === 'kill') {
-              // 终止并清池；onExit 会给本连接发 {t:'exit'} 后关闭连接
-              if (bound) killEntry(bound)
-              return
             }
           })
 
           ws.on('close', () => {
             dead = true
-            // 只 detach：进程与回放缓冲保留，供下次接线回放
-            if (bound) {
-              bound.ws = null
-              bound = null
+            if (proc) {
+              try {
+                proc.kill()
+              } catch {
+                // 已退出
+              }
+              proc = null
             }
           })
           ws.on('error', () => {

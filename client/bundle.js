@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { terminalOpen: false, treeOpen: false, openFile: null };
+    let kitUi = { terminalOpen: false, treeOpen: false, openFile: null, termCwd: null };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -140,7 +140,6 @@ window.__ModuleLoader__.load({
       code: "代码",
       restart: "重新启动终端",
       close: "关闭终端面板",
-      kill: "终止终端进程",
       toggle: "切换终端（Ctrl+`）",
       vendorFail: "终端组件加载失败",
       treeLabel: "文件树",
@@ -237,7 +236,6 @@ window.__ModuleLoader__.load({
       code: "code",
       restart: "Restart terminal",
       close: "Close terminal panel",
-      kill: "Kill terminal process",
       toggle: "Toggle terminal (Ctrl+`)",
       vendorFail: "Failed to load terminal components",
       treeLabel: "Files",
@@ -578,8 +576,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     // ─────────── 终端面板 ───────────
     function TerminalPanel({ cwd, onClose }) {
       const bodyRef = react.useRef(null);
-      // 当前接线（终止按钮用）：面板卸载/重连时由 effect 维护
-      const termWsRef = react.useRef(null);
       const [nonce, setNonce] = react.useState(0);
       const [state, setState] = react.useState({ phase: "connecting", detail: "" });
       // 宽度跟随对话列：测量 _centerCol 的视口位置（侧栏开合/拖宽/窗口缩放都会触发）
@@ -672,7 +668,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             ro.observe(bodyRef.current);
 
             ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/dsh-kit/terminal`);
-            termWsRef.current = ws;
             ws.onopen = () => {
               ws.send(JSON.stringify({ t: "init", cwd, cols: term.cols, rows: term.rows }));
             };
@@ -689,9 +684,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               } else if (m.t === "started") {
                 setState({ phase: "ready", detail: m.shell ?? "" });
                 term.focus();
-              } else if (m.t === "replay" && typeof m.d === "string") {
-                // 任务1：attach 池中已有 shell 时先补发历史输出
-                term.write(m.d);
               } else if (m.t === "exit") {
                 setState({ phase: "exited", detail: String(m.exitCode ?? "") });
                 term.write(`\r\n\x1b[90m[${t("exited")} · ${t("code")} ${m.exitCode}]\x1b[0m\r\n`);
@@ -731,7 +723,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             }
           }
           if (host) host.remove();
-          if (termWsRef.current === ws) termWsRef.current = null;
         };
       }, [cwd, nonce]);
 
@@ -759,26 +750,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 : null,
               statusText !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: statusText }) : null,
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
-              cwd
-                ? jsxRuntime.jsx("button", {
-                    type: "button",
-                    className: "dshk-btn",
-                    title: t("kill"),
-                    onClick: () => {
-                      // 终止 = 杀池中 shell（服务端随后回 exit 并清池）；面板随即关闭
-                      const w = termWsRef.current;
-                      if (w && w.readyState === w.OPEN) {
-                        try {
-                          w.send(JSON.stringify({ t: "kill", cwd }));
-                        } catch {
-                          // 连接正在断开
-                        }
-                      }
-                      onClose();
-                    },
-                    children: "⏹",
-                  })
-                : null,
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
@@ -1354,14 +1325,20 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
     // ─────────── 入口按钮（conversation.input.left）───────────
     // 只负责开合与按压态；面板本体在 KitSurfaces（shell.overlay）渲染。
-    function TerminalEntry() {
+    function TerminalEntry(props) {
       const ui = useKitUi();
+      const cwd = useCurrentCwd(props);
       return jsxRuntime.jsx("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": ui.terminalOpen,
         title: t("toggle"),
-        onClick: () => setKitUi({ terminalOpen: !ui.terminalOpen }),
+        onClick: () => {
+          // 打开那一刻固定当时的会话工作区；面板存续期间不受会话/工作区切换影响，
+          // 关闭（✕）即结束该 shell。
+          if (ui.terminalOpen) setKitUi({ terminalOpen: false });
+          else setKitUi({ terminalOpen: true, termCwd: cwd });
+        },
         children: jsxRuntime.jsx(TerminalIcon, {}),
       });
     }
@@ -1478,7 +1455,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           if (termCombo && cfg.terminalEnabled && comboMatches(e, termCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            setKitUi({ terminalOpen: !kitUi.terminalOpen });
+            // 与入口按钮同语义：打开那一刻固定当前工作区
+            setKitUi(kitUi.terminalOpen ? { terminalOpen: false } : { terminalOpen: true, termCwd: cwd });
             return;
           }
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
@@ -1499,7 +1477,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
           ui.terminalOpen && cfg.terminalEnabled
-            ? jsxRuntime.jsx(TerminalPanel, { cwd, onClose: () => setKitUi({ terminalOpen: false }) })
+            ? jsxRuntime.jsx(TerminalPanel, { cwd: ui.termCwd, onClose: () => setKitUi({ terminalOpen: false }) })
             : null,
           ui.treeOpen && cfg.fileTreeEnabled && ui.openFile
             ? jsxRuntime.jsx(FileContentPane, { path: ui.openFile, cwd, onClose: () => setKitUi({ openFile: null }) })
