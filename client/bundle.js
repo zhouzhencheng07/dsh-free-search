@@ -1472,7 +1472,15 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
         window.addEventListener("keydown", onKey, true);
         return () => window.removeEventListener("keydown", onKey, true);
-      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut]);
+        // cwd 必须在依赖里：否则闭包缓存首帧（会话未水化时为 null）的工作区，
+        // 之后按快捷键开终端永远绑到 null
+      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut]);
+
+      // 自愈：打开时尚无工作区（如刚启动就按快捷键，绑到了 null），等当前 cwd
+      // 就绪后补绑一次；已有绑定的面板不受工作区切换影响
+      react.useEffect(() => {
+        if (ui.terminalOpen && !ui.termCwd && cwd) setKitUi({ termCwd: cwd });
+      }, [ui.terminalOpen, ui.termCwd, cwd]);
 
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
