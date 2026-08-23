@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { terminalOpen: false, treeOpen: false, openFile: null, termCwd: null };
+    let kitUi = { terminalOpen: false, treeOpen: false, gitOpen: false, openFile: null, openFrom: null, termCwd: null };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -65,6 +65,7 @@ window.__ModuleLoader__.load({
       skillsPageEnabled: true,
       terminalShortcut: "Ctrl+`",
       fileTreeShortcut: "Ctrl+E",
+      scShortcut: "Ctrl+Shift+G",
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -123,6 +124,10 @@ window.__ModuleLoader__.load({
           typeof v.fileTreeShortcut === "string" && parseCombo(v.fileTreeShortcut)
             ? v.fileTreeShortcut
             : CFG_DEFAULTS.fileTreeShortcut,
+        scShortcut:
+          typeof v.scShortcut === "string" && parseCombo(v.scShortcut)
+            ? v.scShortcut
+            : CFG_DEFAULTS.scShortcut,
       };
     }
     // 模块级通道（apply 注入 / KitSurfaces 订阅 / 设置卡捕获互斥）
@@ -174,8 +179,6 @@ window.__ModuleLoader__.load({
       editSaved: "已保存",
       editFail: "保存失败",
       editConflict: "文件在打开后被外部修改，重新加载最新版本？",
-      contentDiff: "查看 diff",
-      contentText: "返回原文",
       diffFail: "diff 加载失败",
       diffEmpty: "（无未暂存差异）",
       diffUntracked: "未跟踪文件，暂无 diff",
@@ -232,6 +235,8 @@ window.__ModuleLoader__.load({
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
       cfgFileTreeShortcutHint: "切换文件树的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
+      cfgScShortcut: "源代码管理快捷键",
+      cfgScShortcutHint: "切换源代码管理视图的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgCapturing: "按下组合键…（Esc 取消）",
       cfgCapture: "修改",
       overridden: "已覆盖",
@@ -281,8 +286,6 @@ window.__ModuleLoader__.load({
       cmtAllConfirm: "Nothing staged. Stage ALL changes (including untracked) and commit?",
       committed: "Committed",
       contentClose: "Close preview",
-      contentDiff: "View diff",
-      contentText: "Back to text",
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
@@ -345,6 +348,8 @@ window.__ModuleLoader__.load({
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
       cfgFileTreeShortcutHint: "Combo that toggles the file tree; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
+      cfgScShortcut: "Source control shortcut",
+      cfgScShortcutHint: "Combo that toggles the source control view; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgCapturing: "Press a combo… (Esc to cancel)",
       cfgCapture: "Change",
       overridden: "Overridden",
@@ -1451,12 +1456,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     // 让位布局：挂 body.dshk-pane-open 类 + 根节点设 --dshk-pane-w，
     // 样式规则把中列（对话）margin-right 顶开面板宽度——对话左移，内容不被遮挡。
     // 默认宽度即最大（左移到底），左缘拖拽手柄可收窄/放宽。
-    function FileContentPane({ path, cwd, onClose }) {
+    function FileContentPane({ path, source, cwd, onClose }) {
       const [state, setState] = react.useState({ phase: "loading" });
       const [dragging, setDragging] = react.useState(false);
       // 任务4：git 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载
-      const [xy, setXy] = react.useState(null);
-      const [mode, setMode] = react.useState("text");
+      // 视图模式由来源决定：源代码管理打开=直接 diff；文件树打开=原文（可编辑）
+      const mode = source === "scm" ? "diff" : "text";
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 任务3：编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -1485,30 +1490,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             if (!c.signal.aborted && error?.name !== "AbortError") setDiff({ phase: "error", error: String(error?.message ?? error) });
           });
       };
-      // git 状态获取（轮询版）：路径/打开时立即一次，可见期间每 GIT_POLL_MS 跟随，
-      // 转回可见/聚焦立即补；处于 diff 视图时顺带静默重拉 diff，AI 边改边看也能跟上
-      const xyFetchRef = react.useRef(null);
-      xyFetchRef.current = () => {
-        if (!cwd) return;
-        const c = new AbortController();
-        fetchGitStatus(cwd, c.signal)
-          .then((b) => {
-            if (c.signal.aborted || !b.available) return;
-            const hit = (b.entries ?? []).find((e) => e.abs === path);
-            setXy(hit ? hit.xy : null);
-          })
-          .catch(() => {});
-      };
+      // diff 数据（仅源代码管理来源）：进入时拉一次，可见期间低频静默跟随
+      // （AI 边改边看也能跟上），转回可见/聚焦立即补
       react.useEffect(() => {
-        setMode("text");
-        setXy(null);
+        if (source !== "scm" || !cwd) return undefined;
         setDiff({ phase: "loading" });
-        if (!cwd) return undefined;
-        if (xyFetchRef.current) xyFetchRef.current();
+        if (diffFetchRef.current) diffFetchRef.current();
         const tick = () => {
-          if (document.visibilityState === "hidden") return;
-          if (xyFetchRef.current) xyFetchRef.current();
-          if (mode === "diff" && diffFetchRef.current) diffFetchRef.current();
+          if (document.visibilityState !== "hidden" && diffFetchRef.current) diffFetchRef.current();
         };
         const timer = window.setInterval(tick, GIT_POLL_MS);
         document.addEventListener("visibilitychange", tick);
@@ -1518,17 +1507,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           document.removeEventListener("visibilitychange", tick);
           window.removeEventListener("focus", tick);
         };
-      }, [path, cwd]);
-
-      // diff 视图挂载/停留期间：进入时拉一次，之后由轮询静默跟随（不闪加载态）
-      react.useEffect(() => {
-        if (mode !== "diff" || !cwd) return undefined;
-        if (diffFetchRef.current) diffFetchRef.current();
-        const timer = window.setInterval(() => {
-          if (document.visibilityState !== "hidden" && diffFetchRef.current) diffFetchRef.current();
-        }, GIT_POLL_MS);
-        return () => window.clearInterval(timer);
-      }, [mode, path, cwd]);
+      }, [source, path, cwd]);
 
       // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
       // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
@@ -1707,7 +1686,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             setState((s) => ({ ...s, body: { ...s.body, content: draft, mtimeMs: typeof b.mtimeMs === "number" ? b.mtimeMs : s.body.mtimeMs } }));
             setEditing(false);
             flashToast(t("editSaved"));
-            if (xyFetchRef.current) xyFetchRef.current(); // 保存后立即刷新 git 状态（⇄ 出现）
           })
           .catch((error) => {
             flashToast(`${t("editFail")}：${error?.message ?? error}`);
@@ -1751,22 +1729,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
-              state.phase === "ready" && state.body && !state.body.binary && !state.body.truncated && !editing
+              // 文件树来源：仅 ✎ 编辑 + ✕ 关闭；源代码管理来源：直接 diff 视图，仅 ✕
+              source === "tree" && state.phase === "ready" && state.body && !state.body.binary && !state.body.truncated && !editing
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
                     title: t("edit"),
                     onClick: startEdit,
                     children: "✎",
-                  })
-                : null,
-              xy
-                ? jsxRuntime.jsx("button", {
-                    type: "button",
-                    className: "dshk-btn",
-                    title: t(mode === "text" ? "contentDiff" : "contentText"),
-                    onClick: () => setMode(mode === "text" ? "diff" : "text"),
-                    children: "⇄",
                   })
                 : null,
               jsxRuntime.jsx("button", {
@@ -1780,7 +1750,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           }),
           editing
             ? renderEditor()
-            : mode === "diff" && xy
+            : mode === "diff"
               ? renderDiffView()
               : body,
         ],
@@ -1812,16 +1782,28 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return jsxRuntime.jsx("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
-        // 树或源代码管理占用侧边栏时都算按下态
-        "aria-pressed": ui.treeOpen || ui.gitOpen,
+        "aria-pressed": ui.treeOpen,
         title: t("treeToggle"),
         onClick: () => {
-          // 三态循环：无 → 文件树 → 源代码管理 → 回文件树（VSCode 活动栏式切换）
-          if (ui.gitOpen) setKitUi({ gitOpen: false, treeOpen: true, openFile: null });
-          else if (ui.treeOpen) setKitUi({ treeOpen: false, gitOpen: true, openFile: null });
-          else setKitUi({ treeOpen: true, openFile: null });
+          // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表
+          setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null, openFrom: null });
         },
         children: jsxRuntime.jsx(FolderIcon, {}),
+      });
+    }
+
+    /** 源代码管理入口：独立开关——非 SCM 态打开(收起文件树)；已开 → 关闭回会话列表 */
+    function ScmEntry() {
+      const ui = useKitUi();
+      return jsxRuntime.jsx("button", {
+        type: "button",
+        className: "dshk-btn dshk-enbtn",
+        "aria-pressed": ui.gitOpen,
+        title: t("scTitle"),
+        onClick: () => {
+          setKitUi({ gitOpen: !ui.gitOpen, treeOpen: false, openFile: null, openFrom: null });
+        },
+        children: jsxRuntime.jsx(BranchIcon, {}),
       });
     }
 
@@ -1842,10 +1824,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         if (!slotsCtx) return undefined;
         const handles = [];
         const want = [
-          ["terminal", cfg.terminalEnabled, () =>
-            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 10 }, TerminalEntry)],
+          // 入口排序（左→右）：文件树、源代码管理、终端
           ["filetree", cfg.fileTreeEnabled, () =>
-            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-filetree", order: 11 }, FileTreeEntry)],
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-filetree", order: 10 }, FileTreeEntry)],
+          ["scm", true, () =>
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-scm", order: 11 }, ScmEntry)],
+          ["terminal", cfg.terminalEnabled, () =>
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 12 }, TerminalEntry)],
           ["skills", cfg.skillsPageEnabled, () =>
             slotsCtx.slots.register(
               { name: "settings.section", id: "kit-skills", order: 40, label: () => t("skillsLabel") },
@@ -1898,10 +1883,11 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
       }, [ui.treeOpen, ui.gitOpen, cwd]);
 
-      // 关掉文件树时同步清掉文件预览（重开树不带残留预览）
+      // 预览跟随来源视图：来源视图被关闭或切走时清掉预览（含 openFrom）
       react.useEffect(() => {
-        if (!ui.treeOpen && ui.openFile !== null) setKitUi({ openFile: null });
-      }, [ui.treeOpen, ui.openFile]);
+        const activeView = ui.gitOpen ? "scm" : ui.treeOpen ? "tree" : null;
+        if (ui.openFile !== null && ui.openFrom !== activeView) setKitUi({ openFile: null, openFrom: null });
+      }, [ui.treeOpen, ui.gitOpen, ui.openFile, ui.openFrom]);
 
       // 终端让位布局：打开时挂 body 类 + 设高度变量，样式规则顶起对话/详情列
       //（配置关闭时面板不渲染，让位类也一并撤掉）
@@ -1921,6 +1907,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       react.useEffect(() => {
         const termCombo = parseCombo(cfg.terminalShortcut);
         const treeCombo = parseCombo(cfg.fileTreeShortcut);
+        const scCombo = parseCombo(cfg.scShortcut);
         const onKey = (e) => {
           if (shortcutCapture !== null) return;
           if (termCombo && cfg.terminalEnabled && comboMatches(e, termCombo)) {
@@ -1933,14 +1920,19 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            // 与文件树入口同语义：三态循环 无→树→源代码管理
-            if (kitUi.gitOpen) setKitUi({ gitOpen: false, treeOpen: true, openFile: null });
-            else if (kitUi.treeOpen) setKitUi({ treeOpen: false, gitOpen: true, openFile: null });
-            else setKitUi({ treeOpen: true, openFile: null });
+            // Ctrl+E 只管文件树：非文件树态 → 打开；已是 → 关闭回会话列表
+            setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null, openFrom: null });
+            return;
+          }
+          if (scCombo && comboMatches(e, scCombo)) {
+            e.preventDefault();
+            e.stopPropagation();
+            // 源代码管理同语义：非 SCM 态 → 打开（收起文件树）；已是 → 关闭回会话列表
+            setKitUi({ gitOpen: !kitUi.gitOpen, treeOpen: false, openFile: null, openFrom: null });
             return;
           }
           if (e.key === "Escape") {
-            if (kitUi.openFile) setKitUi({ openFile: null });
+            if (kitUi.openFile) setKitUi({ openFile: null, openFrom: null });
             else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
           }
@@ -1949,7 +1941,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         return () => window.removeEventListener("keydown", onKey, true);
         // cwd 必须在依赖里：否则闭包缓存首帧（会话未水化时为 null）的工作区，
         // 之后按快捷键开终端永远绑到 null
-      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut]);
+      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut]);
 
       // 自愈：打开时尚无工作区（如刚启动就按快捷键，绑到了 null），等当前 cwd
       // 就绪后补绑一次；已有绑定的面板不受工作区切换影响
@@ -1962,8 +1954,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           ui.terminalOpen && cfg.terminalEnabled
             ? jsxRuntime.jsx(TerminalPanel, { cwd: ui.termCwd, onClose: () => setKitUi({ terminalOpen: false }) })
             : null,
-          ui.treeOpen && cfg.fileTreeEnabled && ui.openFile
-            ? jsxRuntime.jsx(FileContentPane, { path: ui.openFile, cwd, onClose: () => setKitUi({ openFile: null }) })
+          ui.openFile && (ui.openFrom === "scm" || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
+            ? jsxRuntime.jsx(FileContentPane, {
+                path: ui.openFile,
+                source: ui.openFrom ?? "tree",
+                cwd,
+                onClose: () => setKitUi({ openFile: null, openFrom: null }),
+              })
             : null,
         ],
       });
@@ -2323,6 +2320,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
+      { key: "scShortcut", kind: "combo" },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>
