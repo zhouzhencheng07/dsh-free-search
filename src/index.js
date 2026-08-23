@@ -201,9 +201,9 @@ export function apply(ctx) {
       fileTreeEnabled: z.boolean().default(true),
       sourceControlEnabled: z.boolean().default(true),
       skillsPageEnabled: z.boolean().default(true),
-      terminalShortcut: z.string().default('Ctrl+`'),
-      fileTreeShortcut: z.string().default('Ctrl+E'),
-      scShortcut: z.string().default('Ctrl+G'),
+      terminalShortcut: z.string().default('Ctrl+/'),
+      fileTreeShortcut: z.string().default('Ctrl+,'),
+      scShortcut: z.string().default('Ctrl.'),
     })
     installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
       setSource: () => {},

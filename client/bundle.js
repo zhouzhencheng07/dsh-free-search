@@ -64,9 +64,9 @@ window.__ModuleLoader__.load({
       fileTreeEnabled: true,
       sourceControlEnabled: true,
       skillsPageEnabled: true,
-      terminalShortcut: "Ctrl+`",
-      fileTreeShortcut: "Ctrl+E",
-      scShortcut: "Ctrl+G",
+      terminalShortcut: "Ctrl+/",
+      fileTreeShortcut: "Ctrl+,",
+      scShortcut: "Ctrl+.",
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -2273,10 +2273,11 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       { key: "scShortcut", kind: "combo" },
     ];
     // 分组渲染：开关行 + 该功能启用时才显示的子配置（所见即所得，保存才落盘生效）
+    // 组顺序 = 入口按钮顺序：文件树 → 源代码管理 → 终端 → 技能页
     const CFG_GROUPS = [
-      { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
+      { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
