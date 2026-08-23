@@ -150,6 +150,11 @@ window.__ModuleLoader__.load({
       treeEmpty: "（空目录）",
       treeFail: "加载失败",
       treeTruncated: "条目过多，列表已截断",
+      chgTitle: "更改",
+      chgEmpty: "（没有更改）",
+      chgNotGit: "不是 git 仓库",
+      openChg: "打开更改视图",
+      chgClose: "关闭更改视图",
       contentClose: "关闭预览",
       edit: "编辑",
       editSave: "保存",
@@ -247,6 +252,10 @@ window.__ModuleLoader__.load({
       treeFail: "Failed to load",
       treeTruncated: "Too many entries, list truncated",
       chgTitle: "Changes",
+      chgEmpty: "(no changes)",
+      chgNotGit: "Not a git repository",
+      openChg: "Show changes view",
+      chgClose: "Close changes view",
       contentClose: "Close preview",
       contentDiff: "View diff",
       contentText: "Back to text",
@@ -841,6 +850,30 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       );
     }
 
+    /** 分支图标（进入更改视图的入口钮）：git branch 风格两节点一弧线 */
+    function BranchIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          children: [
+            jsxRuntime.jsx("circle", { cx: 4, cy: 3.5, r: 1.7 }),
+            jsxRuntime.jsx("circle", { cx: 4, cy: 12.5, r: 1.7 }),
+            jsxRuntime.jsx("circle", { cx: 11.5, cy: 6, r: 1.7 }),
+            jsxRuntime.jsx("path", { d: "M4 5.2v5.6" }),
+            jsxRuntime.jsx("path", { d: "M11.4 7.7c-.3 2.1-2.6 2.5-5.6 3" }),
+          ],
+        },
+      );
+    }
+
     /** 终端图标：与 FolderIcon 同为描边风格（16 网格），保证两个 footer 按钮观感一致 */
     function TerminalIcon() {
       return jsxRuntime.jsxs(
@@ -1035,59 +1068,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
       const rootInfo = cwd ? expanded[cwd] : undefined;
 
-      /** 「更改」清单（VSCode 源代码管理式）：所有脏文件，点击直达预览+diff */
-      const changeList = [];
-      if (gitMap && gitMap.size > 0) {
-        for (const [abs, xy] of gitMap) changeList.push({ abs, xy });
-      }
-      const renderChanges = () => {
-        if (changeList.length === 0) return null;
-        return jsxRuntime.jsxs(
-          "div",
-          {
-            className: "dshk-changes",
-            children: [
-              jsxRuntime.jsxs("div", {
-                className: "dshk-chg-head",
-                children: [
-                  jsxRuntime.jsx("span", { children: t("chgTitle") }),
-                  jsxRuntime.jsx("span", { className: "dshk-sk-status", children: String(changeList.length) }),
-                ],
-              }),
-              changeList.map((item) => {
-                const rel =
-                  gitRoot && item.abs.startsWith(gitRoot)
-                    ? item.abs.slice(gitRoot.length).replace(/^[\\/]/, "")
-                    : item.abs;
-                const segs = rel.split(/[\\/]/);
-                const name = segs[segs.length - 1];
-                const dir = segs.slice(0, -1).join("/");
-                return jsxRuntime.jsxs(
-                  "div",
-                  {
-                    className: "dshk-row dshk-chg-row",
-                    title: item.abs,
-                    onClick: () => onOpenFile(item.abs),
-                    children: [
-                      jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
-                      dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
-                      item.stats
-                        ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
-                            jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
-                            jsxRuntime.jsx("span", { className: "dshk-ndel", children: `−${item.stats.d}` }),
-                          ] })
-                        : null,
-                      jsxRuntime.jsx(GitBadge, { xy: item.xy }),
-                    ],
-                  },
-                  item.abs,
-                );
-              }),
-            ],
-          },
-        );
-      };
-
       return jsxRuntime.jsxs("div", {
         className: "dshk-tree",
         children: [
@@ -1100,6 +1080,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
+                title: t("openChg"),
+                onClick: () => setKitUi({ gitOpen: true }),
+                children: jsxRuntime.jsx(BranchIcon, {}),
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
                 title: t("treeRefresh"),
                 onClick: () => setNonce((n) => n + 1),
                 children: "⟳",
@@ -1108,28 +1095,134 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           }),
           jsxRuntime.jsx("div", {
             className: "dshk-tree-body",
-            children: jsxRuntime.jsxs(jsxRuntime.Fragment, {
-              children: [
-                renderChanges(),
-                !cwd
+            children:
+              !cwd
+              ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("noCwd") })
+              : !rootInfo || rootInfo.status === "loading"
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
+                : rootInfo.status === "error"
+                  ? jsxRuntime.jsx("div", { className: "dshk-note", title: rootInfo.error ?? "", children: `${t("treeFail")}${rootInfo.error ? `：${rootInfo.error}` : ""}` })
+                  : rootInfo.entries.length === 0
+                    ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeEmpty") })
+                    : jsxRuntime.jsxs(jsxRuntime.Fragment, {
+                        children: [
+                          rootInfo.entries.map((entry) =>
+                            jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile, gitMap }, entry.path),
+                          ),
+                          rootInfo.truncated
+                            ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
+                            : null,
+                        ],
+                      }),
+          }),
+        ],
+      });
+    }
+
+    // ─────────── 更改视图（sidebar.workspaces 的 git 模式，VSCode 源代码管理式）───────────
+    // 文件树头部分支按钮进入；占用与文件树相同的单槽（互斥），✕ 关闭回到文件树。
+    // 数据=完整 status entries（含 stats ±N），轮询节奏同 ①+③。
+    function GitChangesPanel({ cwd, onOpenFile, onClose }) {
+      const [data, setData] = react.useState(null); // null=加载中；{available, root?, entries?}
+      const fetchRef = react.useRef(null);
+      fetchRef.current = () => {
+        if (!cwd) return;
+        const c = new AbortController();
+        fetchGitStatus(cwd, c.signal)
+          .then((b) => {
+            if (!c.signal.aborted) setData(b);
+          })
+          .catch(() => {});
+      };
+      react.useEffect(() => {
+        if (fetchRef.current) fetchRef.current();
+        const tick = () => {
+          if (document.visibilityState !== "hidden" && fetchRef.current) fetchRef.current();
+        };
+        const timer = window.setInterval(tick, GIT_POLL_MS);
+        document.addEventListener("visibilitychange", tick);
+        window.addEventListener("focus", tick);
+        return () => {
+          window.clearInterval(timer);
+          document.removeEventListener("visibilitychange", tick);
+          window.removeEventListener("focus", tick);
+        };
+      }, [cwd]);
+
+      const available = data !== null && data.available === true;
+      const entries = available && Array.isArray(data.entries) ? data.entries : [];
+      const root = available ? data.root ?? null : null;
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-tree",
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-head",
+            children: [
+              jsxRuntime.jsx(BranchIcon, {}),
+              jsxRuntime.jsx("span", { className: "dshk-dir", title: root ?? "", children: t("chgTitle") }),
+              available && entries.length > 0
+                ? jsxRuntime.jsx("span", { className: "dshk-status", children: String(entries.length) })
+                : null,
+              jsxRuntime.jsx("span", { className: "dshk-spring" }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("treeRefresh"),
+                onClick: () => { if (fetchRef.current) fetchRef.current(); },
+                children: "⟳",
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("chgClose"),
+                onClick: onClose,
+                children: "✕",
+              }),
+            ],
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-tree-body",
+            children:
+              !cwd
                 ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("noCwd") })
-                : !rootInfo || rootInfo.status === "loading"
+                : data === null
                   ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
-                  : rootInfo.status === "error"
-                    ? jsxRuntime.jsx("div", { className: "dshk-note", title: rootInfo.error ?? "", children: `${t("treeFail")}${rootInfo.error ? `：${rootInfo.error}` : ""}` })
-                    : rootInfo.entries.length === 0
-                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeEmpty") })
+                  : !available
+                    ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("chgNotGit") })
+                    : entries.length === 0
+                      ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("chgEmpty") })
                       : jsxRuntime.jsxs(jsxRuntime.Fragment, {
-                          children: [
-                            rootInfo.entries.map((entry) =>
-                              jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile, gitMap }, entry.path),
-                            ),                            rootInfo.truncated
-                              ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
-                              : null,
-                          ],
+                          children: entries.map((item) => {
+                            const rel =
+                              root && item.abs.startsWith(root)
+                                ? item.abs.slice(root.length).replace(/^[\\/]/, "")
+                                : item.path;
+                            const segs = rel.split(/[\\/]/);
+                            const name = segs[segs.length - 1];
+                            const dir = segs.slice(0, -1).join("/");
+                            return jsxRuntime.jsxs(
+                              "div",
+                              {
+                                className: "dshk-row dshk-chg-row",
+                                title: item.abs,
+                                onClick: () => onOpenFile(item.abs),
+                                children: [
+                                  jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
+                                  dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
+                                  item.stats
+                                    ? jsxRuntime.jsxs("span", { className: "dshk-nums", children: [
+                                        jsxRuntime.jsx("span", { className: "dshk-nadd", children: `+${item.stats.a}` }),
+                                        jsxRuntime.jsx("span", { className: "dshk-ndel", children: `−${item.stats.d}` }),
+                                      ] })
+                                    : null,
+                                  jsxRuntime.jsx(GitBadge, { xy: item.xy }),
+                                ],
+                              },
+                              item.abs,
+                            );
+                          }),
                         }),
-              ],
-            }),
           }),
         ],
       });
@@ -1482,8 +1575,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": ui.treeOpen,
         title: t("treeToggle"),
-        // 开关都清预览：重开树不带残留预览
-        onClick: () => setKitUi({ treeOpen: !ui.treeOpen, openFile: null }),
+        onClick: () => {
+          // 开树时退出更改视图（两者互斥共享侧边栏浏览区）；开关都清预览
+          setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null });
+        },
         children: jsxRuntime.jsx(FolderIcon, {}),
       });
     }
@@ -1534,20 +1629,22 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
       }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.skillsPageEnabled]);
 
-      // 文件树开 → 注册 sidebar.workspaces 单槽 occupant 遮蔽原生浏览器。
-      // 动态注册若在运行时抛错（跨 fiber/生命周期约束），捕获并回滚开合状态，
-      // 避免入口被错误边界退役。
+      // 侧边栏浏览区占用：文件树与「更改」视图互斥共享 sidebar.workspaces 单槽
+      // （gitOpen 时切换到更改页，✕ 关闭回到仍处打开状态的文件树）。
+      // 动态注册若在运行时抛错，捕获并回滚开合状态，避免入口被错误边界退役。
       react.useEffect(() => {
-        if (!ui.treeOpen || !slotsCtx) return undefined;
+        if (!slotsCtx || (!ui.treeOpen && !ui.gitOpen)) return undefined;
         let dispose;
         try {
           // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
           dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
-            jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner }),
+            ui.gitOpen
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), onClose: () => setKitUi({ gitOpen: false }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p }), ...owner }),
           );
         } catch (error) {
-          console.error("[dsh-kit] 注册 sidebar.workspaces 文件树失败：", error);
-          setKitUi({ treeOpen: false, openFile: null });
+          console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
+          setKitUi({ treeOpen: false, gitOpen: false, openFile: null });
           return undefined;
         }
         return () => {
@@ -1557,7 +1654,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             // 忽略注销异常
           }
         };
-      }, [ui.treeOpen, cwd]);
+      }, [ui.treeOpen, ui.gitOpen, cwd]);
 
       // 关掉文件树时同步清掉文件预览（重开树不带残留预览）
       react.useEffect(() => {
@@ -1594,11 +1691,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            setKitUi({ treeOpen: !kitUi.treeOpen, openFile: null });
+            // 与文件树入口同语义：开树即退出更改视图（互斥单槽）
+            setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null });
             return;
           }
           if (e.key === "Escape") {
             if (kitUi.openFile) setKitUi({ openFile: null });
+            else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
           }
         };
