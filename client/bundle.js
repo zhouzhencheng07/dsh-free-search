@@ -186,6 +186,7 @@ window.__ModuleLoader__.load({
       termNew: "新建终端",
       termHide: "隐藏终端坞（进程继续运行）",
       termTabClose: "结束此终端",
+      termCloseAll: "结束全部终端",
       vendorFail: "终端组件加载失败",
       treeLabel: "文件树",
       treeClose: "关闭文件树",
@@ -314,6 +315,7 @@ window.__ModuleLoader__.load({
       termNew: "New terminal",
       termHide: "Hide dock (processes keep running)",
       termTabClose: "Kill this terminal",
+      termCloseAll: "Kill all terminals",
       vendorFail: "Failed to load terminal components",
       treeLabel: "Files",
       treeClose: "Close file tree",
@@ -731,9 +733,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     // TerminalDock = 底部停靠容器：头部标签条（＋ 新建 / — 隐藏），body 纵向堆叠
     // 各 pane，仅激活 pane 可见。隐藏的 pane 保持挂载：xterm 离屏继续缓冲输出，
     // 切回不丢内容（display:none 期间跳过 fit，切回由 ResizeObserver 自动补）。
-    function TerminalPane({ term, visible }) {
+    function TerminalPane({ term, visible, restartKey, onRestart, onShell }) {
       const bodyRef = react.useRef(null);
-      const [nonce, setNonce] = react.useState(0);
       const [state, setState] = react.useState({ phase: "connecting", detail: "" });
       const visibleRef = react.useRef(visible);
       visibleRef.current = visible;
@@ -827,6 +828,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 termInst.write(m.d);
               } else if (m.t === "started") {
                 setState({ phase: "ready", detail: m.shell ?? "" });
+                if (onShell) onShell(term.id, m.shell ?? "");
                 if (visibleRef.current) termInst.focus(); // 后台启动的终端不抢焦点
               } else if (m.t === "exit") {
                 setState({ phase: "exited", detail: String(m.exitCode ?? "") });
@@ -868,7 +870,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           }
           if (host) host.remove();
         };
-      }, [term.id, nonce]);
+      }, [term.id, restartKey]);
 
       const statusText =
         state.phase === "connecting"
@@ -892,7 +894,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                   ? jsxRuntime.jsx("button", {
                       type: "button",
                       className: "dshk-btn-cancel",
-                      onClick: () => setNonce((n) => n + 1),
+                      onClick: onRestart,
                       children: t("restart"),
                     })
                   : null,
@@ -909,11 +911,15 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return same.length > 1 ? `${base} ${same.indexOf(term) + 1}` : base;
     }
 
-    function TerminalDock({ open, cwd, onSpawn, onHide, onActivate, onKill }) {
+    function TerminalDock({ open, cwd, onSpawn, onHide, onActivate, onKill, onKillAll }) {
       const ui = useKitUi();
       const items = ui.terminals;
       const activeId = ui.activeTermId ?? (items.length > 0 ? items[items.length - 1].id : null);
       const activeItem = items.find((x) => x.id === activeId) ?? null;
+      // 每标签的重启计数（⟳ 触发该 pane 重连）与 shell 名（started 时回填头部展示）
+      const [restartMap, setRestartMap] = react.useState({});
+      const [shells, setShells] = react.useState({});
+      const onShell = (id, label) => setShells((s) => (s[id] === label ? s : { ...s, [id]: label }));
       // 宽度跟随对话列：测量 _centerCol 的视口位置（侧栏开合/拖宽/窗口缩放都会触发）
       const [pos, setPos] = react.useState(null);
 
@@ -940,6 +946,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           jsxRuntime.jsxs("div", {
             className: "dshk-head",
             children: [
+              jsxRuntime.jsx("span", { className: "dshk-title", children: t("label") }),
               jsxRuntime.jsxs("span", { className: "dshk-tabs", children: [
                 items.map((tab) =>
                   jsxRuntime.jsxs("div", {
@@ -973,16 +980,33 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 ? jsxRuntime.jsx("span", {
                     className: "dshk-sub",
                     title: activeItem.cwd ?? "",
-                    children: activeItem.cwd ?? "",
+                    children: `${shells[activeItem.id] ? `${shells[activeItem.id]} · ` : ""}${activeItem.cwd ?? ""}`,
                   })
                 : null,
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
+                title: t("restart"),
+                onClick: () => {
+                  if (!activeId) return;
+                  setRestartMap((m) => ({ ...m, [activeId]: (m[activeId] ?? 0) + 1 }));
+                },
+                children: "⟳",
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
                 title: t("termHide"),
                 onClick: onHide,
                 children: "—",
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("termCloseAll"),
+                onClick: onKillAll,
+                children: "✕",
               }),
             ],
           }),
@@ -992,7 +1016,17 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               items.length === 0 ? jsxRuntime.jsx("div", { className: "dshk-msg", children: t("noCwd") }) : null,
           }),
           ...items.map((tt) =>
-            jsxRuntime.jsx(TerminalPane, { term: tt, visible: tt.id === activeId }, `pane-${tt.id}`),
+            jsxRuntime.jsx(
+              TerminalPane,
+              {
+                term: tt,
+                visible: tt.id === activeId,
+                restartKey: restartMap[tt.id] ?? 0,
+                onRestart: () => setRestartMap((m) => ({ ...m, [tt.id]: (m[tt.id] ?? 0) + 1 })),
+                onShell,
+              },
+              `pane-${tt.id}`,
+            ),
           ),
         ],
       });
@@ -2359,6 +2393,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                 onHide: () => setKitUi({ termDockOpen: false }),
                 onActivate: (id) => setKitUi({ activeTermId: id, termDockOpen: true }),
                 onKill: (id) => setKitUi(killTerm(kitUi, id)),
+                onKillAll: () => setKitUi({ terminals: [], activeTermId: null, termDockOpen: false }),
               })
             : null,
           ui.openFile && ((ui.openFrom === "scm" && cfg.sourceControlEnabled) || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
