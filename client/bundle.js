@@ -28,6 +28,7 @@
 window.__ModuleLoader__.load({
   id: "dsh-kit",
   factory: (require) => {
+    if (typeof console !== "undefined") console.info("[dsh-kit] client bundle loaded (2026-08-27 rev-b, 多终端坞)");
     var module = { exports: {} };
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
