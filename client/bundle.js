@@ -28,7 +28,7 @@
 window.__ModuleLoader__.load({
   id: "dsh-kit",
   factory: (require) => {
-    if (typeof console !== "undefined") console.info("[dsh-kit] client bundle loaded (2026-08-27 rev-b, 多终端坞)");
+    if (typeof console !== "undefined") console.info("[dsh-kit] client bundle loaded (2026-08-27 rev-c, 终端坞头部修复)");
     var module = { exports: {} };
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -1011,24 +1011,27 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               }),
             ],
           }),
+          // pane 必须挂在 tstack（position:relative）里：绝对定位 inset:0 以它为
+          // 包含块，只盖住头部以下的内容区——直接挂 dock 下会连头部一起盖掉
           jsxRuntime.jsx("div", {
             className: "dshk-tstack",
-            children:
+            children: [
               items.length === 0 ? jsxRuntime.jsx("div", { className: "dshk-msg", children: t("noCwd") }) : null,
+              ...items.map((tt) =>
+                jsxRuntime.jsx(
+                  TerminalPane,
+                  {
+                    term: tt,
+                    visible: tt.id === activeId,
+                    restartKey: restartMap[tt.id] ?? 0,
+                    onRestart: () => setRestartMap((m) => ({ ...m, [tt.id]: (m[tt.id] ?? 0) + 1 })),
+                    onShell,
+                  },
+                  `pane-${tt.id}`,
+                ),
+              ),
+            ],
           }),
-          ...items.map((tt) =>
-            jsxRuntime.jsx(
-              TerminalPane,
-              {
-                term: tt,
-                visible: tt.id === activeId,
-                restartKey: restartMap[tt.id] ?? 0,
-                onRestart: () => setRestartMap((m) => ({ ...m, [tt.id]: (m[tt.id] ?? 0) + 1 })),
-                onShell,
-              },
-              `pane-${tt.id}`,
-            ),
-          ),
         ],
       });
     }
