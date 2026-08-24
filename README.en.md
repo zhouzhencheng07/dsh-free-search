@@ -26,7 +26,8 @@ A file-tree toggle on the composer tool row:
   session's workspace directory**, expanding lazily level by level
 - **File management**: header ＋📄/＋📁 buttons create a file/folder in the
   current directory; row hover actions — new file/folder on directory rows,
-  ✎ rename and 🗑 delete on any row (deletes go to the **Recycle Bin** on
+  ✎ inline rename (selects the stem, keeping the extension; Enter commits,
+  Esc cancels) and 🗑 delete on any row (deletes go to the **Recycle Bin** on
   Windows, with a two-step confirm)
 - Clicking a file opens a right-docked preview/edit panel: the conversation
   column steps aside, drag the left edge to widen/narrow; ✎ enters edit mode

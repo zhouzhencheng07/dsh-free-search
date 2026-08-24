@@ -137,6 +137,7 @@ window.__ModuleLoader__.load({
     // 模块级通道（apply 注入 / KitSurfaces 订阅 / 设置卡捕获互斥）
     let cfgScope = null;
     let shortcutCapture = null; // 正在录制快捷键的字段名；非 null 时面板快捷键监听让路
+    let inlineEditCapture = false; // 树行内改名输入激活：面板快捷键（含 Esc 分层关闭）让路
     const subscribeCfg = (listener) => (cfgScope ? cfgScope.subscribe(listener) : () => {});
     const getCfgSnapshot = () => (cfgScope ? cfgScope.getSnapshot() : null);
 
@@ -163,7 +164,6 @@ window.__ModuleLoader__.load({
       treeDelete: "删除",
       promptFileName: "新文件名：",
       promptFolderName: "新文件夹名：",
-      renamePrompt: "重命名为：",
       confirmDelete: "删除「{name}」？内容将移入回收站。",
       created: "已创建",
       renamed: "已重命名",
@@ -290,7 +290,6 @@ window.__ModuleLoader__.load({
       treeDelete: "Delete",
       promptFileName: "New file name:",
       promptFolderName: "New folder name:",
-      renamePrompt: "Rename to:",
       confirmDelete: "Delete \"{name}\"? It will be moved to the Recycle Bin.",
       created: "Created",
       renamed: "Renamed",
@@ -468,6 +467,9 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-name{overflow:hidden;text-overflow:ellipsis}
 .dshk-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .dshk-file .dshk-name{color:var(--dsw-alias-label-secondary)}
+/* 行内改名输入框（✎ 触发）：聚焦时只选中最后一个扩展名分隔符之前的主名 */
+.dshk-rename{appearance:none;flex:1 1 auto;min-width:0;height:22px;box-sizing:border-box;border:1px solid var(--dsw-alias-brand-primary);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1;padding:0 6px}
+.dshk-rename:focus-visible{outline:none}
 .dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 入口按钮选中态（①）：底色用主题真实存在的 tool-bar-fill，图标转品牌色；
    :hover 一并声明避免 hover 规则在选中态下把底色洗掉 */
@@ -920,10 +922,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    /** 文件行尾的 git 状态小徽标（M/A/D/R/U） */
+    /** 文件行尾的 git 状态小徽标（M/A/D/R/U）：porcelain 未跟踪是 "??"，统一显示 U */
     function GitBadge({ xy }) {
       const s = String(xy).trim();
-      const label = s === "?" ? "U" : s || "M";
+      const label = s === "??" || s === "?" ? "U" : s || "M";
       const tipMap = { M: "gitM", A: "gitA", D: "gitD", R: "gitR", U: "gitU" };
       return jsxRuntime.jsx("span", {
         className: "dshk-gitbadge",
@@ -1141,26 +1143,59 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
     /**
      * 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?}
-     * actions:{onCreate(dirPath,isDir), onRename(entry), onDelete(entry)} 可选——
-     * 缺省时不渲染行悬停操作（渲染级验证桩调用即不带）。
+     * actions 可选——缺省时不渲染行悬停操作（渲染级验证桩调用即不带）：
+     *   onCreate(dirPath,isDir) / onDelete(entry) / onRename(entry)=进入行内改名；
+     *   renamingPath + onRenameSubmit(entry,value) + onRenameCancel() 驱动行内输入框。
      */
     function TreeNode({ entry, depth, expanded, onToggle, onOpenFile, actions }) {
       const info = entry.dir ? expanded[entry.path] : undefined;
       const acts = actions ?? {};
+      const renaming = !!acts.onRenameSubmit && acts.renamingPath === entry.path;
       const rowActions = [];
       if (entry.dir && acts.onCreate) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFile"), onClick: () => acts.onCreate(entry.path, false), children: jsxRuntime.jsx(FilePlusIcon, {}) }, "nf"));
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFolder"), onClick: () => acts.onCreate(entry.path, true), children: jsxRuntime.jsx(FolderPlusIcon, {}) }, "nd"));
       }
-      if (acts.onRename) {
+      if (acts.onRename && !renaming) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeRename"), onClick: () => acts.onRename(entry), children: "✎" }, "rn"));
       }
-      if (acts.onDelete) {
+      if (acts.onDelete && !renaming) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeDelete"), onClick: () => acts.onDelete(entry), children: jsxRuntime.jsx(TrashIcon, {}) }, "dl"));
       }
+      // 改名输入框：聚焦时只选中最后一个 "." 之前的主名（保留扩展名）；
+      // 目录与点开头的隐藏文件（如 .gitignore）没有扩展名概念，选全名
+      const nameEl = renaming
+        ? jsxRuntime.jsx("input", {
+            className: "dshk-rename",
+            defaultValue: entry.name,
+            spellCheck: false,
+            autoFocus: true,
+            "aria-label": t("treeRename"),
+            onClick: (e) => e.stopPropagation(),
+            onFocus: (e) => {
+              const v = e.currentTarget.value;
+              const i = v.lastIndexOf(".");
+              const end = !entry.dir && i > 0 ? i : v.length;
+              e.currentTarget.setSelectionRange(0, end);
+            },
+            onKeyDown: (e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") {
+                e.preventDefault();
+                acts.onRenameSubmit(entry, e.currentTarget.value);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                acts.onRenameCancel();
+              }
+            },
+            onBlur: () => {
+              if (acts.renamingPath === entry.path) acts.onRenameCancel();
+            },
+          }, "rename")
+        : jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }, "name");
       const rowChildren = [
         jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }, "chev"),
-        jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }, "name"),
+        nameEl,
       ];
       if (rowActions.length > 0) {
         rowChildren.push(jsxRuntime.jsx("span", { className: "dshk-rowact", children: rowActions }, "acts"));
@@ -1169,7 +1204,11 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         className: `dshk-row${entry.dir ? "" : " dshk-file"}`,
         style: { paddingLeft: 8 + depth * 14 },
         title: entry.path,
-        onClick: () => (entry.dir ? onToggle(entry) : onOpenFile(entry.path)),
+        onClick: () => {
+          if (renaming) return; // 行内改名中：点击不触发打开/折叠
+          if (entry.dir) onToggle(entry);
+          else onOpenFile(entry.path);
+        },
         children: rowChildren,
       }, entry.path)];
       if (entry.dir && info) {
@@ -1200,6 +1239,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       expandedRef.current = expanded;
       const [nonce, setNonce] = react.useState(0);
       const abortsRef = react.useRef(new Set());
+      // 正在行内改名的条目路径；null = 无
+      const [renamingPath, setRenamingPath] = react.useState(null);
 
       const loadDir = (dirPath) => {
         const controller = new AbortController();
@@ -1309,10 +1350,17 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         flashToast(t("created"));
         loadDir(dirPath);
       };
-      const renameEntry = async (entry) => {
-        const rawName = window.prompt(t("renamePrompt"), entry.name);
-        if (rawName === null) return;
-        const name = rawName.trim();
+      // ── 行内改名（✎ 触发，VSCode 式）：聚焦时只选中最后一个扩展名分隔符之前的
+      // 主名（目录/隐藏文件选全名），Enter 提交、Esc/失焦取消；改名期间面板快捷键
+      // 让路（inlineEditCapture），Esc 不会顺手关掉树/预览 ──
+      const startRename = (entry) => {
+        if (!cwd) return;
+        setRenamingPath(entry.path);
+      };
+      const cancelRename = () => setRenamingPath(null);
+      const submitRename = async (entry, rawValue) => {
+        setRenamingPath(null);
+        const name = String(rawValue ?? "").trim();
         if (name === "" || name === entry.name) return;
         const okDone = await runFsOp({ op: "rename", path: entry.path, name });
         if (!okDone) return;
@@ -1321,6 +1369,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         pruneExpandedFrom(entry.path);
         loadDir(parentOf(entry.path));
       };
+      react.useEffect(() => {
+        inlineEditCapture = renamingPath !== null;
+        return () => {
+          inlineEditCapture = false;
+        };
+      }, [renamingPath]);
       const deleteEntry = async (entry) => {
         const okDone = await runFsOp(
           { op: "delete", path: entry.path },
@@ -1332,7 +1386,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         pruneExpandedFrom(entry.path);
         loadDir(parentOf(entry.path));
       };
-      const treeActions = { onCreate: createEntry, onRename: renameEntry, onDelete: deleteEntry };
+      const treeActions = {
+        onCreate: createEntry,
+        onDelete: deleteEntry,
+        onRename: startRename,
+        renamingPath,
+        onRenameSubmit: submitRename,
+        onRenameCancel: cancelRename,
+      };
 
       const rootInfo = cwd ? expanded[cwd] : undefined;
 
@@ -2112,6 +2173,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         const scCombo = parseCombo(cfg.scShortcut);
         const onKey = (e) => {
           if (shortcutCapture !== null) return;
+          if (inlineEditCapture) return;
           if (termCombo && cfg.terminalEnabled && comboMatches(e, termCombo)) {
             e.preventDefault();
             e.stopPropagation();
