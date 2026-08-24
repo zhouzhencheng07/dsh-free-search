@@ -31,7 +31,7 @@ A file-tree toggle on the composer tool row:
 - Clicking a file opens a right-docked preview/edit panel: the conversation
   column steps aside, drag the left edge to widen/narrow; ✎ enters edit mode
   (draft-based save, mtime CAS conflict asks to reload, truncated previews are
-  not editable), ✕ closes back
+  not editable), ✕ closes back; ⇄ switches to the colored diff view
 - Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
   `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection),
   `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard against
@@ -55,9 +55,11 @@ in-page git workbench:
   guarded by an inline two-step confirm); a commit box at the top commits staged
   content and offers **Commit All** when nothing is staged (`add -A` first),
   Enter submits
-- Click a file to open the docked **diff view**: full-file colored rendering
-  (removed red / added green, not a raw patch); very large files fall back to
-  the raw diff
+- Click a file to open the docked **diff view** (default): full-file colored
+  rendering (removed red / added green, not a raw patch); very large files fall
+  back to the raw diff. The header **⇄** toggles the plain-text view anytime —
+  both entries share the same preview panel (the entry only picks the default),
+  and ✎ editing works from either side
 - Not a repository? One-click **Initialize Repository** (idempotent);
   non-ASCII filenames fully supported (`core.quotePath=false`)
 - Data flows through host endpoints `/dsh-kit/git/status`, `/dsh-kit/git/diff`,

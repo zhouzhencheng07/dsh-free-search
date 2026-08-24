@@ -185,6 +185,8 @@ window.__ModuleLoader__.load({
       cmtAllConfirm: "暂存区为空，将暂存并提交全部更改（含新文件）。继续？",
       committed: "已提交",
       contentClose: "关闭预览",
+      toDiff: "切换到 diff 视图",
+      toText: "切换到原文视图",
       edit: "编辑",
       editSave: "保存",
       editCancel: "取消",
@@ -310,6 +312,8 @@ window.__ModuleLoader__.load({
       cmtAllConfirm: "Nothing staged. Stage ALL changes (including untracked) and commit?",
       committed: "Committed",
       contentClose: "Close preview",
+      toDiff: "Switch to diff view",
+      toText: "Switch to plain view",
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
@@ -1636,9 +1640,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     function FileContentPane({ path, source, cwd, onClose }) {
       const [state, setState] = react.useState({ phase: "loading" });
       const [dragging, setDragging] = react.useState(false);
-      // 任务4：git 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载
-      // 视图模式由来源决定：源代码管理打开=直接 diff；文件树打开=原文（可编辑）
-      const mode = source === "scm" ? "diff" : "text";
+      // 任务4：git 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
+      // 视图模式：默认随入口（源代码管理=diff，文件树=原文），头部 ⇄ 随时互切；
+      // 同一面板会话内换文件保留用户选中的模式
+      const [mode, setMode] = react.useState(source === "scm" ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 任务3：编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -1667,10 +1672,10 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             if (!c.signal.aborted && error?.name !== "AbortError") setDiff({ phase: "error", error: String(error?.message ?? error) });
           });
       };
-      // diff 数据（仅源代码管理来源）：进入时拉一次，可见期间低频静默跟随
-      // （AI 边改边看也能跟上），转回可见/聚焦立即补
+      // diff 数据（仅 diff 视图激活时）：进入时拉一次，可见期间低频静默跟随
+      // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询
       react.useEffect(() => {
-        if (source !== "scm" || !cwd) return undefined;
+        if (mode !== "diff" || !cwd) return undefined;
         setDiff({ phase: "loading" });
         if (diffFetchRef.current) diffFetchRef.current();
         const tick = () => {
@@ -1684,7 +1689,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           document.removeEventListener("visibilitychange", tick);
           window.removeEventListener("focus", tick);
         };
-      }, [source, path, cwd]);
+      }, [mode, path, cwd]);
 
       // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
       // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
@@ -1906,8 +1911,18 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
-              // 文件树来源：仅 ✎ 编辑 + ✕ 关闭；源代码管理来源：直接 diff 视图，仅 ✕
-              source === "tree" && state.phase === "ready" && state.body && !state.body.binary && !state.body.truncated && !editing
+              // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）
+              !editing
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t(mode === "diff" ? "toText" : "toDiff"),
+                    onClick: () => setMode((m) => (m === "diff" ? "text" : "diff")),
+                    children: "⇄",
+                  })
+                : null,
+              // ✎ 编辑不再限文件树来源；截断/二进制不可编辑的判定不变
+              state.phase === "ready" && state.body && !state.body.binary && !state.body.truncated && !editing
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
