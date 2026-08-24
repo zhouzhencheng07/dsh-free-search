@@ -1,6 +1,6 @@
-// dsh-kit 技能池宿主半边（M1.1）
+// dsh-kit 技能池宿主半边
 //
-// 设计稿：docs/dsh-kit-next-features.md §1。技能池 $DSH_HOME/skill-pool 不挂任何
+// 技能池 $DSH_HOME/skill-pool 不挂任何
 // 扫描根（DSH 不会把它当技能源），只作为工作区之间流通的仓库货架；本模块提供
 // 管理面端点，浏览器半边在 settings.section 渲染"技能管理"页。
 //
@@ -52,7 +52,7 @@ function dshHome() {
 }
 
 /** 自 start 向上找 .git（目录或文件都算），找不到退回 start 本身（对齐 skill-filesystem 语义）。
- *  任务4 的 git 端点也用它定位项目根。 */
+ *  git 相关端点也用它定位项目根。 */
 export function findProjectRoot(start) {
   let current = start
   for (;;) {

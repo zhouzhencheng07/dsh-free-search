@@ -90,7 +90,7 @@ window.__ModuleLoader__.load({
       return patch;
     }
 
-    // ─────────── 插件配置（任务5）───────────
+    // ─────────── 插件配置 ───────────
     // 数据通道：官方 settings scope（宿主 installSettingsSection 注册的
     // dsh-kit 命名空间）。快照未就绪时一律回退内置默认——功能全开、默认键位。
     const CFG_DEFAULTS = {
@@ -526,7 +526,7 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-rename{appearance:none;flex:1 1 auto;min-width:0;height:22px;box-sizing:border-box;border:1px solid var(--dsw-alias-brand-primary);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1;padding:0 6px}
 .dshk-rename:focus-visible{outline:none}
 .dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
-/* 入口按钮选中态（①）：底色用主题真实存在的 tool-bar-fill，图标转品牌色；
+/* 入口按钮选中态：底色用主题真实存在的 tool-bar-fill，图标转品牌色；
    :hover 一并声明避免 hover 规则在选中态下把底色洗掉 */
 .dshk-enbtn[aria-pressed="true"],.dshk-enbtn[aria-pressed="true"]:hover{background:var(--dsw-alias-button-tool-bar-fill);color:var(--dsw-alias-brand-primary)}
 /* 文件预览面板：fixed 停靠右侧（自绘，不依赖原生 details 列，宽度自控 --dshk-pane-w） */
@@ -603,7 +603,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 /* 轻提示（双击复制路径等的单例浮层） */
 .dshk-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%) translateY(8px);z-index:950;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;padding:8px 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 16px rgba(0,0,0,.12);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out),transform .15s var(--ds-ease-in-out)}
 .dshk-toast[data-show]{opacity:1;transform:translateX(-50%) translateY(0)}
-/* git 徽标（任务4）与 diff 着色 */
+/* git 状态徽标与 diff 着色 */
 .dshk-gitbadge{flex:none;margin-left:auto;font-size:10px;line-height:14px;padding:0 5px;border-radius:6px;font-family:ui-monospace,Consolas,monospace;border:1px solid currentColor}
 .dshk-gitbadge[data-k="U"]{color:#73c991}
 .dshk-gitbadge[data-k="A"]{color:#73c991}
@@ -637,7 +637,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-diff-del{color:#cd3131;background:rgba(205,49,49,.08)}
 .dshk-diff-hunk{color:#4daafc}
 .dshk-diff-meta{color:var(--dsw-alias-label-tertiary)}
-/* 编辑模式（任务3） */
+/* 编辑模式 */
 .dshk-edithost{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding:4px 10px 12px}
 .dshk-editbar{display:flex;align-items:center;gap:6px}
 .dshk-editarea{flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;resize:none;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;padding:8px 10px;white-space:pre;overflow:auto}
@@ -1011,7 +1011,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    /** git 状态（任务4）：available:false = 非 git 目录，前端隐藏徽标 */
+    /** git 状态：available:false = 非 git 目录，前端隐藏徽标 */
     function fetchGitStatus(cwd, signal) {
       return fetch(`/dsh-kit/git/status?cwd=${encodeURIComponent(cwd)}`, { signal }).then(async (res) => {
         const body = await res.json().catch(() => null);
@@ -1061,7 +1061,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    /** git 状态轮询周期（①+③ 刷新机制）：可见时低频拉取，回窗口/聚焦立即补一次 */
+    /** git 状态轮询周期：可见时低频拉取，回窗口/聚焦立即补一次 */
     const GIT_POLL_MS = 4000;
 
     /**
@@ -1827,12 +1827,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     function FileContentPane({ path, source, cwd, onClose }) {
       const [state, setState] = react.useState({ phase: "loading" });
       const [dragging, setDragging] = react.useState(false);
-      // 任务4：git 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
+      // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文），头部 ⇄ 随时互切；
       // 同一面板会话内换文件保留用户选中的模式
       const [mode, setMode] = react.useState(source === "scm" ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
-      // 任务3：编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
+      // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
@@ -2138,7 +2138,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
     // ─────────── 入口按钮（conversation.input.left）───────────
     // 只负责开合与按压态；面板本体在 KitSurfaces（shell.overlay）渲染。
-    // 选中态标记（①）：aria-pressed 属性选择器命中 .dshk-enbtn[aria-pressed="true"]
+    // 选中态标记：aria-pressed 属性选择器命中 .dshk-enbtn[aria-pressed="true"]
     // 规则（底色 + 品牌色图标）。此前用的 --dsw-alias-fill-l2 在主题里并不存在，
     // 背景解析为透明，选中态等于没有——已换成真实存在的 tool-bar-fill 令牌。
     function TerminalEntry(props) {
@@ -2715,7 +2715,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
-    // ─────────── 插件设置卡（settings.plugin.item，任务5）───────────
+    // ─────────── 插件设置卡（settings.plugin.item）───────────
     // 交互规范照官方 CardForm（同 dsh-memory 卡片）：编辑只暂存草稿、保存才写；
     // "已覆盖" = raw user 层含该键；恢复默认暂存 base 值（保存时 unset 回落默认）。
     // 写入后回读 user 层验证落盘（Host 是唯一权威，scope.set 失败静默回滚重读）。

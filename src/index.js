@@ -85,7 +85,7 @@ if (!pty || !WebSocketServer) {
   console.warn('dsh-kit: node-pty/ws 不可用，终端能力不可用')
 }
 
-// 插件设置命名空间依赖（任务5）：junction 直装下静态 import @deepseek-ai/*
+// 插件设置命名空间依赖：junction 直装下静态 import @deepseek-ai/*
 // 会在 dev 环境启动即 ERR_MODULE_NOT_FOUND（parent-walk 够不到 fallback
 // node_modules），与 node-pty/ws 同走 loadDep 运行时解析。dsh-settings 是纯
 // ESM，require() 依赖 Node ≥22.12 的 require(esm)；schemastery 自带 cjs 导出。
@@ -275,7 +275,7 @@ const VENDOR_TYPES = new Map([
 ])
 
 export function apply(ctx) {
-  // ── 插件设置命名空间（任务5）──
+  // ── 插件设置命名空间 ──
   // 浏览器半边设置卡（client/bundle.js 的 dsh-kit 卡片，settings.plugin.item）
   // 的数据通道：terminalEnabled/fileTreeEnabled/skillsPageEnabled 三个功能开关
   // + terminalShortcut/fileTreeShortcut 两个快捷键。宿主自身不消费这些值（门控
@@ -308,7 +308,7 @@ export function apply(ctx) {
     applyWebSearch(ctx)
   }
 
-  // 技能池端点（M1，见 src/skill-pool.js）：自带 webServer 注入与同源校验。
+  // 技能池端点（实现见 src/skill-pool.js）：自带 webServer 注入与同源校验。
   // skills 注册表是可选增强（归属展示），服务晚于本行就绪也无碍——注入回调捕获引用。
   let skillsRegistry = null
   ctx.inject(['skills'], (skillsCtx) => {
@@ -472,7 +472,7 @@ export function apply(ctx) {
         },
       })
 
-      // ── 编辑保存端点：POST /dsh-kit/write（任务3）──
+      // ── 编辑保存端点：POST /dsh-kit/write ──
       // body {path, content, baseMtime, cwd}。校验链：同源（POST 必须带 Origin 且
       // 匹配 Host）→ 文件必须位于 realpath(cwd) 子树内 → 必须是已存在文件 → 内容
       // ≤512KB 且不含 NUL → mtime CAS（baseMtime 不等于当前值回 409 modified，
@@ -571,7 +571,7 @@ export function apply(ctx) {
       })
 
       // ── 文件管理端点：POST /dsh-kit/fs/op ──
-      // body {cwd, op, ...}，供文件树的新建/重命名/删除（②）：
+      // body {cwd, op, ...}，供文件树的新建/重命名/删除：
       //   create {dir, name, kind?:'dir'}  在 dir 下新建空文件/文件夹（已存在报错）
       //   rename {path, name}              同目录内重命名（目标已存在报错）
       //   delete {path}                    删除；Windows 移入回收站，其它平台直接递归删。
@@ -723,7 +723,7 @@ export function apply(ctx) {
         },
       })
 
-      // ── git 联动端点（任务4，只读）──
+      // ── git 联动端点（只读）──
       // spawn git CLI（不引库）；无 git / 非仓库 / 超时统一回 {available:false}，
       // 前端据此隐藏入口。status 供文件树徽标，diff 供预览面板查看改动。
       const GIT_TIMEOUT = 10000

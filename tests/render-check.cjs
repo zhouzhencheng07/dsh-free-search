@@ -86,7 +86,7 @@ callLog = [];
 out = comps.FileContentPane({ path: "C:/x/b.js", cwd: "C:/x", onClose: () => {} });
 check("FileContentPane 渲染无异常", !!out && typeof out === "object");
 
-// 7) 入口按钮 / 浮层宿主顶部渲染（任务6：conversation.input.left + shell.overlay）
+// 7) 入口按钮 / 浮层宿主顶部渲染（conversation.input.left + shell.overlay 槽位）
 callLog = [];
 out = comps.TerminalEntry({});
 check("TerminalEntry 渲染无异常", !!out && typeof out === "object");
@@ -116,7 +116,7 @@ callLog = [];
 out = comps.SkillsManager(fakeHooks);
 check("SkillsManager 带cwd渲染无异常", !!out && typeof out === "object");
 
-// 9) KitConfigCard（插件设置卡，任务5）：ready 快照 + 覆盖态
+// 9) KitConfigCard（插件设置卡）：ready 快照 + 覆盖态
 callLog = [];
 const fakeScope = {
   getSnapshot: () => ({
