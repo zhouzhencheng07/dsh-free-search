@@ -24,19 +24,25 @@ A file-tree toggle on the composer tool row:
 
 - The panel takes over the sidebar browsing area, rooted at the **current
   session's workspace directory**, expanding lazily level by level
+- **File management**: header ＋📄/＋📁 buttons create a file/folder in the
+  current directory; row hover actions — new file/folder on directory rows,
+  ✎ rename and 🗑 delete on any row (deletes go to the **Recycle Bin** on
+  Windows, with a two-step confirm)
 - Clicking a file opens a right-docked preview/edit panel: the conversation
   column steps aside, drag the left edge to widen/narrow; ✎ enters edit mode
   (draft-based save, mtime CAS conflict asks to reload, truncated previews are
   not editable), ✕ closes back
 - Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
-  `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection)
-  and `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard
-  against concurrent overwrites) endpoints (same-origin checked; the webserver
-  binds loopback only)
+  `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection),
+  `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard against
+  concurrent overwrites) and `/dsh-kit/fs/op` (create/rename/delete: targets are
+  confined to the cwd subtree, names whitelist-checked; same-origin checked;
+  the webserver binds loopback only)
 
 ### Source control
 
-A source-control toggle on the composer tool row (default **Ctrl+.**), an
+A source-control toggle on the composer tool row (default **Ctrl+Alt+.** —
+steering clear of Ctrl+., which Chinese IMEs claim for punctuation toggle), an
 in-page git workbench:
 
 - Shares the sidebar browsing slot with the file tree (one at a time); while
@@ -120,8 +126,9 @@ The dsh-kit card under the official Settings → plugin configuration page
   switch removes the Skills entry from the settings nav (skills themselves are
   unaffected)
 - Shortcut customization: terminal **Ctrl+/**, file tree **Ctrl+,**, source
-  control **Ctrl+.** — click Change to enter recording mode; the next key combo
-  becomes the new shortcut (Esc cancels)
+  control **Ctrl+Alt+.** (the old Ctrl+. default is intercepted by Chinese IMEs
+  for punctuation toggle) — click Change to enter recording mode; the next key
+  combo becomes the new shortcut (Esc cancels)
 - A switch's child options stay collapsed until enabled (WYSIWYG); keys
   overridden at the user layer carry an "Overridden" badge with one-click
   reset to default
@@ -158,8 +165,10 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   (official prebuilt xterm UMD), a read-only `/dsh-kit/tree?path=…`
   single-level directory listing (the official browse RPC lists directories
   only, so the file tree uses this), a read-only `/dsh-kit/read?path=…`
-  single-file text reader (512 KB cap + binary detection), and `/dsh-kit/write`
-  edit save (cwd-subtree validation + mtime CAS).
+  single-file text reader (512 KB cap + binary detection), `/dsh-kit/write`
+  edit save (cwd-subtree validation + mtime CAS), and `/dsh-kit/fs/op` file
+  management (create/rename/delete; targets confined to the cwd subtree,
+  deletes go to the Recycle Bin on Windows).
 - `src/skill-pool.js`: skill-management host side — `GET /dsh-kit/skills`
   enumerates skills under the whitelist roots (pool / user / project) with
   registry-based attribution enrichment, and `POST /dsh-kit/skills/op` performs

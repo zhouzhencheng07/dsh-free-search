@@ -17,11 +17,14 @@
 // 其中 searchEnabled 由宿主消费（开=免费引擎链，关=转发官方渠道，重启后生效），
 // 其余开关浏览器端消费。
 //
-// 宿主半边（本文件）挂四个端点（webserver 默认只绑 loopback）：
+// 宿主半边（本文件）挂这些端点（webserver 默认只绑 loopback）：
 //   1) WebSocket /dsh-kit/terminal —— 每条连接一个 node-pty 会话；
 //   2) 静态 /dsh-kit/vendor/* —— xterm 官方预编译 UMD，按需加载；
 //   3) GET /dsh-kit/tree?path=… —— 单层目录列表（含文件），只读；
-//   4) GET /dsh-kit/read?path=… —— 单文件文本内容，只读。
+//   4) GET /dsh-kit/read?path=… —— 单文件文本内容，只读；
+//   5) POST /dsh-kit/write —— 编辑保存（cwd 子树校验 + mtime CAS）；
+//   6) POST /dsh-kit/fs/op —— 文件树新建/重命名/删除（删除优先移入回收站）；
+//   7) GET /dsh-kit/git/status|diff、POST /dsh-kit/git/init|op —— 源代码管理。
 //
 // 终端的工作目录由浏览器端传入（当前会话的 cwd），宿主侧校验后才启动 shell。
 //
@@ -142,6 +145,84 @@ function validateFile(raw) {
   return { ok: true, path: real, size: stat.size, mtimeMs: stat.mtimeMs }
 }
 
+/** 校验浏览器传来的路径：绝对路径 + 存在（文件或目录均可），返回真实路径与 stat */
+function validateAny(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return { ok: false, message: '缺少路径' }
+  const resolved = path.resolve(raw.trim())
+  let real
+  try {
+    real = fs.realpathSync(resolved)
+  } catch {
+    return { ok: false, message: `路径不存在：${resolved}` }
+  }
+  let stat
+  try {
+    stat = fs.statSync(real)
+  } catch {
+    return { ok: false, message: `无法读取路径：${real}` }
+  }
+  return { ok: true, path: real, stat }
+}
+
+/** target 是否位于 dir 子树内（dir 本身不算在内——根目录不可改删） */
+function withinTree(dirReal, targetReal) {
+  const rel = path.relative(dirReal, targetReal)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
+/** Windows 保留设备名（con.txt 这类同样保留，故只取第一个点之前的部分判） */
+const WIN_RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i
+/** 新建/重命名的名称合法性：禁空、首尾空白、路径分隔符、控制字符、Windows 特殊字符与相对段 */
+function invalidFsName(raw) {
+  if (typeof raw !== 'string') return true
+  const name = raw.trim()
+  if (name === '' || name !== raw) return true
+  if (name === '.' || name === '..') return true
+  if (/[/\\]/.test(name)) return true
+  if (/[\u0000-\u001f<>:"|?*]/.test(name)) return true
+  if (WIN_RESERVED_NAME.test(name.split('.')[0])) return true
+  return false
+}
+
+/**
+ * 删除进回收站（全局约定：优先进回收站，避免直接永久删除）。
+ * Windows 走 powershell.exe + Microsoft.VisualBasic.FileIO.FileSystem（路径单引号
+ * 转义后嵌入脚本再以 -Command 原样传递，规避命令行引号转义问题）；其它平台无
+ * 回收站 API，resolve(false) 由调用方决定回退方式。
+ */
+function recycleDelete(target, isDir) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve(false)
+      return
+    }
+    const esc = String(target).replace(/'/g, "''")
+    const method = isDir ? 'DeleteDirectory' : 'DeleteFile'
+    const script =
+      `try{Add-Type -AssemblyName Microsoft.VisualBasic;` +
+      `[Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${esc}','OnlyErrorDialogs','SendToRecycleBin')}catch{exit 1}`
+    let child
+    try {
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true })
+    } catch {
+      resolve(false)
+      return
+    }
+    let settled = false
+    const timer = setTimeout(() => {
+      try { child.kill() } catch {}
+    }, 15000)
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(ok)
+    }
+    child.on('error', () => finish(false))
+    child.on('close', (code) => finish(code === 0))
+  })
+}
+
 /** Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；其它平台用 $SHELL 或 bash。结果缓存。 */
 let shellCache
 function resolveShell() {
@@ -210,7 +291,7 @@ export function apply(ctx) {
       searchEnabled: z.boolean().default(true),
       terminalShortcut: z.string().default('Ctrl+/'),
       fileTreeShortcut: z.string().default('Ctrl+,'),
-      scShortcut: z.string().default('Ctrl.'),
+      scShortcut: z.string().default('Ctrl+Alt+.'),
     })
     // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
     // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）。改开关
@@ -485,6 +566,159 @@ export function apply(ctx) {
               } catch {}
               json(200, { ok: true, mtimeMs: next ?? null })
             })
+          })
+        },
+      })
+
+      // ── 文件管理端点：POST /dsh-kit/fs/op ──
+      // body {cwd, op, ...}，供文件树的新建/重命名/删除（②）：
+      //   create {dir, name, kind?:'dir'}  在 dir 下新建空文件/文件夹（已存在报错）
+      //   rename {path, name}              同目录内重命名（目标已存在报错）
+      //   delete {path}                    删除；Windows 移入回收站，其它平台直接递归删。
+      //                                    破坏性操作，前端已二次确认。
+      // 校验链与 /write 一致：同源（POST 必须带 Origin 且匹配 Host）→ 目标必须位于
+      // realpath(cwd) 子树内（工作区根本身不可改删）→ 名称过 invalidFsName 校验。
+      const disposeFsOp = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/fs/op',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'POST') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          if (!sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          let raw = ''
+          req.on('data', (c) => {
+            raw += c
+            if (raw.length > 65536) req.destroy()
+          })
+          req.on('end', async () => {
+            let body
+            try {
+              body = JSON.parse(raw)
+            } catch {
+              json(400, { error: 'bad json' })
+              return
+            }
+            const dir = validateCwd(String(body?.cwd ?? ''))
+            if (!dir.ok) {
+              json(400, { error: dir.message })
+              return
+            }
+            const op = String(body?.op ?? '')
+
+            if (op === 'create') {
+              const pdir = validateCwd(String(body?.dir ?? ''))
+              if (!pdir.ok) {
+                json(400, { error: pdir.message })
+                return
+              }
+              // 新建的父目录允许就是工作区根本身（与改名/删除的 withinTree 不同）
+              const relDir = path.relative(dir.path, pdir.path)
+              if (relDir.startsWith('..') || path.isAbsolute(relDir)) {
+                json(400, { error: '目标目录不在当前工作区内' })
+                return
+              }
+              if (invalidFsName(body?.name)) {
+                json(400, { error: '名称非法：不能为空、含路径分隔符/特殊字符或首尾空白' })
+                return
+              }
+              const name = String(body.name).trim()
+              const target = path.join(pdir.path, name)
+              let existed = true
+              try {
+                fs.statSync(target)
+              } catch {
+                existed = false
+              }
+              if (existed) {
+                json(400, { error: `已存在：${name}` })
+                return
+              }
+              if (body.kind === 'dir') {
+                fs.mkdir(target, (mkError) => {
+                  if (mkError) {
+                    json(500, { error: `创建文件夹失败：${mkError?.message ?? mkError}` })
+                    return
+                  }
+                  json(200, { ok: true, path: target })
+                })
+              } else {
+                fs.writeFile(target, '', { flag: 'wx' }, (wError) => {
+                  if (wError) {
+                    json(500, { error: `创建文件失败：${wError?.message ?? wError}` })
+                    return
+                  }
+                  json(200, { ok: true, path: target })
+                })
+              }
+              return
+            }
+
+            const any = validateAny(String(body?.path ?? ''))
+            if (!any.ok) {
+              json(400, { error: any.message })
+              return
+            }
+            if (!withinTree(dir.path, any.path)) {
+              json(400, { error: '目标不在当前工作区内' })
+              return
+            }
+
+            if (op === 'rename') {
+              if (invalidFsName(body?.name)) {
+                json(400, { error: '名称非法：不能为空、含路径分隔符/特殊字符或首尾空白' })
+                return
+              }
+              const name = String(body.name).trim()
+              const target = path.join(path.dirname(any.path), name)
+              let clash = false
+              try {
+                fs.statSync(target)
+                clash = true
+              } catch {}
+              if (clash) {
+                json(400, { error: `目标已存在：${name}` })
+                return
+              }
+              fs.rename(any.path, target, (rError) => {
+                if (rError) {
+                  json(500, { error: `重命名失败：${rError?.message ?? rError}` })
+                  return
+                }
+                json(200, { ok: true, path: target })
+              })
+              return
+            }
+
+            if (op === 'delete') {
+              const gone = await recycleDelete(any.path, any.stat.isDirectory())
+              if (!gone) {
+                if (process.platform !== 'win32') {
+                  // 无回收站 API 的平台：退回直接删除
+                  try {
+                    await fs.promises.rm(any.path, { recursive: true })
+                  } catch (dError) {
+                    json(500, { error: `删除失败：${dError?.message ?? dError}` })
+                    return
+                  }
+                } else {
+                  json(500, { error: '移入回收站失败（文件可能被占用或路径过长）' })
+                  return
+                }
+              }
+              json(200, { ok: true })
+              return
+            }
+
+            json(400, { error: 'unknown op' })
           })
         },
       })
@@ -939,6 +1173,7 @@ export function apply(ctx) {
         disposeTree()
         disposeRead()
         disposeWrite()
+        disposeFsOp()
         disposeGitStatus()
         disposeGitDiff()
         disposeGitInit()
@@ -946,6 +1181,6 @@ export function apply(ctx) {
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
       }
-    }, 'dsh-kit: terminal endpoint + vendor assets + tree/read endpoint')
+    }, 'dsh-kit: terminal/vendor/tree/read/write/fs-op/git endpoints')
   })
 }

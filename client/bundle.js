@@ -67,7 +67,7 @@ window.__ModuleLoader__.load({
       searchEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
-      scShortcut: "Ctrl+.",
+      scShortcut: "Ctrl+Alt+.",
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -157,6 +157,17 @@ window.__ModuleLoader__.load({
       treeEmpty: "（空目录）",
       treeFail: "加载失败",
       treeTruncated: "条目过多，列表已截断",
+      treeNewFile: "新建文件",
+      treeNewFolder: "新建文件夹",
+      treeRename: "重命名",
+      treeDelete: "删除",
+      promptFileName: "新文件名：",
+      promptFolderName: "新文件夹名：",
+      renamePrompt: "重命名为：",
+      confirmDelete: "删除「{name}」？内容将移入回收站。",
+      created: "已创建",
+      renamed: "已重命名",
+      deleted: "已删除",
       scTitle: "源代码管理",
       scStaged: "暂存的更改",
       scChanges: "更改",
@@ -241,7 +252,7 @@ window.__ModuleLoader__.load({
       cfgSourceControlEnabled: "启用源代码管理",
       cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
       cfgScShortcut: "源代码管理快捷键",
-      cfgScShortcutHint: "切换源代码管理视图的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
+      cfgScShortcutHint: "切换源代码管理视图的组合键；需一个主键加至少一个修饰键。默认避开中文输入法占用的 Ctrl+.（中英文标点切换）。",
       cfgCapturing: "按下组合键…（Esc 取消）",
       cfgCapture: "修改",
       overridden: "已覆盖",
@@ -271,6 +282,17 @@ window.__ModuleLoader__.load({
       treeEmpty: "(empty)",
       treeFail: "Failed to load",
       treeTruncated: "Too many entries, list truncated",
+      treeNewFile: "New File",
+      treeNewFolder: "New Folder",
+      treeRename: "Rename",
+      treeDelete: "Delete",
+      promptFileName: "New file name:",
+      promptFolderName: "New folder name:",
+      renamePrompt: "Rename to:",
+      confirmDelete: "Delete \"{name}\"? It will be moved to the Recycle Bin.",
+      created: "Created",
+      renamed: "Renamed",
+      deleted: "Deleted",
       scTitle: "Source Control",
       scStaged: "Staged Changes",
       scChanges: "Changes",
@@ -355,7 +377,7 @@ window.__ModuleLoader__.load({
       cfgSourceControlEnabled: "Enable source control",
       cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
       cfgScShortcut: "Source control shortcut",
-      cfgScShortcutHint: "Combo that toggles the source control view; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
+      cfgScShortcutHint: "Combo that toggles the source control view; needs a modifier (Ctrl/Alt/Shift/Meta) + a key. The default avoids Ctrl+., which Chinese IMEs claim for punctuation toggle.",
       cfgCapturing: "Press a combo… (Esc to cancel)",
       cfgCapture: "Change",
       overridden: "Overridden",
@@ -443,7 +465,9 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .dshk-file .dshk-name{color:var(--dsw-alias-label-secondary)}
 .dshk-note{padding:8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
-.dshk-enbtn[aria-pressed="true"]{background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary)}
+/* 入口按钮选中态（①）：底色用主题真实存在的 tool-bar-fill，图标转品牌色；
+   :hover 一并声明避免 hover 规则在选中态下把底色洗掉 */
+.dshk-enbtn[aria-pressed="true"],.dshk-enbtn[aria-pressed="true"]:hover{background:var(--dsw-alias-button-tool-bar-fill);color:var(--dsw-alias-brand-primary)}
 /* 文件预览面板：fixed 停靠右侧（自绘，不依赖原生 details 列，宽度自控 --dshk-pane-w） */
 .dshk-pane{position:fixed;top:0;right:0;bottom:0;width:var(--dshk-pane-w,560px);display:flex;flex-direction:column;min-width:0;background:var(--dsw-alias-bg-base);border-left:1px solid var(--dsw-alias-border-l2);box-shadow:-6px 0 20px rgba(0,0,0,.10);z-index:790;pointer-events:auto;transition:width .18s var(--ds-ease-in-out)}
 .dshk-pane[data-dragging]{transition:none}
@@ -461,7 +485,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-sk-title{font-weight:600;font-size:14px}
 .dshk-sk-status{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .dshk-sk-group{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:12px;overflow:hidden}
-.dshk-sk-group-head{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:12px}
+.dshk-sk-group-head{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:12px}
 .dshk-sk-group-dir{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;text-align:right}
 /* 单行：名称/徽标 flex:none，描述 flex:1 收缩截断，操作区不换行 */
 .dshk-sk-row{display:flex;align-items:center;gap:8px;padding:7px 12px;min-width:0}
@@ -477,7 +501,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-sk-btn[data-danger="1"]{color:var(--dsw-alias-label-primary);font-weight:600;border-color:var(--dsw-alias-label-secondary)}
 .dshk-sk-btn[disabled]{opacity:.5;cursor:default}
 /* 展开式目标选择条：点复制/移动后出现在该行下方（同一时间只展开一行） */
-.dshk-sk-target{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border-top:1px dashed var(--dsw-alias-border-l1);background:var(--dsw-alias-fill-l2)}
+.dshk-sk-target{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border-top:1px dashed var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-sk-target-label{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshk-sk-detail{padding:2px 12px 10px}
 .dshk-sk-pre{margin:0;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
@@ -503,20 +527,20 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cfg-reset:hover:not(:disabled){color:var(--dsw-alias-label-primary)}
 .dshk-cfg-check{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary)}
 .dshk-cfg-hint{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
-.dshk-cfg-invalid{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-error)}
+.dshk-cfg-invalid{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
 .dshk-cfg-status{padding:6px 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;margin:0}
 .dshk-cfg-combo{appearance:none;font:inherit;font-family:ui-monospace,Consolas,monospace;font-size:12px;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 12px;line-height:1.5}
 .dshk-cfg-combo:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-cfg-combo:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-combo[data-capturing]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-secondary)}
 .dshk-cfg-footer{display:flex;justify-content:flex-end;align-items:center;gap:8px;border-top:1px solid var(--dsw-alias-border-l2);padding:12px 0 4px}
-.dshk-cfg-err{flex:1;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-error)}
+.dshk-cfg-err{flex:1;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
 .dshk-cfg-btn{appearance:none;font:inherit;cursor:pointer;font-size:13px;line-height:1.5;border-radius:8px;padding:5px 14px}
 .dshk-cfg-btn-discard{background:none;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 .dshk-cfg-btn-save{border:1px solid transparent;background:var(--dsw-alias-brand-primary);color:#fff}
 .dshk-cfg-btn[disabled]{opacity:.5;cursor:default}
 /* 轻提示（双击复制路径等的单例浮层） */
-.dshk-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%) translateY(8px);z-index:950;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;padding:8px 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 16px rgba(0,0,0,.12);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out),transform .15s var(--ds-ease-in-out)}
+.dshk-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%) translateY(8px);z-index:950;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;padding:8px 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 16px rgba(0,0,0,.12);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out),transform .15s var(--ds-ease-in-out)}
 .dshk-toast[data-show]{opacity:1;transform:translateX(-50%) translateY(0)}
 /* git 徽标（任务4）与 diff 着色 */
 .dshk-gitbadge{flex:none;margin-left:auto;font-size:10px;line-height:14px;padding:0 5px;border-radius:6px;font-family:ui-monospace,Consolas,monospace;border:1px solid currentColor}
@@ -536,8 +560,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-chg-head{cursor:pointer;user-select:none}
 .dshk-chg-chev{flex:none;font-size:9px;line-height:1;color:var(--dsw-alias-label-tertiary);transition:transform .15s var(--ds-ease-in-out);display:inline-block}
 .dshk-chg-chev[data-open]{transform:rotate(90deg)}
-.dshk-rowact{display:none;gap:2px;align-items:center}
-.dshk-chg-row:hover .dshk-rowact{display:inline-flex}
+.dshk-rowact{display:none;gap:2px;align-items:center;margin-left:auto}
+.dshk-row:hover .dshk-rowact,.dshk-chg-row:hover .dshk-rowact{display:inline-flex}
 .dshk-rowact button{appearance:none;width:20px;height:20px;font-size:11px;line-height:1;border:0;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;padding:0}
 .dshk-rowact button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 /* 全文件着色 diff：完整内容内联渲染，删除红/新增绿/上下文正常 */
@@ -546,7 +570,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-il-del{color:#cd3131;background:rgba(205,49,49,.08)}
 /* 「更改」清单（VSCode 源代码管理式） */
 .dshk-changes{margin:2px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
-.dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);font-size:11px}
+.dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px}
 .dshk-diff{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;padding:4px 0;white-space:pre;overflow-x:auto;user-select:text;color:var(--dsw-alias-label-secondary)}
 .dshk-diff-add{color:#0dbc79;background:rgba(13,188,121,.08)}
 .dshk-diff-del{color:#cd3131;background:rgba(205,49,49,.08)}
@@ -879,6 +903,19 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
+    /** 文件管理操作（新建/重命名/删除）：POST /dsh-kit/fs/op，宿主做子树与名称校验 */
+    function postFsOp(payload) {
+      return fetch("/dsh-kit/fs/op", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }).then(async (res) => {
+        const b = await res.json().catch(() => ({}));
+        if (!res.ok || !b.ok) throw new Error(b.error || `HTTP ${res.status}`);
+        return b;
+      });
+    }
+
     /** 文件行尾的 git 状态小徽标（M/A/D/R/U） */
     function GitBadge({ xy }) {
       const s = String(xy).trim();
@@ -1003,6 +1040,73 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       );
     }
 
+    /** 新建文件图标：文件折角 + 加号 */
+    function FilePlusIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M3.5 1.5h5l4 4v9h-9z" }),
+            jsxRuntime.jsx("path", { d: "M8.5 1.5v4h4" }),
+            jsxRuntime.jsx("path", { d: "M8 7.8v3.4M6.3 9.5h3.4" }),
+          ],
+        },
+      );
+    }
+
+    /** 新建文件夹图标：FolderIcon 轮廓 + 加号 */
+    function FolderPlusIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M1.5 3.5c0-.55.45-1 1-1h3.2l1.6 1.8h6.2c.55 0 1 .45 1 1v7.2c0 .55-.45 1-1 1h-11c-.55 0-1-.45-1-1v-9z" }),
+            jsxRuntime.jsx("path", { d: "M8 7.6v3.6M6.2 9.4h3.6" }),
+          ],
+        },
+      );
+    }
+
+    /** 删除图标：垃圾桶 */
+    function TrashIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 10h6.6L12 4" }),
+            jsxRuntime.jsx("path", { d: "M6.7 6.8v4.6M9.3 6.8v4.6" }),
+          ],
+        },
+      );
+    }
+
     /** 展开箭头：对齐原生工作区树的 IconTriangleRightFill14（右向实心三角，展开时 rotate 90° 朝下） */
     function ChevronIcon({ open }) {
       return jsxRuntime.jsx(
@@ -1018,18 +1122,51 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       );
     }
 
-    /** 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?} */
-    function TreeNode({ entry, depth, expanded, onToggle, onOpenFile }) {
+    /** 行悬停操作小按钮（新建/重命名/删除共用）：点击不触发行本身的打开/折叠 */
+    function RowActionBtn({ title, onClick, children }) {
+      return jsxRuntime.jsx("button", {
+        type: "button",
+        title,
+        onClick: (e) => {
+          e.stopPropagation();
+          onClick();
+        },
+        children,
+      });
+    }
+
+    /**
+     * 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?}
+     * actions:{onCreate(dirPath,isDir), onRename(entry), onDelete(entry)} 可选——
+     * 缺省时不渲染行悬停操作（渲染级验证桩调用即不带）。
+     */
+    function TreeNode({ entry, depth, expanded, onToggle, onOpenFile, actions }) {
       const info = entry.dir ? expanded[entry.path] : undefined;
+      const acts = actions ?? {};
+      const rowActions = [];
+      if (entry.dir && acts.onCreate) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFile"), onClick: () => acts.onCreate(entry.path, false), children: jsxRuntime.jsx(FilePlusIcon, {}) }, "nf"));
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFolder"), onClick: () => acts.onCreate(entry.path, true), children: jsxRuntime.jsx(FolderPlusIcon, {}) }, "nd"));
+      }
+      if (acts.onRename) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeRename"), onClick: () => acts.onRename(entry), children: "✎" }, "rn"));
+      }
+      if (acts.onDelete) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeDelete"), onClick: () => acts.onDelete(entry), children: jsxRuntime.jsx(TrashIcon, {}) }, "dl"));
+      }
+      const rowChildren = [
+        jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }, "chev"),
+        jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }, "name"),
+      ];
+      if (rowActions.length > 0) {
+        rowChildren.push(jsxRuntime.jsx("span", { className: "dshk-rowact", children: rowActions }, "acts"));
+      }
       const rows = [jsxRuntime.jsxs("div", {
         className: `dshk-row${entry.dir ? "" : " dshk-file"}`,
         style: { paddingLeft: 8 + depth * 14 },
         title: entry.path,
         onClick: () => (entry.dir ? onToggle(entry) : onOpenFile(entry.path)),
-        children: [
-          jsxRuntime.jsx("span", { className: "dshk-chev", children: entry.dir ? jsxRuntime.jsx(ChevronIcon, { open: !!info }) : null }),
-          jsxRuntime.jsx("span", { className: "dshk-name", children: entry.name }),
-        ],
+        children: rowChildren,
       }, entry.path)];
       if (entry.dir && info) {
         if (info.status === "loading") {
@@ -1040,7 +1177,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeEmpty") }, `${entry.path}::empty`));
         } else {
           for (const child of info.entries) {
-            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onOpenFile }, child.path));
+            rows.push(jsxRuntime.jsx(TreeNode, { entry: child, depth: depth + 1, expanded, onToggle, onOpenFile, actions }, child.path));
           }
           if (info.truncated) {
             rows.push(jsxRuntime.jsx("div", { className: "dshk-note", style: { paddingLeft: 8 + (depth + 1) * 14 }, children: t("treeTruncated") }, `${entry.path}::truncated`));
@@ -1120,6 +1257,79 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         if (!expanded[entry.path]) loadDir(entry.path);
       };
 
+      // ── 文件管理（新建/重命名/删除）：数据走 POST /dsh-kit/fs/op，宿主做子树校验 ──
+      /** 取父目录：无分隔符时回落 cwd */
+      const parentOf = (p) => {
+        const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+        return i > 0 ? p.slice(0, i) : cwd ?? p;
+      };
+      /** 清掉以 prefix 为根的整棵子树的展开缓存（目录改名/删除后这些键全部过期） */
+      const pruneExpandedFrom = (prefix) => {
+        const a = `${prefix}\\`;
+        const b = `${prefix}/`;
+        setExpanded((m) => {
+          const next = {};
+          for (const k of Object.keys(m)) {
+            if (k === prefix || k.startsWith(a) || k.startsWith(b)) continue;
+            next[k] = m[k];
+          }
+          return next;
+        });
+      };
+      /** 预览中的文件被改名/删除后关闭预览（含其子路径） */
+      const closeStalePreview = (prefix) => {
+        const f = kitUi.openFile;
+        if (f && (f === prefix || f.startsWith(`${prefix}\\`) || f.startsWith(`${prefix}/`))) {
+          setKitUi({ openFile: null, openFrom: null });
+        }
+      };
+      const runFsOp = async (payload, confirmText) => {
+        if (confirmText && !window.confirm(confirmText)) return false;
+        try {
+          await postFsOp({ cwd, ...payload });
+          return true;
+        } catch (error) {
+          flashToast(`${t("skOpFail")}：${error?.message ?? error}`);
+          return false;
+        }
+      };
+      /** 在 dirPath 下新建文件/文件夹；完成后刷新该目录（未展开则顺带展开） */
+      const createEntry = async (dirPath, wantDir) => {
+        if (!cwd) return;
+        const rawName = window.prompt(wantDir ? t("promptFolderName") : t("promptFileName"));
+        if (rawName === null) return;
+        const name = rawName.trim();
+        if (name === "") return;
+        const okDone = await runFsOp({ op: "create", dir: dirPath, name, kind: wantDir ? "dir" : "file" });
+        if (!okDone) return;
+        flashToast(t("created"));
+        loadDir(dirPath);
+      };
+      const renameEntry = async (entry) => {
+        const rawName = window.prompt(t("renamePrompt"), entry.name);
+        if (rawName === null) return;
+        const name = rawName.trim();
+        if (name === "" || name === entry.name) return;
+        const okDone = await runFsOp({ op: "rename", path: entry.path, name });
+        if (!okDone) return;
+        flashToast(t("renamed"));
+        closeStalePreview(entry.path);
+        pruneExpandedFrom(entry.path);
+        loadDir(parentOf(entry.path));
+      };
+      const deleteEntry = async (entry) => {
+        const okDone = await runFsOp(
+          { op: "delete", path: entry.path },
+          t("confirmDelete").replace("{name}", entry.name),
+        );
+        if (!okDone) return;
+        flashToast(t("deleted"));
+        closeStalePreview(entry.path);
+        pruneExpandedFrom(entry.path);
+        loadDir(parentOf(entry.path));
+      };
+      const treeActions = { onCreate: createEntry, onRename: renameEntry, onDelete: deleteEntry };
+
       const rootInfo = cwd ? expanded[cwd] : undefined;
 
       return jsxRuntime.jsxs("div", {
@@ -1131,6 +1341,25 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx(FolderIcon, {}),
               // 显示当前目录路径（不显示"文件树"文字），过长时省略号，hover 悬浮看全
               jsxRuntime.jsx("span", { className: "dshk-dir", title: cwd ?? "", children: cwd ?? t("treeLabel") }),
+              // 根目录新建文件/文件夹
+              cwd
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t("treeNewFile"),
+                    onClick: () => createEntry(cwd, false),
+                    children: jsxRuntime.jsx(FilePlusIcon, {}),
+                  })
+                : null,
+              cwd
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t("treeNewFolder"),
+                    onClick: () => createEntry(cwd, true),
+                    children: jsxRuntime.jsx(FolderPlusIcon, {}),
+                  })
+                : null,
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
@@ -1154,7 +1383,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                     : jsxRuntime.jsxs(jsxRuntime.Fragment, {
                         children: [
                           rootInfo.entries.map((entry) =>
-                            jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile }, entry.path),
+                            jsxRuntime.jsx(TreeNode, { entry, depth: 0, expanded, onToggle: toggleDir, onOpenFile, actions: treeActions }, entry.path),
                           ),
                           rootInfo.truncated
                             ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeTruncated") })
@@ -1699,7 +1928,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           editing
             ? renderEditor()
             : mode === "diff"
-              ? renderDiffView()
+              ? jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() })
               : body,
         ],
       });
@@ -1707,6 +1936,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 
     // ─────────── 入口按钮（conversation.input.left）───────────
     // 只负责开合与按压态；面板本体在 KitSurfaces（shell.overlay）渲染。
+    // 选中态标记（①）：aria-pressed 属性选择器命中 .dshk-enbtn[aria-pressed="true"]
+    // 规则（底色 + 品牌色图标）。此前用的 --dsw-alias-fill-l2 在主题里并不存在，
+    // 背景解析为透明，选中态等于没有——已换成真实存在的 tool-bar-fill 令牌。
     function TerminalEntry(props) {
       const ui = useKitUi();
       const cwd = useCurrentCwd(props);
