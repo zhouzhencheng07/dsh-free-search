@@ -1,6 +1,7 @@
 // 渲染级验证：桩掉 react hooks，直接函数调用 dsh-kit 的组件
-// （TreeNode/FileTreePanel/FileContentPane/TerminalEntry/FileTreeEntry/KitSurfaces/KitConfigCard/GitChangesPanel/SkillsManager），
-// 跑完整渲染体。强制步骤（见 AGENTS.md）：整文件重写 client bundle 后必须做渲染级验证。
+// （TreeNode/FileTreePanel/FileContentPane/TerminalEntry/FileTreeEntry/KitSurfaces/
+// KitConfigCard/GitChangesPanel/SkillsManager/TerminalDock/TerminalPane），跑完整渲染体。
+// TerminalDock/TerminalPane 通过 setKitUi 预置会话后渲染（防"有状态后才走到的分支"逃逸）。
 // ⚠️ 盲区：桩不会重渲染（effect 不执行、state 不更新），依赖 effect 产出后才走到的
 // 渲染分支（如 FileTreePanel 的 entries.map 行）覆盖不到——2026-08-23 曾有残留变量
 // gitMap 藏在该行逃过本检查，靠用户实测暴露。可疑残留请配合全文扫描排查。
@@ -42,10 +43,11 @@ const windowStub = {
   __ModuleLoader__: { load: () => { /* noop */ } },
 };
 
-// 3) 组装可执行的 factory 闭包，并导出组件（替换防 early-return）
+// 3) 组装可执行的 factory 闭包，并导出组件（替换防 early-return）；
+//    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -55,7 +57,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -93,6 +95,17 @@ check("TerminalEntry 渲染无异常", !!out && typeof out === "object");
 callLog = [];
 out = comps.FileTreeEntry({});
 check("FileTreeEntry 渲染无异常", !!out && typeof out === "object");
+
+// 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
+// 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"
+comps.setKitUi({ terminals: [comps.makeTerm("C:/x"), comps.makeTerm("C:/x")], activeTermId: null, termDockOpen: true });
+callLog = [];
+out = comps.TerminalDock({ open: true, cwd: "C:/x", onSpawn: () => {}, onHide: () => {}, onActivate: () => {}, onKill: () => {} });
+check("TerminalDock 带标签渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.TerminalPane({ term: { id: "t1", cwd: "C:/x" }, visible: true });
+check("TerminalPane 渲染无异常", !!out && typeof out === "object");
+comps.setKitUi({ terminals: [], activeTermId: null, termDockOpen: false });
 callLog = [];
 out = comps.KitSurfaces({});
 check("KitSurfaces 无hooks渲染无异常", !!out && typeof out === "object");

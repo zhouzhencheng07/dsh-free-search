@@ -941,25 +941,25 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             className: "dshk-head",
             children: [
               jsxRuntime.jsxs("span", { className: "dshk-tabs", children: [
-                items.map((t) =>
+                items.map((tab) =>
                   jsxRuntime.jsxs("div", {
-                    className: `dshk-tab${t.id === activeId ? " dshk-tab-on" : ""}`,
-                    title: t.cwd ?? "",
-                    onClick: () => onActivate(t.id),
+                    className: `dshk-tab${tab.id === activeId ? " dshk-tab-on" : ""}`,
+                    title: tab.cwd ?? "",
+                    onClick: () => onActivate(tab.id),
                     children: [
-                      jsxRuntime.jsx("span", { className: "dshk-tab-label", children: termTabLabel(t, items) }),
+                      jsxRuntime.jsx("span", { className: "dshk-tab-label", children: termTabLabel(tab, items) }),
                       jsxRuntime.jsx("button", {
                         type: "button",
                         className: "dshk-tab-x",
                         title: t("termTabClose"),
                         onClick: (e) => {
                           e.stopPropagation();
-                          onKill(t.id);
+                          onKill(tab.id);
                         },
                         children: "✕",
                       }),
                     ],
-                  }, t.id),
+                  }, tab.id),
                 ),
               ] }),
               jsxRuntime.jsx("button", {
@@ -991,8 +991,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             children:
               items.length === 0 ? jsxRuntime.jsx("div", { className: "dshk-msg", children: t("noCwd") }) : null,
           }),
-          ...items.map((t) =>
-            jsxRuntime.jsx(TerminalPane, { term: t, visible: t.id === activeId }, `pane-${t.id}`),
+          ...items.map((tt) =>
+            jsxRuntime.jsx(TerminalPane, { term: tt, visible: tt.id === activeId }, `pane-${tt.id}`),
           ),
         ],
       });
