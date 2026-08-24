@@ -10,13 +10,17 @@ dsh stays stock.
 
 ### Terminal
 
-A terminal toggle on the composer tool row or **Ctrl+`** opens/closes the
-bottom terminal panel:
+A terminal toggle on the composer tool row or **Ctrl+`** shows/hides the bottom
+**terminal dock (tabbed)**:
 
-- Opens in the **current session's workspace directory** (session cwd; falls
-  back to the most recent workspace path)
+- **Multiple terminals**: the ＋ button in the dock header spawns a new one bound
+  to the current session workspace at that moment; later workspace switches don't
+  affect open terminals. Same-workspace tabs get a sequence number
+- Ctrl+/ and the entry button only **toggle the dock's visibility** — hidden
+  terminals keep running and buffering output; each tab's ✕ kills that session;
+  the badge on the entry icon shows how many are alive. Refreshing the page ends
+  everything (no orphan processes)
 - On Windows prefers pwsh (PowerShell 7+), falls back to powershell.exe
-- Closing the panel / refreshing the page ends the shell process (no orphans)
 
 ### File tree
 

@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { terminalOpen: false, treeOpen: false, gitOpen: false, openFile: null, openFrom: null, termCwd: null };
+    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -55,6 +55,40 @@ window.__ModuleLoader__.load({
       return () => kitUiListeners.delete(listener);
     }
     const useKitUi = () => react.useSyncExternalStore(subscribeKitUi, () => kitUi);
+
+    // ── 多终端会话模型 ──
+    // terminals:[{id,cwd}] 创建顺序即标签顺序；每个终端在创建那一刻绑定当时的
+    // 会话工作区，之后切换会话不影响已开的终端。termDockOpen 只管坞的可见性——
+    // 隐藏不杀进程，后台标签的 shell 继续跑、xterm 继续缓冲输出；标签 ✕ 才断开
+    // 对应 WS（宿主随即杀掉 pty）。
+    let termSeq = 0;
+    const makeTerm = (cwd) => ({ id: `term-${++termSeq}`, cwd });
+    /** 入口按钮与 Ctrl+/ 共用：开=恢复视图（无会话则新建绑定当前 cwd）；关=仅隐藏 */
+    function toggleTermDock(ui, cwd) {
+      if (ui.termDockOpen) return { termDockOpen: false };
+      if (ui.terminals.length === 0) {
+        const nt = cwd ? makeTerm(cwd) : null;
+        return nt ? { termDockOpen: true, terminals: [nt], activeTermId: nt.id } : { termDockOpen: true };
+      }
+      return { termDockOpen: true, activeTermId: ui.activeTermId ?? ui.terminals[ui.terminals.length - 1].id };
+    }
+    /** ＋ 新建终端：绑定调用那一刻的当前会话工作区 */
+    function spawnTerm(ui, cwd) {
+      const nt = makeTerm(cwd ?? "");
+      return { terminals: [...ui.terminals, nt], activeTermId: nt.id, termDockOpen: true };
+    }
+    /** 标签 ✕：从列表移除（组件卸载即断 WS 杀进程），激活位顺延邻居 */
+    function killTerm(ui, id) {
+      const idx = ui.terminals.findIndex((x) => x.id === id);
+      if (idx < 0) return {};
+      const rest = ui.terminals.filter((x) => x.id !== id);
+      const patch = { terminals: rest };
+      if (ui.activeTermId === id) {
+        patch.activeTermId = rest.length > 0 ? rest[Math.min(idx, rest.length - 1)].id : null;
+      }
+      if (rest.length === 0) patch.termDockOpen = false;
+      return patch;
+    }
 
     // ─────────── 插件配置（任务5）───────────
     // 数据通道：官方 settings scope（宿主 installSettingsSection 注册的
@@ -149,7 +183,9 @@ window.__ModuleLoader__.load({
       exited: "已退出",
       code: "代码",
       restart: "重新启动终端",
-      close: "关闭终端面板",
+      termNew: "新建终端",
+      termHide: "隐藏终端坞（进程继续运行）",
+      termTabClose: "结束此终端",
       vendorFail: "终端组件加载失败",
       treeLabel: "文件树",
       treeClose: "关闭文件树",
@@ -275,7 +311,9 @@ window.__ModuleLoader__.load({
       exited: "Exited",
       code: "code",
       restart: "Restart terminal",
-      close: "Close terminal panel",
+      termNew: "New terminal",
+      termHide: "Hide dock (processes keep running)",
+      termTabClose: "Kill this terminal",
       vendorFail: "Failed to load terminal components",
       treeLabel: "Files",
       treeClose: "Close file tree",
@@ -451,6 +489,23 @@ window.__ModuleLoader__.load({
 .dshk-term{height:100%}
 .dshk-term .xterm{height:100%}
 .dshk-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:13px}
+/* 多终端：入口图标数量角标 + 标签条 + 堆叠 pane（隐藏 pane 离屏缓冲输出） */
+.dshk-enbtn{position:relative}
+.dshk-term-badge{position:absolute;top:-4px;right:-4px;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:14px;text-align:center;font-weight:600}
+.dshk-tabs{display:inline-flex;align-items:center;gap:2px;min-width:0;overflow:hidden}
+.dshk-tab{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 5px 0 9px;border-radius:6px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:170px;user-select:none}
+.dshk-tab:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-tab-on,.dshk-tab-on:hover{background:var(--dsw-alias-button-tool-bar-fill);color:var(--dsw-alias-label-primary)}
+.dshk-tab-label{overflow:hidden;text-overflow:ellipsis}
+.dshk-tab-x{appearance:none;border:0;background:none;color:inherit;width:15px;height:15px;border-radius:4px;font-size:10px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;visibility:hidden}
+.dshk-tab:hover .dshk-tab-x,.dshk-tab-x:hover{visibility:visible}
+.dshk-tab-x:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-tstack{position:relative;flex:1 1 auto;min-height:0}
+.dshk-tpane{position:absolute;inset:0;padding:2px 8px 8px;box-sizing:border-box;display:none}
+.dshk-tpane[data-on]{display:block}
+.dshk-tbody{height:100%;position:relative}
+.dshk-term-note{position:absolute;top:8px;left:50%;transform:translateX(-50%);display:inline-flex;align-items:center;gap:8px;max-width:92%;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:3px 12px;font-size:12px;color:var(--dsw-alias-label-secondary);pointer-events:none;z-index:5}
+.dshk-term-note button{pointer-events:auto}
 /* 让位布局：终端打开时把对话列顶起，内容不被遮挡（终端宽度即对话列宽） */
 body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})}
 [class*="_centerCol"]{transition:padding-bottom .18s ease,margin-right .18s var(--ds-ease-in-out)}
@@ -671,36 +726,27 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       return null;
     }
 
-    // ─────────── 终端面板 ───────────
-    function TerminalPanel({ cwd, onClose }) {
+    // ─────────── 终端坞（多标签）───────────
+    // TerminalPane = 一个终端会话（一条 WS/一个 pty），挂载即连接、卸载即杀；
+    // TerminalDock = 底部停靠容器：头部标签条（＋ 新建 / — 隐藏），body 纵向堆叠
+    // 各 pane，仅激活 pane 可见。隐藏的 pane 保持挂载：xterm 离屏继续缓冲输出，
+    // 切回不丢内容（display:none 期间跳过 fit，切回由 ResizeObserver 自动补）。
+    function TerminalPane({ term, visible }) {
       const bodyRef = react.useRef(null);
       const [nonce, setNonce] = react.useState(0);
       const [state, setState] = react.useState({ phase: "connecting", detail: "" });
-      // 宽度跟随对话列：测量 _centerCol 的视口位置（侧栏开合/拖宽/窗口缩放都会触发）
-      const [pos, setPos] = react.useState(null);
-
-      react.useLayoutEffect(() => {
-        const el = document.querySelector('[class*="_centerCol"]');
-        if (!el) return undefined;
-        const update = () => {
-          const r = el.getBoundingClientRect();
-          if (r.width > 0) setPos({ left: Math.max(0, r.left), width: r.width });
-        };
-        update();
-        const ro = new ResizeObserver(update);
-        ro.observe(el);
-        return () => ro.disconnect();
-      }, []);
+      const visibleRef = react.useRef(visible);
+      visibleRef.current = visible;
 
       react.useEffect(() => {
-        if (!cwd) {
+        if (!term.cwd) {
           setState({ phase: "error", detail: t("noCwd") });
           return undefined;
         }
         let disposed = false;
         setState({ phase: "connecting", detail: "" });
 
-        let term = null;
+        let termInst = null;
         let host = null;
         let ws = null;
         let fitAddon = null;
@@ -708,14 +754,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         let themeObserver = null;
 
         const sendResize = () => {
-          if (disposed || !term || !fitAddon) return;
+          if (disposed || !visibleRef.current || !termInst || !fitAddon) return; // 隐藏时不 fit
           try {
             fitAddon.fit();
           } catch {
             return;
           }
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
+            ws.send(JSON.stringify({ t: "r", cols: termInst.cols, rows: termInst.rows }));
           }
         };
         const scheduleResize = () => {
@@ -730,7 +776,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         ensureVendor()
           .then(() => {
             if (disposed) return;
-            term = new window.Terminal({
+            termInst = new window.Terminal({
               fontSize: 13,
               lineHeight: 1.25,
               fontFamily: 'ui-monospace, Consolas, "Cascadia Mono", "Courier New", monospace',
@@ -740,9 +786,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             });
             // DSH 明暗切换时热更新调色板（presenter 改 body 属性）
             themeObserver = new MutationObserver(() => {
-              if (!disposed && term) {
+              if (!disposed && termInst) {
                 try {
-                  term.options.theme = xtermTheme();
+                  termInst.options.theme = xtermTheme();
                 } catch {
                   // 忽略
                 }
@@ -750,24 +796,24 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             });
             themeObserver.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
             fitAddon = new window.FitAddon.FitAddon();
-            term.loadAddon(fitAddon);
+            termInst.loadAddon(fitAddon);
             host = document.createElement("div");
             host.className = "dshk-term";
             bodyRef.current.appendChild(host);
-            term.open(host);
+            termInst.open(host);
             try {
-              fitAddon.fit();
+              if (visibleRef.current) fitAddon.fit();
             } catch {
               // ResizeObserver 会再触发
             }
-            term.onData((d) => {
+            termInst.onData((d) => {
               if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "i", d }));
             });
             ro.observe(bodyRef.current);
 
             ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/dsh-kit/terminal`);
             ws.onopen = () => {
-              ws.send(JSON.stringify({ t: "init", cwd, cols: term.cols, rows: term.rows }));
+              ws.send(JSON.stringify({ t: "init", cwd: term.cwd, cols: termInst.cols, rows: termInst.rows }));
             };
             ws.onmessage = (ev) => {
               let m;
@@ -778,16 +824,16 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               }
               if (!m || typeof m !== "object") return;
               if (m.t === "o" && typeof m.d === "string") {
-                term.write(m.d);
+                termInst.write(m.d);
               } else if (m.t === "started") {
                 setState({ phase: "ready", detail: m.shell ?? "" });
-                term.focus();
+                if (visibleRef.current) termInst.focus(); // 后台启动的终端不抢焦点
               } else if (m.t === "exit") {
                 setState({ phase: "exited", detail: String(m.exitCode ?? "") });
-                term.write(`\r\n\x1b[90m[${t("exited")} · ${t("code")} ${m.exitCode}]\x1b[0m\r\n`);
+                termInst.write(`\r\n\x1b[90m[${t("exited")} · ${t("code")} ${m.exitCode}]\x1b[0m\r\n`);
               } else if (m.t === "error") {
                 setState({ phase: "error", detail: String(m.message ?? "") });
-                term.write(`\r\n\x1b[31m${m.message ?? ""}\x1b[0m\r\n`);
+                termInst.write(`\r\n\x1b[31m${m.message ?? ""}\x1b[0m\r\n`);
               }
             };
             ws.onclose = () => {
@@ -813,16 +859,16 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               // 已关闭
             }
           }
-          if (term) {
+          if (termInst) {
             try {
-              term.dispose();
+              termInst.dispose();
             } catch {
               // 已释放
             }
           }
           if (host) host.remove();
         };
-      }, [cwd, nonce]);
+      }, [term.id, nonce]);
 
       const statusText =
         state.phase === "connecting"
@@ -832,46 +878,126 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             : "";
 
       return jsxRuntime.jsxs("div", {
+        className: "dshk-tpane",
+        "data-on": visible || undefined,
+        children: [
+          jsxRuntime.jsx("div", { className: "dshk-tbody", ref: bodyRef }),
+          statusText !== "" || state.phase === "error"
+            ? jsxRuntime.jsxs("div", { className: "dshk-term-note", children: [
+                jsxRuntime.jsx("span", {
+                  title: state.detail ?? "",
+                  children: state.phase === "error" ? `${t("contentFail")}：${state.detail}` : statusText,
+                }),
+                state.phase === "exited"
+                  ? jsxRuntime.jsx("button", {
+                      type: "button",
+                      className: "dshk-btn-cancel",
+                      onClick: () => setNonce((n) => n + 1),
+                      children: t("restart"),
+                    })
+                  : null,
+              ] })
+            : null,
+        ],
+      });
+    }
+
+    /** 标签文案：工作区目录名；同 cwd 多开时追加序号区分 */
+    function termTabLabel(term, items) {
+      const base = String(term.cwd ?? "").split(/[\\/]/).filter(Boolean).pop() || term.cwd || "?";
+      const same = items.filter((x) => x.cwd === term.cwd);
+      return same.length > 1 ? `${base} ${same.indexOf(term) + 1}` : base;
+    }
+
+    function TerminalDock({ open, cwd, onSpawn, onHide, onActivate, onKill }) {
+      const ui = useKitUi();
+      const items = ui.terminals;
+      const activeId = ui.activeTermId ?? (items.length > 0 ? items[items.length - 1].id : null);
+      const activeItem = items.find((x) => x.id === activeId) ?? null;
+      // 宽度跟随对话列：测量 _centerCol 的视口位置（侧栏开合/拖宽/窗口缩放都会触发）
+      const [pos, setPos] = react.useState(null);
+
+      react.useLayoutEffect(() => {
+        const el = document.querySelector('[class*="_centerCol"]');
+        if (!el) return undefined;
+        const update = () => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) setPos({ left: Math.max(0, r.left), width: r.width });
+        };
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+      }, []);
+
+      return jsxRuntime.jsxs("div", {
         className: "dshk-dock",
-        style: pos ? { left: pos.left, width: pos.width } : undefined,
+        style: {
+          ...(pos ? { left: pos.left, width: pos.width } : {}),
+          ...(open ? {} : { display: "none" }), // 隐藏≠卸载：后台会话保持运行
+        },
         children: [
           jsxRuntime.jsxs("div", {
             className: "dshk-head",
             children: [
-              jsxRuntime.jsx("span", { className: "dshk-title", children: t("label") }),
-              cwd
+              jsxRuntime.jsxs("span", { className: "dshk-tabs", children: [
+                items.map((t) =>
+                  jsxRuntime.jsxs("div", {
+                    className: `dshk-tab${t.id === activeId ? " dshk-tab-on" : ""}`,
+                    title: t.cwd ?? "",
+                    onClick: () => onActivate(t.id),
+                    children: [
+                      jsxRuntime.jsx("span", { className: "dshk-tab-label", children: termTabLabel(t, items) }),
+                      jsxRuntime.jsx("button", {
+                        type: "button",
+                        className: "dshk-tab-x",
+                        title: t("termTabClose"),
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          onKill(t.id);
+                        },
+                        children: "✕",
+                      }),
+                    ],
+                  }, t.id),
+                ),
+              ] }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-btn",
+                title: t("termNew"),
+                onClick: onSpawn,
+                children: "＋",
+              }),
+              activeItem
                 ? jsxRuntime.jsx("span", {
                     className: "dshk-sub",
-                    title: cwd,
-                    children: `${state.detail && state.phase === "ready" ? `${state.detail} · ` : ""}${cwd}`,
+                    title: activeItem.cwd ?? "",
+                    children: activeItem.cwd ?? "",
                   })
                 : null,
-              statusText !== "" ? jsxRuntime.jsx("span", { className: "dshk-status", children: statusText }) : null,
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
-                title: t("restart"),
-                onClick: () => setNonce((n) => n + 1),
-                children: "⟳",
-              }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-btn",
-                title: t("close"),
-                onClick: onClose,
-                children: "✕",
+                title: t("termHide"),
+                onClick: onHide,
+                children: "—",
               }),
             ],
           }),
           jsxRuntime.jsx("div", {
-            className: "dshk-body",
-            ref: bodyRef,
-            children: !cwd ? jsxRuntime.jsx("div", { className: "dshk-msg", children: t("noCwd") }) : null,
+            className: "dshk-tstack",
+            children:
+              items.length === 0 ? jsxRuntime.jsx("div", { className: "dshk-msg", children: t("noCwd") }) : null,
           }),
+          ...items.map((t) =>
+            jsxRuntime.jsx(TerminalPane, { term: t, visible: t.id === activeId }, `pane-${t.id}`),
+          ),
         ],
       });
     }
+
 
     // ─────────── 文件树 ───────────
     // 数据走宿主半边只读端点 /dsh-kit/tree（官方 browse RPC 只列目录不列文件）。
@@ -2018,18 +2144,24 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     function TerminalEntry(props) {
       const ui = useKitUi();
       const cwd = useCurrentCwd(props);
-      return jsxRuntime.jsx("button", {
+      const count = ui.terminals.length;
+      const dockOn = ui.termDockOpen && count > 0;
+      return jsxRuntime.jsxs("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
-        "aria-pressed": ui.terminalOpen,
-        title: t("label"),
+        "aria-pressed": dockOn,
+        title: count > 0 ? `${t("label")} · ${count}` : t("label"),
         onClick: () => {
-          // 打开那一刻固定当时的会话工作区；面板存续期间不受会话/工作区切换影响，
-          // 关闭（✕）即结束该 shell。
-          if (ui.terminalOpen) setKitUi({ terminalOpen: false });
-          else setKitUi({ terminalOpen: true, termCwd: cwd });
+          // 只开/关终端坞：隐藏不杀进程，后台会话继续跑；无会话时新建并绑定
+          // 当时的当前会话工作区（之后切换会话不影响已开终端）
+          setKitUi(toggleTermDock(kitUi, cwd));
         },
-        children: jsxRuntime.jsx(TerminalIcon, {}),
+        children: [
+          jsxRuntime.jsx(TerminalIcon, {}),
+          count > 0
+            ? jsxRuntime.jsx("span", { className: "dshk-term-badge", "aria-hidden": true, children: String(count) })
+            : null,
+        ],
       });
     }
 
@@ -2112,9 +2244,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         };
       }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.skillsPageEnabled]);
 
-      // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉
+      // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉；
+      // 终端功能关闭 = 结束全部终端会话（连 WS 杀 pty，与单终端时代语义一致）
       react.useEffect(() => {
-        if (!cfg.terminalEnabled && ui.terminalOpen) setKitUi({ terminalOpen: false });
+        if (!cfg.terminalEnabled && (ui.termDockOpen || ui.terminals.length > 0)) {
+          setKitUi({ terminals: [], activeTermId: null, termDockOpen: false });
+        }
         if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
         if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
       }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled]);
@@ -2152,17 +2287,17 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         if (ui.openFile !== null && ui.openFrom !== activeView) setKitUi({ openFile: null, openFrom: null });
       }, [ui.treeOpen, ui.gitOpen, ui.openFile, ui.openFrom]);
 
-      // 终端让位布局：打开时挂 body 类 + 设高度变量，样式规则顶起对话/详情列
-      //（配置关闭时面板不渲染，让位类也一并撤掉）
+      // 终端让位布局：坞可见时挂 body 类 + 设高度变量，样式规则顶起对话/详情列
+      //（隐藏/无会话时不顶——后台会话继续跑但不占布局）
       react.useEffect(() => {
-        if (!ui.terminalOpen || !cfg.terminalEnabled) return undefined;
+        if (ui.terminals.length === 0 || !ui.termDockOpen || !cfg.terminalEnabled) return undefined;
         document.documentElement.style.setProperty("--dshk-dock-h", DOCK_H);
         document.body.classList.add("dshk-open");
         return () => {
           document.body.classList.remove("dshk-open");
           document.documentElement.style.removeProperty("--dshk-dock-h");
         };
-      }, [ui.terminalOpen, cfg.terminalEnabled]);
+      }, [ui.termDockOpen, ui.terminals.length, cfg.terminalEnabled]);
 
       // 快捷键统一在此监听：组合键来自配置（默认 Ctrl+` / Ctrl+E，capture 拦截
       // 避免页面其它快捷键抢先），对应功能关闭时不响应；设置卡录制新键时让路。
@@ -2177,8 +2312,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
           if (termCombo && cfg.terminalEnabled && comboMatches(e, termCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            // 与入口按钮同语义：打开那一刻固定当前工作区
-            setKitUi(kitUi.terminalOpen ? { terminalOpen: false } : { terminalOpen: true, termCwd: cwd });
+            // 与入口按钮同语义：只开/关坞（隐藏不杀进程）；无会话时新建绑定当前 cwd
+            setKitUi(toggleTermDock(kitUi, cwd));
             return;
           }
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
@@ -2199,6 +2334,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             if (kitUi.openFile) setKitUi({ openFile: null, openFrom: null });
             else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
+            else if (kitUi.termDockOpen) setKitUi({ termDockOpen: false }); // 只隐藏，不杀会话
           }
         };
         window.addEventListener("keydown", onKey, true);
@@ -2207,16 +2343,23 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         // 之后按快捷键开终端永远绑到 null
       }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut]);
 
-      // 自愈：打开时尚无工作区（如刚启动就按快捷键，绑到了 null），等当前 cwd
-      // 就绪后补绑一次；已有绑定的面板不受工作区切换影响
-      react.useEffect(() => {
-        if (ui.terminalOpen && !ui.termCwd && cwd) setKitUi({ termCwd: cwd });
-      }, [ui.terminalOpen, ui.termCwd, cwd]);
-
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
-          ui.terminalOpen && cfg.terminalEnabled
-            ? jsxRuntime.jsx(TerminalPanel, { cwd: ui.termCwd, onClose: () => setKitUi({ terminalOpen: false }) })
+          cfg.terminalEnabled && ui.terminals.length > 0
+            ? jsxRuntime.jsx(TerminalDock, {
+                open: ui.termDockOpen,
+                cwd,
+                onSpawn: () => {
+                  if (!cwd) {
+                    flashToast(t("noCwd"));
+                    return;
+                  }
+                  setKitUi(spawnTerm(kitUi, cwd));
+                },
+                onHide: () => setKitUi({ termDockOpen: false }),
+                onActivate: (id) => setKitUi({ activeTermId: id, termDockOpen: true }),
+                onKill: (id) => setKitUi(killTerm(kitUi, id)),
+              })
             : null,
           ui.openFile && ((ui.openFrom === "scm" && cfg.sourceControlEnabled) || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
             ? jsxRuntime.jsx(FileContentPane, {
