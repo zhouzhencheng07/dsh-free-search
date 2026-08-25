@@ -99,6 +99,8 @@ window.__ModuleLoader__.load({
       sourceControlEnabled: true,
       skillsPageEnabled: true,
       searchEnabled: true,
+      phoneEnabled: false,
+      phoneRemoteDomain: "",
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+Alt+.",
@@ -154,6 +156,8 @@ window.__ModuleLoader__.load({
         sourceControlEnabled: v.sourceControlEnabled !== false,
         skillsPageEnabled: v.skillsPageEnabled !== false,
         searchEnabled: v.searchEnabled !== false,
+        phoneEnabled: v.phoneEnabled === true,
+        phoneRemoteDomain: typeof v.phoneRemoteDomain === "string" ? v.phoneRemoteDomain : "",
         terminalShortcut:
           typeof v.terminalShortcut === "string" && parseCombo(v.terminalShortcut)
             ? v.terminalShortcut
@@ -284,6 +288,27 @@ window.__ModuleLoader__.load({
       cfgSkillsPageEnabledHint: "关闭后设置里不再显示「技能」页；技能本身不受影响。",
       cfgSearchEnabled: "启用网页搜索",
       cfgSearchEnabledHint: "免费多源搜索（free-search）。关闭后 AI 的 web_search 走官方默认渠道；变更重启后生效。",
+      cfgPhoneEnabled: "显示「手机访问」页",
+      cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
+      phoneGateLabel: "启动网关（需要时开启；链接与令牌随之生成）",
+      phoneStoppedHint: "网关未启动。打开上方开关后生成可扫码链接。",
+      cfgRemoteHint: "非本机访问：上游把设置镜像钉在本机浏览器，配置在手机/远程只读——请在电脑端查看与修改。",
+      cfgPhoneRemoteDomain: "远程域名",
+      cfgPhoneRemoteDomainHint: "可选。VPS 反向隧道指向本 GUI 的域名（如 dsh.example.com），填后面板会同时给出远程二维码。",
+      phoneTitle: "手机访问",
+      phoneStatusOn: "网关运行中 · 端口 {port}",
+      phoneStatusErr: "网关未运行：{error}",
+      phoneOff: "手机访问未启用：请在 设置 → 插件配置 → dsh-kit 打开「启用手机访问」并重启。",
+      phoneLoading: "正在生成链接…",
+      phoneLoadFail: "读取失败：{error}",
+      phoneLan: "局域网",
+      phoneRemote: "远程",
+      phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
+      phoneRefresh: "刷新链接（旧链接立即失效）",
+      phoneRefreshing: "轮换中…",
+      phoneRotated: "已轮换：旧二维码与已存设备全部失效",
+      phoneCopy: "复制",
+      phoneCopied: "已复制",
       cfgTerminalShortcut: "终端快捷键",
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
@@ -413,6 +438,13 @@ window.__ModuleLoader__.load({
       cfgSkillsPageEnabledHint: "Removes the Skills entry from Settings (skills themselves are unaffected).",
       cfgSearchEnabled: "Enable web search",
       cfgSearchEnabledHint: "Free multi-source web search (free-search). When off, the agent's web_search uses the official default channel; changes apply after restart.",
+      cfgPhoneEnabled: "Show phone access page",
+      cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
+      phoneGateLabel: "Start gateway (on demand; links are generated with it)",
+      phoneStoppedHint: "Gateway is stopped. Flip the switch above to generate a scannable link.",
+      cfgRemoteHint: "Non-local access: upstream pins the settings mirror to the local machine, so config stays read-only here — please view and edit it on the computer.",
+      cfgPhoneRemoteDomain: "Remote domain",
+      cfgPhoneRemoteDomainHint: "Optional. Domain of your VPS tunnel pointing to this GUI (e.g. dsh.example.com); the panel then also offers a remote QR code.",
       cfgTerminalShortcut: "Terminal shortcut",
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
@@ -433,9 +465,29 @@ window.__ModuleLoader__.load({
       loadingCfg: "Reading configuration…",
       saveFailed: "The deployment did not accept these values; they were left for you to correct.",
       invalidCombo: "A combo needs one key plus at least one modifier.",
+      phoneTitle: "Phone access",
+      phoneStatusOn: "Gateway running · port {port}",
+      phoneStatusErr: "Gateway not running: {error}",
+      phoneOff: "Phone access is disabled: turn it on under Settings → Plugin config → dsh-kit, then restart.",
+      phoneLoading: "Generating links…",
+      phoneLoadFail: "Failed to load: {error}",
+      phoneLan: "LAN",
+      phoneRemote: "Remote",
+      phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
+      phoneRefresh: "Refresh link (old links die instantly)",
+      phoneRefreshing: "Rotating…",
+      phoneRotated: "Rotated: old QR codes and saved devices are all invalidated",
+      phoneCopy: "Copy",
+      phoneCopied: "Copied",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
+    /** 带占位符的文案变体：tf("phoneStatusOn", { port: 3090 }) */
+    const tf = (key, vars) => {
+      let s = lang[key] ?? key;
+      for (const [name, value] of Object.entries(vars ?? {})) s = s.split(`{${name}}`).join(String(value));
+      return s;
+    };
 
     // ─────────── 外观跟随 ───────────
     /** DSH 主题 presenter 以 body[data-ds-dark-theme] 有无表达明暗 */
@@ -596,12 +648,43 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cfg-combo:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-cfg-combo:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-combo[data-capturing]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-secondary)}
+.dshk-cfg-text{flex:1;min-width:0;width:200px;font:inherit;font-size:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 10px;line-height:1.5}
+.dshk-cfg-text:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-footer{display:flex;justify-content:flex-end;align-items:center;gap:8px;border-top:1px solid var(--dsw-alias-border-l2);padding:12px 0 4px}
 .dshk-cfg-err{flex:1;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
 .dshk-cfg-btn{appearance:none;font:inherit;cursor:pointer;font-size:13px;line-height:1.5;border-radius:8px;padding:5px 14px}
 .dshk-cfg-btn-discard{background:none;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 .dshk-cfg-btn-save{border:1px solid transparent;background:var(--dsw-alias-brand-primary);color:#fff}
 .dshk-cfg-btn[disabled]{opacity:.5;cursor:default}
+/* 手机访问页（settings.section 内联区块，与技能页同级） */
+.dshk-phone{width:100%;max-width:460px}
+.dshk-phone-head{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.dshk-phone-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dshk-phone-status{margin:0 0 10px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}
+.dshk-phone-notice{font-size:11px;line-height:1.5;color:var(--dsw-alias-brand-primary)}
+.dshk-phone-body{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding-bottom:4px}
+.dshk-phone-tabs{display:inline-flex;gap:4px;padding:3px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsw-alias-bg-layer-3)}
+.dshk-phone-tab{appearance:none;border:0;background:none;font:inherit;font-size:11px;line-height:1;padding:5px 12px;border-radius:999px;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.dshk-phone-tab[aria-pressed="true"]{background:var(--dsw-alias-brand-primary);color:#fff}
+.dshk-phone-qrwrap{display:flex;align-items:center;justify-content:center;min-height:120px;border-radius:10px;background:#fff;padding:6px;align-self:center}
+.dshk-phone-urlrow{display:flex;align-items:center;gap:6px;width:100%}
+.dshk-phone-url{flex:1;min-width:0;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.4;color:var(--dsw-alias-label-secondary);word-break:break-all;user-select:text}
+.dshk-phone-copybtn,.dshk-phone-refresh{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1;padding:7px 10px;border-radius:8px;cursor:pointer}
+.dshk-phone-copybtn:hover,.dshk-phone-refresh:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-phone-copybtn[disabled],.dshk-phone-refresh[disabled]{opacity:.5;cursor:default}
+.dshk-phone-hint{margin:0;font-size:11px;line-height:1.55;color:var(--dsw-alias-label-tertiary)}
+.dshk-phone-domain{display:flex;align-items:center;gap:6px;width:100%;margin-bottom:10px}
+.dshk-phone-domain-label{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dshk-phone-domain-input{flex:1;min-width:0;font-size:11px;padding:5px 8px}
+.dshk-phone-gate{display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer}
+/* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
+   类名是前端构建哈希（_3e4SsG_*），升级换哈希后本段静默失效——需跟随维护。 */
+@media (hover: none) {
+  [class*="_3e4SsG_menu"]{touch-action:pan-y}
+  [class*="_3e4SsG_viewport"]{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  [class*="_3e4SsG_item"]:hover{background:0 0}
+  [class*="_3e4SsG_item"][class*="_3e4SsG_active"]{background:var(--dsw-alias-interactive-bg-hover)}
+}
 /* 轻提示（双击复制路径等的单例浮层） */
 .dshk-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%) translateY(8px);z-index:950;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;padding:8px 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 16px rgba(0,0,0,.12);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out),transform .15s var(--ds-ease-in-out)}
 .dshk-toast[data-show]{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -2202,6 +2285,24 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       });
     }
 
+    // ── 侧边栏展开兜底：文件树/源代码管理视图承载在 sidebar.workspaces 里，
+    // 侧边栏若被收起就只剩图标栏，点了入口等于没反应。官方切换按钮带
+    // aria-label（"展开/收起侧边栏"，随语言变化）——按语义匹配：当前动作是
+    // 「展开」= 处于收起态，点它；已是「收起」= 已展开，不动。找不到保持原状。
+    function ensureSidebarExpanded() {
+      try {
+        const buttons = document.querySelectorAll('button[aria-label]');
+        for (const btn of buttons) {
+          const label = btn.getAttribute("aria-label") ?? "";
+          if (!/侧边栏|sidebar/i.test(label)) continue;
+          if (/^(展开|Expand)/i.test(label.trim())) btn.click();
+          return;
+        }
+      } catch {
+        // 探测失败保持原状
+      }
+    }
+
     function FileTreeEntry() {
       const ui = useKitUi();
       return jsxRuntime.jsx("button", {
@@ -2210,7 +2311,9 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         "aria-pressed": ui.treeOpen,
         title: t("treeLabel"),
         onClick: () => {
-          // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表
+          // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表。
+          // 打开动作先兜底展开被收起的侧边栏（否则视图渲染进图标栏等于不可见）
+          if (!ui.treeOpen) ensureSidebarExpanded();
           setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null, openFrom: null });
         },
         children: jsxRuntime.jsx(FolderIcon, {}),
@@ -2226,9 +2329,304 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         "aria-pressed": ui.gitOpen,
         title: t("scTitle"),
         onClick: () => {
+          if (!ui.gitOpen) ensureSidebarExpanded();
           setKitUi({ gitOpen: !ui.gitOpen, treeOpen: false, openFile: null, openFrom: null });
         },
         children: jsxRuntime.jsx(BranchIcon, {}),
+      });
+    }
+
+    // ─────────── 手机访问页（settings.section，与技能页同类）───────────
+    // 数据源：宿主半边 /dsh-kit/phone/info|link|rotate。这些端点挂在主 webserver
+    // （只绑回环，LAN 够不到），宿主侧另有同源校验。二维码用 vendored
+    // qrcode-generator（/dsh-kit/vendor/qrcode.js），首次打开面板时按需加载，
+    // 与 xterm 同策略。
+    function fetchPhoneInfo(signal) {
+      return fetch("/dsh-kit/phone/info", { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        // 字段以宿主回包为准：visible 是页面可见性，网关状态看 gatewayOn/running
+        if (!res.ok || !body || typeof body.visible !== "boolean") throw new Error(`HTTP ${res.status}`);
+        return body;
+      });
+    }
+    function fetchPhoneLinks(signal) {
+      return fetch("/dsh-kit/phone/link", { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || !Array.isArray(body.links)) throw new Error((body && body.error) || `HTTP ${res.status}`);
+        return body;
+      });
+    }
+    function postPhoneRotate() {
+      return fetch("/dsh-kit/phone/rotate", { method: "POST" }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || !Array.isArray(body.links)) throw new Error((body && body.error) || `HTTP ${res.status}`);
+        return body;
+      });
+    }
+    /** 把链接画上 canvas：白色静区 + 码点，按 devicePixelRatio 输出清晰图 */
+    function drawPhoneQr(canvas, text) {
+      const qrcode = window.qrcode;
+      if (typeof qrcode !== "function") throw new Error("qrcode lib not loaded");
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      const count = qr.getModuleCount();
+      const quiet = 4;
+      const cell = Math.max(3, Math.floor(220 / (count + quiet * 2)));
+      const size = cell * (count + quiet * 2);
+      const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      canvas.style.width = `${size}px`;
+      canvas.style.height = `${size}px`;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = "#111111";
+      for (let row = 0; row < count; row++) {
+        for (let col = 0; col < count; col++) {
+          if (qr.isDark(row, col)) ctx.fillRect((col + quiet) * cell, (row + quiet) * cell, cell, cell);
+        }
+      }
+    }
+    function PhoneSection() {
+      const [info, setInfo] = react.useState(null);
+      const [linkData, setLinkData] = react.useState(null);
+      const [loadErr, setLoadErr] = react.useState("");
+      const [activeIdx, setActiveIdx] = react.useState(0);
+      const [qrReady, setQrReady] = react.useState(false);
+      const [rotating, setRotating] = react.useState(false);
+      const [copied, setCopied] = react.useState(false);
+      const [notice, setNotice] = react.useState("");
+      const canvasRef = react.useRef(null);
+      // 远程域名的页内编辑（配置卡不再承载）：草稿态 + 保存即写 settings 并刷新链接
+      const [domainValue, setDomainValue] = react.useState("");
+      const [domainTouched, setDomainTouched] = react.useState(false);
+      const [domainSaving, setDomainSaving] = react.useState(false);
+      // 网关启停开关（写 settings 的 phoneGatewayOn；宿主 onChange 热同步启停）
+      const [gateBusy, setGateBusy] = react.useState(false);
+      const toggleGateway = async (next) => {
+        if (!cfgScope || gateBusy) return;
+        setGateBusy(true);
+        try {
+          await cfgScope.set("phoneGatewayOn", next);
+          // 宿主热同步有毫秒级延迟，稍候刷新状态与链接
+          setTimeout(() => {
+            fetchPhoneInfo(new AbortController().signal).then(setInfo).catch(() => {});
+            if (next) fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
+          }, 400);
+        } catch {
+          // 写入失败：以下一次 info 刷新为准
+        }
+        setGateBusy(false);
+      };
+      const shownDomain = domainTouched
+        ? domainValue
+        : info && typeof info.remoteDomain === "string"
+          ? info.remoteDomain
+          : "";
+      const saveDomain = async () => {
+        if (domainSaving || !cfgScope) return;
+        setDomainSaving(true);
+        try {
+          await cfgScope.set("phoneRemoteDomain", shownDomain.trim());
+          setDomainTouched(false);
+          setNotice(t("save") + " ✓");
+          if (info !== null && info.gatewayOn && info.running) {
+            fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
+          }
+        } catch {
+          // 保存失败保持草稿供修改
+        } finally {
+          setDomainSaving(false);
+          setTimeout(() => setNotice(""), 3000);
+        }
+      };
+
+      // 打开即取状态与链接；网关未跑时只显示原因
+      react.useEffect(() => {
+        const ctrl = new AbortController();
+        fetchPhoneInfo(ctrl.signal)
+          .then((body) => {
+            setInfo(body);
+            if (body.gatewayOn && body.running) {
+              return fetchPhoneLinks(ctrl.signal).then(setLinkData).catch((e) => setLoadErr(String(e?.message ?? e)));
+            }
+            return undefined;
+          })
+          .catch((e) => setLoadErr(String(e?.message ?? e)));
+        return () => ctrl.abort();
+      }, []);
+      // vendored 二维码库按需加载一次
+      react.useEffect(() => {
+        if (typeof window !== "undefined" && typeof window.qrcode === "function") {
+          setQrReady(true);
+          return undefined;
+        }
+        loadScript("/dsh-kit/vendor/qrcode.js")
+          .then(() => setQrReady(true))
+          .catch(() => {});
+        return undefined;
+      }, []);
+
+      const links = linkData && Array.isArray(linkData.links) ? linkData.links : [];
+      const activeUrl = links[activeIdx] ? links[activeIdx].url : "";
+      react.useEffect(() => {
+        if (!qrReady || activeUrl === "" || !canvasRef.current) return;
+        try {
+          drawPhoneQr(canvasRef.current, activeUrl);
+        } catch {
+          // 绘制失败不阻塞面板：URL 文案仍可手动输入
+        }
+      }, [qrReady, activeUrl]);
+
+      const rotate = async () => {
+        if (rotating) return;
+        setRotating(true);
+        try {
+          const body = await postPhoneRotate();
+          setLinkData(body);
+          setActiveIdx(0);
+          setNotice(t("phoneRotated"));
+        } catch {
+          // 轮换失败保持原状：旧链接仍有效
+        } finally {
+          setRotating(false);
+          setTimeout(() => setNotice(""), 4000);
+        }
+      };
+      const copyActive = () => {
+        if (activeUrl === "" || typeof navigator === "undefined" || !navigator.clipboard) return;
+        navigator.clipboard.writeText(activeUrl).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+          },
+          () => {},
+        );
+      };
+
+      const gatewayOn = info !== null && info.gatewayOn === true;
+      let statusNode = jsxRuntime.jsx("p", { className: "dshk-phone-status", children: t("phoneLoading") });
+      if (info !== null) {
+        if (!gatewayOn) statusNode = jsxRuntime.jsx("p", { className: "dshk-phone-status", children: t("phoneStoppedHint") });
+        else if (!info.running) statusNode = jsxRuntime.jsx("p", { className: "dshk-phone-status", children: tf("phoneStatusErr", { error: info.error ?? "unknown" }) });
+        else statusNode = jsxRuntime.jsx("p", { className: "dshk-phone-status", children: tf("phoneStatusOn", { port: info.port }) });
+      }
+      if (loadErr !== "") {
+        statusNode = jsxRuntime.jsx("p", { className: "dshk-phone-status", children: tf("phoneLoadFail", { error: loadErr }) });
+      }
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-phone",
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-phone-head",
+            children: [
+              jsxRuntime.jsx("span", { className: "dshk-phone-title", children: t("phoneTitle") }),
+              jsxRuntime.jsx("span", { style: { flex: 1 } }),
+              notice !== ""
+                ? jsxRuntime.jsx("span", { className: "dshk-phone-notice", role: "status", children: notice })
+                : null,
+              links.length > 0
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-phone-refresh",
+                    disabled: rotating,
+                    onClick: () => {
+                      rotate();
+                    },
+                    children: rotating ? t("phoneRefreshing") : t("phoneRefresh"),
+                  })
+                : null,
+            ],
+          }),
+          cfgScope
+            ? jsxRuntime.jsxs("label", {
+                className: "dshk-phone-gate",
+                children: [
+                  jsxRuntime.jsx("input", {
+                    type: "checkbox",
+                    className: "dshk-cfg-check",
+                    checked: gatewayOn,
+                    disabled: gateBusy,
+                    onChange: (e) => {
+                      toggleGateway(e.target.checked);
+                    },
+                  }),
+                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("phoneGateLabel") }),
+                ],
+              })
+            : null,
+          statusNode,
+          cfgScope
+            ? jsxRuntime.jsxs("div", {
+                className: "dshk-phone-domain",
+                children: [
+                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("phoneRemoteDomain") }),
+                  jsxRuntime.jsx("input", {
+                    type: "text",
+                    className: "dshk-cfg-text dshk-phone-domain-input",
+                    value: shownDomain,
+                    placeholder: "dsh.example.com",
+                    spellCheck: false,
+                    disabled: domainSaving,
+                    onChange: (e) => {
+                      setDomainValue(e.target.value);
+                      setDomainTouched(true);
+                    },
+                  }),
+                  jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-phone-copybtn",
+                    disabled: domainSaving || !domainTouched,
+                    onClick: () => {
+                      saveDomain();
+                    },
+                    children: t("save"),
+                  }),
+                ],
+              })
+            : null,
+          links.length > 0
+            ? jsxRuntime.jsxs(
+                "div",
+                {
+                  className: "dshk-phone-body",
+                  children: [
+                    links.length > 1
+                      ? jsxRuntime.jsx("div", {
+                          className: "dshk-phone-tabs",
+                          children: links.map((item, index) =>
+                            jsxRuntime.jsx(
+                              "button",
+                              {
+                                type: "button",
+                                className: "dshk-phone-tab",
+                                "aria-pressed": index === activeIdx,
+                                onClick: () => setActiveIdx(index),
+                                children: item.label === "remote" ? t("phoneRemote") : t("phoneLan"),
+                              },
+                              item.url,
+                            ),
+                          ),
+                        })
+                      : null,
+                    jsxRuntime.jsx("div", { className: "dshk-phone-qrwrap", children: jsxRuntime.jsx("canvas", { ref: canvasRef, "aria-label": "QR code" }) }),
+                    jsxRuntime.jsxs("div", {
+                      className: "dshk-phone-urlrow",
+                      children: [
+                        jsxRuntime.jsx("span", { className: "dshk-phone-url", children: activeUrl }),
+                        jsxRuntime.jsx("button", { type: "button", className: "dshk-phone-copybtn", onClick: copyActive, children: copied ? t("phoneCopied") : t("phoneCopy") }),
+                      ],
+                    }),
+                    jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t("phoneScanHint") }),
+                  ],
+                },
+              )
+            : null,
+        ],
       });
     }
 
@@ -2249,7 +2647,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         if (!slotsCtx) return undefined;
         const handles = [];
         const want = [
-          // 入口排序（左→右）：文件树、源代码管理、终端
+          // 输入框入口排序（左→右）：文件树、源代码管理、终端；手机访问与技能页
+          // 同类，走 settings.section 页面入口（order：技能 40 → 手机 45）
           ["filetree", cfg.fileTreeEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-filetree", order: 10 }, FileTreeEntry)],
           ["scm", cfg.sourceControlEnabled, () =>
@@ -2260,6 +2659,11 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             slotsCtx.slots.register(
               { name: "settings.section", id: "kit-skills", order: 40, label: () => t("skillsLabel") },
               SkillsManager,
+            )],
+          ["phone", cfg.phoneEnabled, () =>
+            slotsCtx.slots.register(
+              { name: "settings.section", id: "kit-phone", order: 45, label: () => t("phoneTitle") },
+              PhoneSection,
             )],
         ];
         for (const [key, enabled, make] of want) {
@@ -2279,7 +2683,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             }
           }
         };
-      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.skillsPageEnabled]);
+      }, [cfg.phoneEnabled, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.skillsPageEnabled]);
 
       // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉；
       // 终端功能关闭 = 结束全部终端会话（连 WS 杀 pty，与单终端时代语义一致）
@@ -2357,6 +2761,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             e.preventDefault();
             e.stopPropagation();
             // Ctrl+E 只管文件树：非文件树态 → 打开；已是 → 关闭回会话列表
+            if (!kitUi.treeOpen) ensureSidebarExpanded();
             setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null, openFrom: null });
             return;
           }
@@ -2364,6 +2769,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             e.preventDefault();
             e.stopPropagation();
             // 源代码管理同语义：非 SCM 态 → 打开（收起文件树）；已是 → 关闭回会话列表
+            if (!kitUi.gitOpen) ensureSidebarExpanded();
             setKitUi({ gitOpen: !kitUi.gitOpen, treeOpen: false, openFile: null, openFrom: null });
             return;
           }
@@ -2461,33 +2867,52 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     }
 
     // ── 设置导航图标：官方 navIcon(id) 硬编码映射（models/agent-presets/plugins），
-    // 未知 id 一律回退齿轮。没有注册缝，这里按标签文字找到"技能"行，把行内第一个
+    // 未知 id 一律回退齿轮。没有注册缝，这里按标签文字找到对应行，把行内第一个
     // svg 换成自绘分层图标——纯外观增强：任何一步失败都静默保持齿轮。
-    const SKILL_ICON_HTML =
+    const SVG_OPEN =
       '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
-      'stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/>' +
-      '<path d="M1.8 8.1 8 11.2l6.2-3.1"/>' +
-      '<path d="M1.8 11.3 8 14.4l6.2-3.1"/>' +
-      "</svg>";
+      'stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+    const NAV_ICON_HTML = [
+      {
+        label: () => t("skillsLabel"),
+        attr: "data-dshk-skill",
+        html:
+          SVG_OPEN +
+          '<path d="M8 1.8 14.2 5 8 8.2 1.8 5z"/>' +
+          '<path d="M1.8 8.1 8 11.2l6.2-3.1"/>' +
+          '<path d="M1.8 11.3 8 14.4l6.2-3.1"/>' +
+          "</svg>",
+      },
+      {
+        label: () => t("phoneTitle"),
+        attr: "data-dshk-phone",
+        html:
+          SVG_OPEN +
+          '<rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/>' +
+          '<path d="M6.8 3.4h2.4"/>' +
+          '<path d="M8 12.6h.01"/>' +
+          "</svg>",
+      },
+    ];
 
     let iconSwapPending = false;
-    function swapSkillNavIcon() {
+    function swapKitNavIcons() {
       try {
-        const label = t("skillsLabel");
         const rows = document.querySelectorAll('[role="dialog"][aria-modal="true"] nav button');
+        if (rows.length === 0) return;
         for (const row of rows) {
           const span = row.querySelector("span");
-          if (!span || span.textContent !== label) continue;
+          if (!span) continue;
+          const entry = NAV_ICON_HTML.find((candidate) => span.textContent === candidate.label());
+          if (!entry) continue;
           const current = row.querySelector("svg");
-          if (!current || current.getAttribute("data-dshk-skill") === "1") return;
+          if (!current || current.getAttribute(entry.attr) === "1") continue;
           const holder = document.createElement("span");
-          holder.innerHTML = SKILL_ICON_HTML;
+          holder.innerHTML = entry.html;
           const icon = holder.firstElementChild;
-          if (!icon) return;
-          icon.setAttribute("data-dshk-skill", "1");
+          if (!icon) continue;
+          icon.setAttribute(entry.attr, "1");
           current.replaceWith(icon);
-          return;
         }
       } catch {
         // 外观增强失败即保持默认齿轮
@@ -2498,8 +2923,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       iconSwapPending = true;
       window.setTimeout(() => {
         iconSwapPending = false;
-        swapSkillNavIcon();
-        window.setTimeout(swapSkillNavIcon, 250); // React 重渲染后的二次补换
+        swapKitNavIcons();
+        window.setTimeout(swapKitNavIcons, 250); // React 重渲染后的二次补换
       }, 60);
     }
 
@@ -2765,25 +3190,27 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       { key: "sourceControlEnabled", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "searchEnabled", kind: "bool" },
+      { key: "phoneEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
       { key: "scShortcut", kind: "combo" },
     ];
     // 分组渲染：开关行 + 该功能启用时才显示的子配置（所见即所得，保存才落盘生效）
-    // 组顺序 = 入口按钮顺序：文件树 → 源代码管理 → 终端 → 技能页；网页搜索是
-    // 宿主侧能力（无浏览器入口按钮），放最后。
+    // 组顺序：文件树 → 源代码管理 → 终端 → 技能页 → 网页搜索 → 手机访问（用户定稿
+    // 放最下）。远程域名不在此卡——编辑入口在「手机访问」页面内（PhoneSection）。
     const CFG_GROUPS = [
       { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
       { switchKey: "searchEnabled", fields: [] },
+      { switchKey: "phoneEnabled", fields: [] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>
       `cfg${field[0].toUpperCase()}${field.slice(1)}${suffix}`;
 
-    /** 字段显示文本：bool → "true"/"false"；combo → 组合键串（空回落内置默认） */
+    /** 字段显示文本：bool → "true"/"false"；text/combo → 字符串（空回落内置默认） */
     function cfgFormat(field, value) {
       if (cfgSpec[field].kind === "bool") return value === false ? "false" : "true";
       return typeof value === "string" && value.trim() !== "" ? value : CFG_DEFAULTS[field];
@@ -2791,6 +3218,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
     /** 草稿文本 → 写入计划；非法（组合键缺主键/修饰键）返回 undefined 阻断保存 */
     function cfgParse(field, text) {
       if (cfgSpec[field].kind === "bool") return { kind: "set", value: text === "true" };
+      if (cfgSpec[field].kind === "text") return { kind: "set", value: String(text ?? "").trim() };
       const trimmed = String(text ?? "").trim();
       return parseCombo(trimmed) ? { kind: "set", value: trimmed } : undefined;
     }
@@ -2804,6 +3232,21 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const [open, setOpen] = react.useState(false);
       // 正在录制快捷键的字段；null = 非录制态（同一时间至多一个）
       const [capturing, setCapturing] = react.useState(null);
+      // 非本机访问（手机/远程）时上游把设置镜像钉在本机，快照会永远停在 loading——
+      // 数秒后仍未就绪且地址栏非回环，就把"读取中"换成明确的远程只读提示。
+      const [stuckLoading, setStuckLoading] = react.useState(false);
+      const offDevice =
+        typeof location !== "undefined" && !["localhost", "127.0.0.1"].includes(location.hostname);
+      react.useEffect(() => {
+        if (snapshot.status !== "loading") {
+          setStuckLoading(false);
+          return undefined;
+        }
+        if (!offDevice) return undefined;
+        const timer = setTimeout(() => setStuckLoading(true), 4000);
+        return () => clearTimeout(timer);
+      }, [snapshot.status, offDevice]);
+      const loadingHint = stuckLoading && offDevice ? t("cfgRemoteHint") : t("loadingCfg");
 
       // 录制期：capture 截获下一个组合键；Esc 取消；纯修饰键继续等待
       react.useEffect(() => {
@@ -2963,14 +3406,24 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                   disabled: !writable,
                   onChange: () => edit(field, state.text === "true" ? "false" : "true"),
                 })
-              : jsxRuntime.jsx("button", {
-                  type: "button",
-                  className: "dshk-cfg-combo",
-                  "data-capturing": capturing === field || undefined,
-                  disabled: !writable,
-                  onClick: () => startCapture(field),
-                  children: capturing === field ? t("cfgCapturing") : state.text,
-                });
+              : spec.kind === "text"
+                ? jsxRuntime.jsx("input", {
+                    type: "text",
+                    className: "dshk-cfg-text",
+                    value: state.text,
+                    placeholder: "dsh.example.com",
+                    spellCheck: false,
+                    disabled: !writable,
+                    onChange: (e) => edit(field, e.target.value),
+                  })
+                : jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-cfg-combo",
+                    "data-capturing": capturing === field || undefined,
+                    disabled: !writable,
+                    onClick: () => startCapture(field),
+                    children: capturing === field ? t("cfgCapturing") : state.text,
+                  });
           return jsxRuntime.jsxs("div", {
             className: isSub ? "dshk-cfg-field dshk-cfg-sub" : "dshk-cfg-field",
             children: [
@@ -3028,7 +3481,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               ? jsxRuntime.jsxs("div", {
                   className: "dshk-cfg-body",
                   children: [
-                    loading ? jsxRuntime.jsx("p", { className: "dshk-cfg-status", role: "status", children: t("loadingCfg") }) : null,
+                    loading ? jsxRuntime.jsx("p", { className: "dshk-cfg-status", role: "status", children: loadingHint }) : null,
                     !loading && !available
                       ? jsxRuntime.jsx("p", { className: "dshk-cfg-status", role: "status", children: t("readOnly") })
                       : null,

@@ -7,7 +7,8 @@
 // gitMap 藏在该行逃过本检查，靠用户实测暴露。可疑残留请配合全文扫描排查。
 // 用法：从 dsh-kit 根运行：node tests\render-check.cjs client\bundle.js
 const fs = require("node:fs");
-const src = fs.readFileSync(process.argv[2], "utf8");
+// 归一化行尾：git autocrlf 检出后文件可能是 CRLF，切片标记按 LF 匹配才稳定
+const src = fs.readFileSync(process.argv[2], "utf8").replace(/\r\n/g, "\n");
 
 // 1) 抽出 factory 体
 const factoryStart = src.indexOf("factory: (require) => {");
@@ -47,7 +48,7 @@ const windowStub = {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -57,7 +58,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -95,6 +96,14 @@ check("TerminalEntry 渲染无异常", !!out && typeof out === "object");
 callLog = [];
 out = comps.FileTreeEntry({});
 check("FileTreeEntry 渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.ScmEntry({});
+check("ScmEntry 渲染无异常", !!out && typeof out === "object");
+
+// 6.5) PhoneSection：数据未达（fetch/effect 被桩跳过 → 纯 loading 分支）
+callLog = [];
+out = comps.PhoneSection({});
+check("PhoneSection loading 渲染无异常", !!out && typeof out === "object");
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"
