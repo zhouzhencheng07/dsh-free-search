@@ -1,0 +1,16 @@
+# frps —— VPS 服务端配置模板（frp ≥ 0.52，TOML 格式）
+# 放到 VPS：/etc/frp/frps.toml，配合下方 frps.service 使用。
+# 安全组只需放行：22(ssh)、7000(frpc 连入)、80/443(caddy)。
+# 8443 不放行——它只给本机 caddy 回环回源用。
+
+bindPort = 7000
+
+# 与 PC 端 frpc.toml 保持一致；务必换成自己的长随机串
+# （PowerShell 生成：[Convert]::ToBase64String((1..24 | ForEach-Object { Get-Random -Maximum 256 })) ）
+auth.token = "CHANGE_ME_LONG_RANDOM_TOKEN"
+
+# 仅本机访问的管理面板（可留空删掉）
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "CHANGE_ME"

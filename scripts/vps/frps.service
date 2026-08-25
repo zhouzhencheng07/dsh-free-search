@@ -1,0 +1,25 @@
+# frps —— systemd 单元模板（VPS）
+# 1) 从 https://github.com/fatedier/frp/releases 下载 linux-amd64 包，
+#    解压把 frps 放 /usr/local/bin/frp/frps
+# 2) 配置放 /etc/frp/frps.toml（见同目录 frps.toml 模板）
+# 3) systemctl daemon-reload && systemctl enable --now frps
+
+[Unit]
+Description=frp server (dsh phone access relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/frp/frps -c /etc/frp/frps.toml
+Restart=on-failure
+RestartSec=5
+# 加固：专用用户运行（useradd -r -s /usr/sbin/nologin frp 后 chown 配置目录）
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/frp
+
+[Install]
+WantedBy=multi-user.target

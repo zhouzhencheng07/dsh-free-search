@@ -1,0 +1,14 @@
+# caddy —— VPS 反代配置模板
+# 放到 VPS：/etc/caddy/Caddyfile（caddy 官方 apt/yum 安装后自带 systemd 单元）。
+# 域名 DNS A 记录指向 VPS；80/443 在安全组放行；证书 caddy 自动签发续期。
+#
+# 注意：中国大陆节点的域名需已完成 ICP 备案，否则 80/443 会被阻断；
+# 未备案请换香港等境外节点（延迟略增）。
+
+dsh.example.com {
+	encode gzip
+	# 回源到 frp 在 VPS 本机回环开的 8443（安全组不放行该端口）
+	reverse_proxy 127.0.0.1:8443
+}
+
+# 可选：HTTP→HTTPS 由 caddy 自动处理，无需额外站点块。
