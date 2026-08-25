@@ -51,6 +51,10 @@ import path from 'node:path'
 
 import { applySkillPool, findProjectRoot } from './skill-pool.js'
 import { applyWebSearch } from './web-search.js'
+import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
+
+/** 手机访问网关对外端口（0.0.0.0）；dsh web 主端口运行时从 webServer 服务读取 */
+const PHONE_PORT = 3090
 
 export const name = 'dsh-kit'
 
@@ -268,6 +272,7 @@ const VENDOR_FILES = new Map([
   ['/dsh-kit/vendor/xterm.js', 'xterm.js'],
   ['/dsh-kit/vendor/addon-fit.js', 'addon-fit.js'],
   ['/dsh-kit/vendor/xterm.css', 'xterm.css'],
+  ['/dsh-kit/vendor/qrcode.js', 'qrcode.js'],
 ])
 const VENDOR_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
@@ -282,6 +287,15 @@ export function apply(ctx) {
   // 全在浏览器端），但命名空间必须注册——否则浏览器端 settings.mutate 报
   // "namespace not registered"。installSettingsSection 内部自等 settings 服务
   // （ctx.inject），不能拿 ctx.get('settings') 判存在后跳过。
+  // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
+  // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）。phoneEnabled
+  // 同为宿主消费：经 onChange 热同步网关启停，改开关立即生效无需重启。其余
+  // 开关全在浏览器端门控入口按钮，宿主不读。先注册设置层再挂搜索，
+  // 确保注入回调读到的是已落定值。
+  // readSettings 提升到 apply 作用域：webServer 注入回调（块外）的手机访问段
+  // 也要读开关（远程域名、页面可见性）。网关启用位已改状态文件直管，不再走
+  // settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
+  let readSettings = () => ({})
   if (installSettingsSection && settingsNamespace && z && typeof z.object === 'function') {
     const Config = z.object({
       terminalEnabled: z.boolean().default(true),
@@ -289,22 +303,23 @@ export function apply(ctx) {
       sourceControlEnabled: z.boolean().default(true),
       skillsPageEnabled: z.boolean().default(true),
       searchEnabled: z.boolean().default(true),
+      // phoneEnabled = 「手机访问」页入口可见性（配置卡最下，纯显示开关）。
+      // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
+      phoneEnabled: z.boolean().default(false),
+      phoneRemoteDomain: z.string().default(''),
+      sidebarShortcut: z.string().default('Ctrl+B'),
+      sidebarShortcutEnabled: z.boolean().default(true),
       terminalShortcut: z.string().default('Ctrl+/'),
       fileTreeShortcut: z.string().default('Ctrl+,'),
       scShortcut: z.string().default('Ctrl+Alt+.'),
     })
-    // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
-    // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）。改开关
-    // 重启后生效（onChange 保持 no-op，不热切换）。其余开关全在浏览器端门控
-    // 入口按钮，宿主不读。先注册设置层再挂搜索，确保注入回调读到的是已落定值。
-    let readSettings = () => ({})
     installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
       setSource: (current) => { readSettings = current },
       onChange: () => {},
     })
     applyWebSearch(ctx, { getEnabled: () => readSettings().searchEnabled !== false })
   } else {
-    // 设置层不可用：按开启处理直接挂链（可用性优先）
+    // 设置层不可用：搜索按开启处理直接挂链
     applyWebSearch(ctx)
   }
 
@@ -1168,6 +1183,188 @@ export function apply(ctx) {
         })
       }
 
+      // ── 手机访问网关（src/phone-gateway.js）──
+      // 网关启用位以状态文件直管（loadGatewayState/enabled 字段）：settings 读取器
+      // 回填有时序滞后（实测开关写了但 reader 仍报旧值，重进设置页"恢复未开启"），
+      // 手机访问页的启停按钮走 /dsh-kit/phone/gateway 端点，不经过 settings。
+      // phoneEnabled 只管页面入口可见性，与网关启停解耦。
+      const stateFile = defaultStateFile()
+      const pageVisible = () => readSettings().phoneEnabled === true
+      const phoneRemoteDomain = () => String(readSettings().phoneRemoteDomain ?? '').trim()
+      const warnLog = (msg) => console.warn(`dsh-kit: ${msg}`)
+      let phoneGw = null
+      let phoneGwError = null
+      let phoneGwWanted = loadGatewayState(stateFile, warnLog).enabled
+      /** 按当前启用位同步网关启停 */
+      const syncPhoneGateway = () => {
+        // 启动失败（如端口被占）后 phoneGw 仍持有已死实例且 state().error 落定，
+        // 若只判 phoneGw === null 会永远跳过重试——带 error 的实例视为死实例，
+        // 先关掉清空再重新起步。
+        if (phoneGwWanted && (phoneGw === null || phoneGw.state().error !== null)) {
+          if (phoneGw !== null) {
+            try {
+              phoneGw.close()
+            } catch {
+              // 死实例 close 可能抛错，忽略
+            }
+            phoneGw = null
+            phoneGwError = null
+          }
+          try {
+            phoneGw = startPhoneGateway({ port: PHONE_PORT, upstreamPort: webCtx.webServer.port, log: warnLog })
+            phoneGwError = null
+          } catch (error) {
+            phoneGwError = String(error?.message ?? error)
+            warnLog(`手机访问网关启动失败：${phoneGwError}`)
+          }
+        } else if (!phoneGwWanted && phoneGw !== null) {
+          phoneGw.close()
+          phoneGw = null
+        }
+      }
+      syncPhoneGateway()
+      /** 改启用位（持久化到状态文件 + 热启停）；由 /dsh-kit/phone/gateway 端点调用 */
+      const setGatewayEnabled = (on) => {
+        const wasOn = phoneGwWanted
+        phoneGwWanted = on === true
+        const token = phoneGw ? phoneGw.token() : loadGatewayState(stateFile, warnLog).token
+        saveGatewayState(stateFile, { token, enabled: phoneGwWanted }, warnLog)
+        syncPhoneGateway()
+        // 「关闭 → 开启」自动轮换令牌（ZCode 一次一证语义：每次开启换新链接，
+        // 旧链接与已存设备即时失效；手动刷新按钮随之取消）。启动时按状态文件
+        // 恢复开启、或本来就开着再点，都不轮换。
+        // 注意不能等 state().listening：listen 事件晚于本轮事件循环，此刻必为
+        // false（同启停竞态）；rotate 只换令牌，不依赖监听状态。
+        if (phoneGwWanted && !wasOn && phoneGw !== null) {
+          phoneGw.rotate()
+        }
+      }
+      /** 带令牌的可扫码链接：局域网每个 IPv4 一条 + 远程域名（配置了才有） */
+      const phoneLinks = () => {
+        if (!phoneGw) return []
+        const k = encodeURIComponent(phoneGw.token())
+        const links = lanAddresses().map((ip) => ({ label: 'lan', url: `http://${ip}:${PHONE_PORT}/?k=${k}` }))
+        if (phoneRemoteDomain() !== '') {
+          links.push({ label: 'remote', url: `https://${phoneRemoteDomain()}/?k=${k}` })
+        }
+        return links
+      }
+      const phoneJson = (res, code, obj) => {
+        res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(obj))
+      }
+      /** GET 类守卫：同源 fetch 的 GET 可能不带 Origin，带了就必须匹配 Host */
+      const phoneGuardGet = (req, res) => {
+        const origin = req.headers.origin
+        if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+          phoneJson(res, 403, { error: 'cross-origin denied' })
+          return false
+        }
+        if (req.method !== 'GET') {
+          phoneJson(res, 405, { error: 'method not allowed' })
+          return false
+        }
+        return true
+      }
+      const disposePhoneInfo = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/phone/info',
+        handler: (req, res) => {
+          if (!phoneGuardGet(req, res)) return
+          phoneJson(res, 200, {
+            visible: pageVisible(),
+            gatewayOn: phoneGwWanted,
+            running: phoneGw !== null && phoneGw.state().listening,
+            error: phoneGwError ?? phoneGw?.state().error ?? null,
+            port: PHONE_PORT,
+            remoteDomain: phoneRemoteDomain(),
+            fingerprint: phoneGw ? phoneGw.fingerprint() : null,
+          })
+        },
+      })
+      const disposePhoneLink = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/phone/link',
+        handler: (req, res) => {
+          if (!phoneGuardGet(req, res)) return
+          // 死实例（启动失败/端口被占）不出链接：扫了也是连不上
+          if (!phoneGw || !phoneGw.state().listening) {
+            phoneJson(res, 409, { error: phoneGwError ?? phoneGw?.state().error ?? 'gateway disabled' })
+            return
+          }
+          phoneJson(res, 200, { links: phoneLinks(), fingerprint: phoneGw.fingerprint() })
+        },
+      })
+      // 手动轮换端点（保留）：UI 已无入口——「关闭→开启」自动轮换；此端点
+      // 供脚本/异常场景作废旧链接用。
+      const disposePhoneRotate = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/phone/rotate',
+        handler: (req, res) => {
+          // POST 走 JSON content-type：跨源必触发 CORS 预检被拦，Origin 存在时
+          // 仍做同源校验（剥 Origin 的网关链路也能用）
+          if (req.method !== 'POST') {
+            phoneJson(res, 405, { error: 'method not allowed' })
+            return
+          }
+          if (req.headers.origin !== undefined && !sameOrigin(req)) {
+            phoneJson(res, 403, { error: 'cross-origin denied' })
+            return
+          }
+          if (!phoneGw || !phoneGw.state().listening) {
+            phoneJson(res, 409, { error: phoneGwError ?? phoneGw?.state().error ?? 'gateway disabled' })
+            return
+          }
+          phoneGw.rotate()
+          phoneJson(res, 200, { links: phoneLinks(), fingerprint: phoneGw.fingerprint() })
+        },
+      })
+      const disposePhoneGateway = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/phone/gateway',
+        handler: (req, res) => {
+          if (req.method !== 'POST') {
+            phoneJson(res, 405, { error: 'method not allowed' })
+            return
+          }
+          if (req.headers.origin !== undefined && !sameOrigin(req)) {
+            phoneJson(res, 403, { error: 'cross-origin denied' })
+            return
+          }
+          let raw = ''
+          req.on('data', (c) => { raw += c.toString('utf8') })
+          req.on('end', () => {
+            let on = null
+            try {
+              on = JSON.parse(raw || '{}').on
+            } catch {
+              on = null
+            }
+            if (typeof on !== 'boolean') {
+              phoneJson(res, 400, { error: 'body 需 {"on": true|false}' })
+              return
+            }
+            setGatewayEnabled(on)
+            // server.listen/close 是异步的：listening/error 事件在下一轮事件
+            // 循环才触发，立即读 state() 会拿到旧值——实测启停回包恒报
+            // running:false + error:null（前端显示"网关未运行：unknown"）。
+            // 轮询到状态落定（目标达成 / 出错 / 500ms 超时）再回包。
+            const t0 = Date.now()
+            const settle = () => {
+              const gw = phoneGw
+              const running = gw !== null && gw.state().listening
+              const error = phoneGwError ?? gw?.state().error ?? null
+              if (running === on || error !== null || Date.now() - t0 >= 500) {
+                phoneJson(res, 200, { gatewayOn: phoneGwWanted, running, error })
+                return
+              }
+              setTimeout(settle, 30)
+            }
+            settle()
+          })
+        },
+      })
+
       return () => {
         disposeVendor()
         disposeTree()
@@ -1180,7 +1377,12 @@ export function apply(ctx) {
         disposeGitOp()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
+        disposePhoneInfo()
+        disposePhoneLink()
+        disposePhoneRotate()
+        disposePhoneGateway()
+        if (phoneGw) phoneGw.close()
       }
-    }, 'dsh-kit: terminal/vendor/tree/read/write/fs-op/git endpoints')
+    }, 'dsh-kit: terminal/vendor/tree/read/write/fs-op/git/phone endpoints')
   })
 }
