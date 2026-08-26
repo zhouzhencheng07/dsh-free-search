@@ -2096,6 +2096,16 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
+      // 来源切换（文件树 ↔ 源代码管理）时视图模式回到该来源的默认视图：
+      // 面板在 tree/scm 之间复用同一实例，mode 只随挂载初始化一次，不跟随
+      // source 的话在树里看过原文后进 SCM 点文件仍是只读原文——来源变了
+      // 默认视图就该跟着换；同一来源内换文件仍保留用户手动选中的模式。
+      const sourceRef = react.useRef(source);
+      react.useEffect(() => {
+        if (sourceRef.current === source) return;
+        sourceRef.current = source;
+        setMode(source === "scm" ? "diff" : "text");
+      }, [source]);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
       const [reloadNonce, setReloadNonce] = react.useState(0);
