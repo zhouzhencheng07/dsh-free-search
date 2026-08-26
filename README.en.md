@@ -38,11 +38,19 @@ A file-tree toggle on the composer tool row:
   (draft-based save, mtime CAS conflict asks to reload, truncated previews are
   not editable), ✕ closes back; ⇄ switches to the colored diff view
 - Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
-  `/dsh-kit/read` (file content, 512 KB cap with truncation + binary detection),
+  `/dsh-kit/read` (file content, 512 KB cap with truncation + text decoding),
   `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard against
   concurrent overwrites) and `/dsh-kit/fs/op` (create/rename/delete: targets are
   confined to the cwd subtree, names whitelist-checked; same-origin checked;
   the webserver binds loopback only)
+- **Text decoding** (`/dsh-kit/read`, same path as txt): BOM wins — UTF-8 /
+  UTF-16 LE / UTF-16 BE decode by their encoding; without a BOM, a NUL-free
+  first 4 KB is read as UTF-8. Files containing NULs are judged by extension —
+  config-class extensions like **ini / cfg / conf / cnf / properties / reg**
+  get a UTF-16LE/BE two-way score recovery (the real-world case of Windows
+  Notepad's "Unicode" save); log / json / toml / yml and dozens of other text
+  extensions work the same way; dotfiles like `.gitignore` match by their full
+  basename. Only files that fail text detection are treated as binary
 
 ### Source control
 
@@ -214,7 +222,9 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   (official prebuilt xterm UMD), a read-only `/dsh-kit/tree?path=…`
   single-level directory listing (the official browse RPC lists directories
   only, so the file tree uses this), a read-only `/dsh-kit/read?path=…`
-  single-file text reader (512 KB cap + binary detection), `/dsh-kit/write`
+  single-file text reader (512 KB cap + text decoding via text-decode.js:
+  BOM wins, and text-class extensions containing NULs get a UTF-16LE/BE
+  recovery attempt), `/dsh-kit/write`
   edit save (cwd-subtree validation + mtime CAS), `/dsh-kit/fs/op` file
   management (create/rename/delete; targets confined to the cwd subtree,
   deletes go to the Recycle Bin on Windows), `/dsh-kit/jobs/kill` (POST: stop a

@@ -30,9 +30,15 @@
   ✎ 进编辑态（草稿保存，mtime CAS 冲突时询问重载，截断预览不可编辑），✕ 关闭返回；
   ⇄ 可切到 diff 着色视图
 - 数据走插件宿主端点 `/dsh-kit/tree`（目录列表）、`/dsh-kit/read`（文件内容，
-  512 KB 限长 + 二进制探测）、`/dsh-kit/write`（编辑保存：cwd 子树校验 +
+  512 KB 限长 + 文本解码）、`/dsh-kit/write`（编辑保存：cwd 子树校验 +
   mtime CAS 防并发覆盖）与 `/dsh-kit/fs/op`（新建/重命名/删除：目标必须位于
   cwd 子树内，名称白名单校验；均同源校验；webserver 仅 loopback 可达）
+- **文本解码**（`/dsh-kit/read`，与 txt 同一条路径）：BOM 优先——UTF-8 /
+  UTF-16 LE / UTF-16 BE 按对应编码解码；无 BOM 且首 4KB 无 NUL 按 UTF-8 读。
+  含 NUL 的文件按扩展名判定——**ini / cfg / conf / cnf / properties / reg** 等
+  配置类扩展名会尝试 UTF-16LE/BE 双向评分恢复（Windows 记事本"Unicode"存法
+  的实测问题）；log / json / toml / yml 等几十种文本扩展名同理；`.gitignore`
+  这类点文件按完整基名匹配。判定不出文本的才按二进制
 
 ### 源代码管理（source control）
 
@@ -165,7 +171,8 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   JSON 文本帧协议,见文件头注释)、`/dsh-kit/vendor/*` 静态资源(xterm 官方
   预编译 UMD)、`/dsh-kit/tree?path=…` 只读单层目录列表(官方 browse RPC 只列
   目录不列文件,文件树走这里)、`/dsh-kit/read?path=…` 只读单文件文本内容
-  (512 KB 限长 + 二进制探测)、`/dsh-kit/write` 编辑保存(cwd 子树校验 +
+  (512 KB 限长 + text-decode.js 文本解码:BOM 优先、无 BOM 含 NUL 时文本类
+  扩展名按 UTF-16LE/BE 恢复)、`/dsh-kit/write` 编辑保存(cwd 子树校验 +
   mtime CAS)与 `/dsh-kit/fs/op` 文件管理(新建/重命名/删除;目标限 cwd 子树,
   删除在 Windows 上移入回收站)、`/dsh-kit/jobs/kill`(POST 结束后台任务)与
   `/dsh-kit/jobs/output`(GET 增量读输出)——caller 对齐官方 job_kill/job_output
