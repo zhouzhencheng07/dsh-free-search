@@ -104,6 +104,7 @@ window.__ModuleLoader__.load({
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+Alt+.",
+      sidebarShortcut: "Ctrl+B",
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -170,6 +171,10 @@ window.__ModuleLoader__.load({
           typeof v.scShortcut === "string" && parseCombo(v.scShortcut)
             ? v.scShortcut
             : CFG_DEFAULTS.scShortcut,
+        sidebarShortcut:
+          typeof v.sidebarShortcut === "string" && parseCombo(v.sidebarShortcut)
+            ? v.sidebarShortcut
+            : CFG_DEFAULTS.sidebarShortcut,
       };
     }
     // 模块级通道（apply 注入 / KitSurfaces 订阅 / 设置卡捕获互斥）
@@ -228,8 +233,6 @@ window.__ModuleLoader__.load({
       contentClose: "关闭预览",
       toDiff: "切换到 diff 视图",
       toText: "切换到原文视图",
-      toMdView: "切换到渲染视图",
-      toMdSource: "切换到源码",
       edit: "编辑",
       editSave: "保存",
       editCancel: "取消",
@@ -293,7 +296,9 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabled: "显示「手机访问」页",
       cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
       phoneGateLabel: "启动网关（需要时开启；链接与令牌随之生成）",
-      phoneStoppedHint: "网关未启动。打开上方开关后生成可扫码链接。",
+      phoneGateStart: "启动网关",
+      phoneGateStop: "关闭网关",
+      phoneStoppedHint: "网关未启动。开启网关会生成全新链接，旧链接立即失效。",
       cfgRemoteHint: "非本机访问：上游把设置镜像钉在本机浏览器，配置在手机/远程只读——请在电脑端查看与修改。",
       cfgPhoneRemoteDomain: "远程域名",
       cfgPhoneRemoteDomainHint: "可选。VPS 反向隧道指向本 GUI 的域名（如 dsh.example.com），填后面板会同时给出远程二维码。",
@@ -306,15 +311,14 @@ window.__ModuleLoader__.load({
       phoneLan: "局域网",
       phoneRemote: "远程",
       phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
-      phoneRefresh: "刷新链接（旧链接立即失效）",
-      phoneRefreshing: "轮换中…",
-      phoneRotated: "已轮换：旧二维码与已存设备全部失效",
       phoneCopy: "复制",
       phoneCopied: "已复制",
       cfgTerminalShortcut: "终端快捷键",
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
       cfgFileTreeShortcutHint: "切换文件树的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
+      cfgSidebarShortcut: "侧边栏展开/收起快捷键",
+      cfgSidebarShortcutHint: "切换侧边栏展开/收起的组合键（默认 Ctrl+B）；需一个主键加至少一个修饰键。",
       cfgSourceControlEnabled: "启用源代码管理",
       cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
       cfgScShortcut: "源代码管理快捷键",
@@ -380,8 +384,6 @@ window.__ModuleLoader__.load({
       contentClose: "Close preview",
       toDiff: "Switch to diff view",
       toText: "Switch to plain view",
-      toMdView: "Switch to rendered view",
-      toMdSource: "Switch to source",
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
@@ -445,7 +447,9 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabled: "Show phone access page",
       cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
       phoneGateLabel: "Start gateway (on demand; links are generated with it)",
-      phoneStoppedHint: "Gateway is stopped. Flip the switch above to generate a scannable link.",
+      phoneGateStart: "Start gateway",
+      phoneGateStop: "Stop gateway",
+      phoneStoppedHint: "Gateway is stopped. Starting it issues a brand-new link and invalidates old ones.",
       cfgRemoteHint: "Non-local access: upstream pins the settings mirror to the local machine, so config stays read-only here — please view and edit it on the computer.",
       cfgPhoneRemoteDomain: "Remote domain",
       cfgPhoneRemoteDomainHint: "Optional. Domain of your VPS tunnel pointing to this GUI (e.g. dsh.example.com); the panel then also offers a remote QR code.",
@@ -453,6 +457,8 @@ window.__ModuleLoader__.load({
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
       cfgFileTreeShortcutHint: "Combo that toggles the file tree; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
+      cfgSidebarShortcut: "Sidebar toggle shortcut",
+      cfgSidebarShortcutHint: "Combo that collapses/expands the sidebar (default Ctrl+B); needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgSourceControlEnabled: "Enable source control",
       cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
       cfgScShortcut: "Source control shortcut",
@@ -478,9 +484,6 @@ window.__ModuleLoader__.load({
       phoneLan: "LAN",
       phoneRemote: "Remote",
       phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
-      phoneRefresh: "Refresh link (old links die instantly)",
-      phoneRefreshing: "Rotating…",
-      phoneRotated: "Rotated: old QR codes and saved devices are all invalidated",
       phoneCopy: "Copy",
       phoneCopied: "Copied",
     };
@@ -673,14 +676,17 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-qrwrap{display:flex;align-items:center;justify-content:center;min-height:120px;border-radius:10px;background:#fff;padding:6px;align-self:center}
 .dshk-phone-urlrow{display:flex;align-items:center;gap:6px;width:100%}
 .dshk-phone-url{flex:1;min-width:0;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.4;color:var(--dsw-alias-label-secondary);word-break:break-all;user-select:text}
-.dshk-phone-copybtn,.dshk-phone-refresh{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1;padding:7px 10px;border-radius:8px;cursor:pointer}
-.dshk-phone-copybtn:hover,.dshk-phone-refresh:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dshk-phone-copybtn[disabled],.dshk-phone-refresh[disabled]{opacity:.5;cursor:default}
+.dshk-phone-copybtn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1;padding:7px 10px;border-radius:8px;cursor:pointer}
+.dshk-phone-copybtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-phone-copybtn[disabled]{opacity:.5;cursor:default}
 .dshk-phone-hint{margin:0;font-size:11px;line-height:1.55;color:var(--dsw-alias-label-tertiary)}
 .dshk-phone-domain{display:flex;align-items:center;gap:6px;width:100%;margin-bottom:10px}
 .dshk-phone-domain-label{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dshk-phone-domain-input{flex:1;min-width:0;font-size:11px;padding:5px 8px}
-.dshk-phone-gate{display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer}
+.dshk-phone-gatebtn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1;padding:9px 10px;border-radius:8px;cursor:pointer;width:100%;margin-bottom:10px}
+.dshk-phone-gatebtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-phone-gatebtn[disabled]{opacity:.5;cursor:default}
+.dshk-phone-gatebtn-stop{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 /* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
    类名是前端构建哈希（_3e4SsG_*），升级换哈希后本段静默失效——需跟随维护。 */
 @media (hover: none) {
@@ -711,6 +717,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cm-host{flex:1;min-height:0;display:flex}
 .dshk-cm-host .cm-editor{flex:1;min-width:0;height:100%;background:var(--dsw-alias-bg-base)}
 .dshk-cm-host .cm-scroller{overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55}
+/* 短文件长行：内容区至少撑满面板高度，横向滚动条钉在面板底部而非内容中部 */
+.dshk-cm-host .cm-content{min-height:100%}
 .dshk-cm-scope{--dshk-tok-keyword:#953800;--dshk-tok-string:#0a3069;--dshk-tok-comment:#697077;--dshk-tok-number:#0550ae;--dshk-tok-fn:#8250df;--dshk-tok-type:#0550ae;--dshk-tok-operator:#953800;--dshk-tok-meta:#6639ba;--dshk-tok-link:#0550ae;--dshk-tok-heading:#0550ae}
 body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-string:#a5d6ff;--dshk-tok-comment:#8b949e;--dshk-tok-number:#79c0ff;--dshk-tok-fn:#d2a8ff;--dshk-tok-type:#ffa657;--dshk-tok-operator:#ff7b72;--dshk-tok-meta:#79c0ff;--dshk-tok-link:#a5d6ff;--dshk-tok-heading:#f0883e}
 .dshk-editarea.dshk-cm-host{min-height:280px}
@@ -2003,10 +2011,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // 拖过的宽度（px）；0 = 未拖过，用 CSS fallback 默认宽度
       const widthRef = react.useRef(0);
       const dragRef = react.useRef(null);
-      // 预览增强：md 渲染 + CodeMirror 读写高亮。库懒加载；mdRaw=false 且非编辑时
-      // .md 默认渲染视图，切「源码」或进编辑都是纯文本/CM。
+      // 预览增强：md 渲染 + CodeMirror 读写高亮。库懒加载；md 只读默认渲染，
+      // 需要源码时进编辑即是源码（无独立「切源码」按钮）。
       const [cmReady, setCmReady] = react.useState(false);
-      const [mdRaw, setMdRaw] = react.useState(false);
       const [mdHtml, setMdHtml] = react.useState(null);
       const readHostRef = react.useRef(null);
       const editHostRef = react.useRef(null);
@@ -2056,7 +2063,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
       react.useLayoutEffect(() => {
         document.body.classList.add("dshk-pane-open");
-        // 默认即最大宽度：给对话列至少留 880px（含侧边栏），上限 720
         const maxW = Math.min(720, Math.max(520, window.innerWidth - 880));
         widthRef.current = maxW;
         document.documentElement.style.setProperty("--dshk-pane-w", `${maxW}px`);
@@ -2126,7 +2132,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // ── md 渲染 + CM 只读/编辑挂载（依赖就绪后接管对应宿主 div）──
       const isMd = /\.(md|markdown)$/i.test(path);
       const ready = state.phase === "ready" && state.body && !state.body.binary && state.body.content !== null;
-      const mdActive = isMd && mode === "text" && !editing && !mdRaw && ready;
+      const mdActive = isMd && mode === "text" && !editing && ready;
       react.useEffect(() => {
         if (!mdActive) {
           setMdHtml(null);
@@ -2323,16 +2329,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
-              // .md 只读：渲染视图 ⇄ 源码（进编辑恒为源码）
-              state.phase === "ready" && state.body && !state.body.binary && isMd && !editing && mode === "text"
-                ? jsxRuntime.jsx("button", {
-                    type: "button",
-                    className: "dshk-btn",
-                    title: t(mdRaw ? "toMdView" : "toMdSource"),
-                    onClick: () => setMdRaw((v) => !v),
-                    children: mdRaw ? "MD" : "</>",
-                  })
-                : null,
               // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）
               !editing
                 ? jsxRuntime.jsx("button", {
@@ -2400,22 +2396,37 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       });
     }
 
-    // ── 侧边栏展开兜底：文件树/源代码管理视图承载在 sidebar.workspaces 里，
-    // 侧边栏若被收起就只剩图标栏，点了入口等于没反应。官方切换按钮带
-    // aria-label（"展开/收起侧边栏"，随语言变化）——按语义匹配：当前动作是
-    // 「展开」= 处于收起态，点它；已是「收起」= 已展开，不动。找不到保持原状。
-    function ensureSidebarExpanded() {
+    // ── 侧边栏兜底与快捷键 ──
+    // 文件树/源代码管理视图承载在 sidebar.workspaces 里，侧边栏收起时只剩图标栏，
+    // 点了入口等于没反应——打开动作先自动展开。官方切换控件的形态两种都有：
+    // 展开态是带 aria-label 的按钮（"收起侧边栏"），收起态则可能不是 button
+    // （点整个 sidebar 根区域也能展开）——所以探测要覆盖 [aria-label] 任意元素，
+    // 并回退到 class 含 collapsed 的根元素。任何一步失败保持原状，快捷键兜底。
+    function sidebarBtn() {
       try {
-        const buttons = document.querySelectorAll('button[aria-label]');
-        for (const btn of buttons) {
-          const label = btn.getAttribute("aria-label") ?? "";
+        const labelled = document.querySelectorAll("[aria-label]");
+        for (const el of labelled) {
+          const label = (el.getAttribute("aria-label") ?? "").trim();
           if (!/侧边栏|sidebar/i.test(label)) continue;
-          if (/^(展开|Expand)/i.test(label.trim())) btn.click();
-          return;
+          if (/^(展开|Expand)/i.test(label)) return { collapsed: true, btn: el };
+          if (/^(收起|Collapse)/i.test(label)) return { collapsed: false, btn: el };
         }
+        // 收起态回退：官方侧边栏根元素带 collapsed 类，点击根整体即可展开
+        const root = document.querySelector('[class*="collapsed"]');
+        if (root !== null) return { collapsed: true, btn: root };
       } catch {
-        // 探测失败保持原状
+        // 探测失败按展开处理
       }
+      return { collapsed: false, btn: null };
+    }
+    function ensureSidebarExpanded() {
+      const { collapsed, btn } = sidebarBtn();
+      if (collapsed && btn) btn.click();
+    }
+    /** 快捷键用：展开/收起侧边栏切换 */
+    function toggleSidebar() {
+      const { btn } = sidebarBtn();
+      if (btn) btn.click();
     }
 
     function FileTreeEntry() {
@@ -2427,9 +2438,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         title: t("treeLabel"),
         onClick: () => {
           // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表。
-          // 打开动作先兜底展开被收起的侧边栏（否则视图渲染进图标栏等于不可见）
+          // 打开动作先兜底展开被收起的侧边栏（否则视图渲染进图标栏等于不可见）；
+          // 关闭动作保留文件预览（预览有独立 ✕，关来源视图不连带关预览）
           if (!ui.treeOpen) ensureSidebarExpanded();
-          setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false, openFile: null, openFrom: null });
+          setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false });
         },
         children: jsxRuntime.jsx(FolderIcon, {}),
       });
@@ -2445,14 +2457,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         title: t("scTitle"),
         onClick: () => {
           if (!ui.gitOpen) ensureSidebarExpanded();
-          setKitUi({ gitOpen: !ui.gitOpen, treeOpen: false, openFile: null, openFrom: null });
+          setKitUi({ gitOpen: !ui.gitOpen, treeOpen: false });
         },
         children: jsxRuntime.jsx(BranchIcon, {}),
       });
     }
 
     // ─────────── 手机访问页（settings.section，与技能页同类）───────────
-    // 数据源：宿主半边 /dsh-kit/phone/info|link|rotate。这些端点挂在主 webserver
+    // 数据源：宿主半边 /dsh-kit/phone/info|link（rotate 无 UI 入口——轮换在
+    // 宿主侧随「关闭→开启」自动触发）。这些端点挂在主 webserver
     // （只绑回环，LAN 够不到），宿主侧另有同源校验。二维码用 vendored
     // qrcode-generator（/dsh-kit/vendor/qrcode.js），首次打开面板时按需加载，
     // 与 xterm 同策略。
@@ -2466,13 +2479,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     }
     function fetchPhoneLinks(signal) {
       return fetch("/dsh-kit/phone/link", { signal }).then(async (res) => {
-        const body = await res.json().catch(() => null);
-        if (!res.ok || !body || !Array.isArray(body.links)) throw new Error((body && body.error) || `HTTP ${res.status}`);
-        return body;
-      });
-    }
-    function postPhoneRotate() {
-      return fetch("/dsh-kit/phone/rotate", { method: "POST" }).then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || !Array.isArray(body.links)) throw new Error((body && body.error) || `HTTP ${res.status}`);
         return body;
@@ -2511,7 +2517,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [loadErr, setLoadErr] = react.useState("");
       const [activeIdx, setActiveIdx] = react.useState(0);
       const [qrReady, setQrReady] = react.useState(false);
-      const [rotating, setRotating] = react.useState(false);
       const [copied, setCopied] = react.useState(false);
       const [notice, setNotice] = react.useState("");
       const canvasRef = react.useRef(null);
@@ -2596,21 +2601,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
       }, [qrReady, activeUrl]);
 
-      const rotate = async () => {
-        if (rotating) return;
-        setRotating(true);
-        try {
-          const body = await postPhoneRotate();
-          setLinkData(body);
-          setActiveIdx(0);
-          setNotice(t("phoneRotated"));
-        } catch {
-          // 轮换失败保持原状：旧链接仍有效
-        } finally {
-          setRotating(false);
-          setTimeout(() => setNotice(""), 4000);
-        }
-      };
       const copyActive = () => {
         if (activeUrl === "" || typeof navigator === "undefined" || !navigator.clipboard) return;
         navigator.clipboard.writeText(activeUrl).then(
@@ -2644,34 +2634,17 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               notice !== ""
                 ? jsxRuntime.jsx("span", { className: "dshk-phone-notice", role: "status", children: notice })
                 : null,
-              links.length > 0
-                ? jsxRuntime.jsx("button", {
-                    type: "button",
-                    className: "dshk-phone-refresh",
-                    disabled: rotating,
-                    onClick: () => {
-                      rotate();
-                    },
-                    children: rotating ? t("phoneRefreshing") : t("phoneRefresh"),
-                  })
-                : null,
             ],
           }),
           cfgScope
-            ? jsxRuntime.jsxs("label", {
-                className: "dshk-phone-gate",
-                children: [
-                  jsxRuntime.jsx("input", {
-                    type: "checkbox",
-                    className: "dshk-cfg-check",
-                    checked: gatewayOn,
-                    disabled: gateBusy,
-                    onChange: (e) => {
-                      toggleGateway(e.target.checked);
-                    },
-                  }),
-                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("phoneGateLabel") }),
-                ],
+            ? jsxRuntime.jsx("button", {
+                type: "button",
+                className: gatewayOn ? "dshk-phone-gatebtn dshk-phone-gatebtn-stop" : "dshk-phone-gatebtn",
+                disabled: gateBusy,
+                onClick: () => {
+                  toggleGateway(!gatewayOn);
+                },
+                children: t(gatewayOn ? "phoneGateStop" : "phoneGateStart"),
               })
             : null,
           statusNode,
@@ -2837,12 +2810,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         };
       }, [ui.treeOpen, ui.gitOpen, cwd]);
 
-      // 预览跟随来源视图：来源视图被关闭或切走时清掉预览（含 openFrom）
-      react.useEffect(() => {
-        const activeView = ui.gitOpen ? "scm" : ui.treeOpen ? "tree" : null;
-        if (ui.openFile !== null && ui.openFrom !== activeView) setKitUi({ openFile: null, openFrom: null });
-      }, [ui.treeOpen, ui.gitOpen, ui.openFile, ui.openFrom]);
-
       // 终端让位布局：坞可见时挂 body 类 + 设高度变量，样式规则顶起对话/详情列
       //（隐藏/无会话时不顶——后台会话继续跑但不占布局）
       react.useEffect(() => {
@@ -2862,6 +2829,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         const termCombo = parseCombo(cfg.terminalShortcut);
         const treeCombo = parseCombo(cfg.fileTreeShortcut);
         const scCombo = parseCombo(cfg.scShortcut);
+        const sidebarCombo = parseCombo(cfg.sidebarShortcut);
         const onKey = (e) => {
           if (shortcutCapture !== null) return;
           if (inlineEditCapture) return;
@@ -2875,17 +2843,24 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           if (treeCombo && cfg.fileTreeEnabled && comboMatches(e, treeCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            // Ctrl+E 只管文件树：非文件树态 → 打开；已是 → 关闭回会话列表
+            // Ctrl+E 只管文件树：非文件树态 → 打开（展开侧边栏）；已是 → 关闭回会话列表
+            //（关闭保留文件预览）
             if (!kitUi.treeOpen) ensureSidebarExpanded();
-            setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false, openFile: null, openFrom: null });
+            setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false });
             return;
           }
           if (scCombo && cfg.sourceControlEnabled && comboMatches(e, scCombo)) {
             e.preventDefault();
             e.stopPropagation();
-            // 源代码管理同语义：非 SCM 态 → 打开（收起文件树）；已是 → 关闭回会话列表
+            // 源代码管理同语义：非 SCM 态 → 打开（展开侧边栏）；已是 → 关闭回会话列表
             if (!kitUi.gitOpen) ensureSidebarExpanded();
-            setKitUi({ gitOpen: !kitUi.gitOpen, treeOpen: false, openFile: null, openFrom: null });
+            setKitUi({ gitOpen: !kitUi.gitOpen, treeOpen: false });
+            return;
+          }
+          if (sidebarCombo && comboMatches(e, sidebarCombo)) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleSidebar();
             return;
           }
           if (e.key === "Escape") {
@@ -2899,7 +2874,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return () => window.removeEventListener("keydown", onKey, true);
         // cwd 必须在依赖里：否则闭包缓存首帧（会话未水化时为 null）的工作区，
         // 之后按快捷键开终端永远绑到 null
-      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut]);
+      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut, cfg.sidebarShortcut]);
 
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
@@ -2920,7 +2895,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 onKillAll: () => setKitUi({ terminals: [], activeTermId: null, termDockOpen: false }),
               })
             : null,
-          ui.openFile && ((ui.openFrom === "scm" && cfg.sourceControlEnabled) || (ui.openFrom === "tree" && cfg.fileTreeEnabled))
+          ui.openFile && (cfg.fileTreeEnabled || cfg.sourceControlEnabled)
             ? jsxRuntime.jsx(FileContentPane, {
                 path: ui.openFile,
                 source: ui.openFrom ?? "tree",
@@ -3309,12 +3284,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
       { key: "scShortcut", kind: "combo" },
+      { key: "sidebarShortcut", kind: "combo" },
     ];
     // 分组渲染：开关行 + 该功能启用时才显示的子配置（所见即所得，保存才落盘生效）
     // 组顺序：文件树 → 源代码管理 → 终端 → 技能页 → 网页搜索 → 手机访问（用户定稿
     // 放最下）。远程域名不在此卡——编辑入口在「手机访问」页面内（PhoneSection）。
     const CFG_GROUPS = [
-      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
+      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut", "sidebarShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
