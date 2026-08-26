@@ -9,11 +9,11 @@
 
 ### 终端（terminal）
 
-输入框工具行的终端开关或快捷键 **Ctrl+`** 显示/隐藏底部**终端坞（多标签）**：
+输入框工具行的终端开关或快捷键 **Ctrl+/** 显示/隐藏底部**终端坞（多标签）**：
 
 - **多终端标签**：坞头部 ＋ 新建终端，绑定按下那一刻的当前会话工作区（之后切换
   会话不影响已开的终端）；同工作区多开自动加序号区分
-- Ctrl+/ 与入口按钮只**开关坞的显示**——隐藏时后台 shell 继续运行、输出继续缓冲；
+- 入口按钮与快捷键只**开关坞的显示**——隐藏时后台 shell 继续运行、输出继续缓冲；
   每个标签 ✕ 结束对应会话，入口图标角标显示存活终端数；页面刷新结束全部
   （不留孤儿进程）
 - Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe
@@ -59,14 +59,14 @@ Ctrl+. 中英标点切换），页内 git 工作台：
 
 输入框工具行的后台任务开关（位于源代码管理与终端之间），图标带运行中任务数角标：
 
-- 点开**居中模态**列出当前会话运行中的后台任务（每次「开启网关」式会话内
-  自动刷新；官方任务下拉只读展示，本面板补上操作）
+- 点开**居中模态**列出当前会话运行中的后台任务（只列进行中，任务源是官方
+  `session/jobs` 推送自动更新；官方任务下拉只读展示，本面板补上操作）
 - 每行：任务种类徽标 + 命令 + 状态 · 已运行时长；**「输出」**展开实时增量
   （与模型 `job_output` 共享读取游标）、**「结束」**终止任务（等同
   `job_kill`，权限按会话隔离，跨会话自动拒绝）
 - ✕ 按钮 / 点击遮罩 / Esc 均可关闭；任务结束即从列表消失（只列进行中）
-- 数据走宿主端点 `/dsh-kit/jobs/kill`（POST）与 `/dsh-kit/jobs/output`（GET
-  增量读）；任务源是官方 `session/jobs` 推送，无额外轮询
+- 操作走宿主端点 `/dsh-kit/jobs/kill`（POST）与 `/dsh-kit/jobs/output`（GET
+  增量读），列表本身来自官方 `session/jobs` 推送、无额外轮询
 
 ### 技能管理（skill pool）
 
@@ -92,6 +92,22 @@ Ctrl+. 中英标点切换），页内 git 工作台：
 - 设置导航里"技能"使用自绘分层图标（官方 navIcon 按 id 硬编码映射、未知 id 一律
   齿轮，这里按标签文字做纯外观替换，失败静默回退）
 
+### 手机访问（phone access）
+
+设置面板新增「手机访问」页，用手机浏览器扫码即可连上电脑上的 dsh web：
+
+- **链接令牌鉴权**：插件自带网关（默认端口 3090）监听 0.0.0.0，`?k=<令牌>` →
+  HttpOnly Cookie → 302 到 GUI；无/错令牌一律 404，Cookie 过期即失效
+- **一次一证**：每次「关闭 → 开启」网关自动轮换令牌生成新链接，旧链接与已存设备
+  即时失效；按状态文件恢复启动、保持开启时再点均不轮换
+- 局域网与远程双通道：本地每个 IPv4 一条 `http://<ip>:3090/?k=…`，配置远程域名后
+  附 `https://<域名>/?k=…`（配 frp + caddy 模板，见 `scripts/vps/`），扫码即开
+- **HTTP/WS 全量透传**：Host 重写回环上游、剥 Origin、网关 Cookie 不外泄；终端
+  WebSocket 隧道双向可达（远程用手机也能连终端）
+- 安全边界：令牌等于本机完整权限（仅限本人）；远程隧道 TLS 加密；关闭网关链接即
+  不可达、再开换新证
+- 网关令牌/启停持久化在 `data/dsh-kit-phone-gateway.json`，不侵入 settings
+
 ### 网页搜索（web search）
 
 自 [dsh-free-search](https://github.com/zhouzhencheng07/dsh-free-search)
@@ -111,12 +127,13 @@ v0.2.0 并入的宿主侧能力（该仓库停留在 v0.2.0，不再单独演进
 
 官方设置页「插件配置」里的 dsh-kit 卡片（命名空间 `dsh-kit`）：
 
-- 功能开关：终端 / 文件树 / 源代码管理 / 技能页 / 网页搜索，各自独立——关闭即
-  隐藏对应入口按钮并失效快捷键，已打开的视图立即归位；「技能页」关闭后设置导航
-  不再显示技能页（技能本身不受影响）
+- 功能开关：终端 / 文件树 / 源代码管理 / **后台任务** / 技能页 / 网页搜索 /
+  **侧边栏快捷键组** / **手机访问页**，各自独立——关闭即隐藏对应入口按钮并失效
+  快捷键，已打开的视图立即归位；「技能页」/「手机访问页」关闭后设置导航不再显示
+  对应页面（能力本身不受影响）
 - 快捷键自定义：终端 **Ctrl+/**、文件树 **Ctrl+,**、源代码管理 **Ctrl+Alt+.**
-  （原 Ctrl+. 会被中文输入法的中英标点切换截获，故改默认）——点
-  「修改」进入录制态，下一个组合键即为新键（Esc 取消）
+  （原 Ctrl+. 会被中文输入法的中英标点切换截获，故改默认）、侧边栏 **Ctrl+B**——
+  点「修改」进入录制态，下一个组合键即为新键（Esc 取消）
 - 开关启用才展开其子配置项（所见即所得）；键被用户层覆盖时标「已覆盖」，可一键
   恢复默认
 - 草稿模型照官方 CardForm 规范：编辑只暂存草稿、保存才写入，写后回读校验落盘；
@@ -132,7 +149,7 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 
 本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层(而不是仅仅装成
 一个不生效的普通依赖)。安装后重启 `dsh web`,输入框工具行出现文件树 / 源代码管理 /
-终端三个开关,AI 的 `web_search` 同时切到免费多源搜索。
+后台任务 / 终端四个开关,AI 的 `web_search` 同时切到免费多源搜索。
 
 ### 本地开发安装
 
@@ -150,18 +167,25 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   目录不列文件,文件树走这里)、`/dsh-kit/read?path=…` 只读单文件文本内容
   (512 KB 限长 + 二进制探测)、`/dsh-kit/write` 编辑保存(cwd 子树校验 +
   mtime CAS)与 `/dsh-kit/fs/op` 文件管理(新建/重命名/删除;目标限 cwd 子树,
-  删除在 Windows 上移入回收站)。
+  删除在 Windows 上移入回收站)、`/dsh-kit/jobs/kill`(POST 结束后台任务)与
+  `/dsh-kit/jobs/output`(GET 增量读输出)——caller 对齐官方 job_kill/job_output
+  权限语义,另有手机访问的 info/link/gateway 端点(实现见 phone-gateway.js)。
 - `src/skill-pool.js`:技能管理宿主半边——`GET /dsh-kit/skills` 枚举白名单根
   (池/用户级/项目级)下的技能并附注册表归属增强,`POST /dsh-kit/skills/op`
   执行复制/移动/删除(入池回收区)/禁用(frontmatter 双键);源必须是根直接子项、
   全路径 realpath 后做包含校验。
+- `src/phone-gateway.js`:手机访问网关——独立端口(默认 3090,0.0.0.0)的
+  HTTP/WS 反代,`?k=` 令牌 → HttpOnly Cookie → 302 回环上游;未授权 404、
+  Host 重写回环、剥 Origin、网关 Cookie 不外泄;`rotate()`(关→开自动轮换)
+  与状态文件(`data/dsh-kit-phone-gateway.json`)持久化启停与令牌。
 - `client/bundle.js`:浏览器半边(手写 ModuleLoader 格式 client bundle,无构建)——
-  在 `conversation.input.left` 槽位注册文件树 / 源代码管理 / 终端三个开关;
-  文件树与源代码管理共用 `sidebar.workspaces` 单槽,点击文件后自绘右侧停靠
-  面板预览/编辑/diff——挂 `body.dshk-pane-open` 类 + `--dshk-pane-w` 变量,
+  在 `conversation.input.left` 槽位注册文件树 / 源代码管理 / 后台任务 / 终端
+  四个开关;文件树与源代码管理共用 `sidebar.workspaces` 单槽,点击文件后自绘右侧
+  停靠面板预览/编辑/diff——挂 `body.dshk-pane-open` 类 + `--dshk-pane-w` 变量,
   用 CSS 让中列(对话)让位(不依赖原生 details 列/ctx.layout,因其 openDetails
-  固定 360 且 setDetails 对动态插件不可达);另在 `settings.section` 槽位注册
-  "技能管理"整页、在 `settings.plugin.item` 注册插件设置卡。
+  固定 360 且 setDetails 对动态插件不可达);后台任务面板(运行中任务列表 +
+  输出/结束操作)与终端坞在 `shell.overlay` 渲染;另在 `settings.section` 槽位注册
+  "技能管理"/"手机访问"两个整页、在 `settings.plugin.item` 注册插件设置卡。
 - `src/web-search.js` + `src/engine-chain.js` + `src/engines/*`:网页搜索宿主
   半边(自 dsh-free-search v0.2.0 原样并入)——向 web seam 注册 `free-search`
   provider,受设置卡 `searchEnabled` 门控(启动期定夺:开=引擎链,关=同 id

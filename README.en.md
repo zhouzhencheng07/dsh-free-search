@@ -10,13 +10,13 @@ dsh stays stock.
 
 ### Terminal
 
-A terminal toggle on the composer tool row or **Ctrl+`** shows/hides the bottom
+A terminal toggle on the composer tool row or **Ctrl+/** shows/hides the bottom
 **terminal dock (tabbed)**:
 
 - **Multiple terminals**: the ＋ button in the dock header spawns a new one bound
   to the current session workspace at that moment; later workspace switches don't
   affect open terminals. Same-workspace tabs get a sequence number
-- Ctrl+/ and the entry button only **toggle the dock's visibility** — hidden
+- The entry button and the shortcut only **toggle the dock's visibility** — hidden
   terminals keep running and buffering output; each tab's ✕ kills that session;
   the badge on the entry icon shows how many are alive. Refreshing the page ends
   everything (no orphan processes)
@@ -119,6 +119,29 @@ A new "Skills" page in the settings panel:
   a hardcoded id map falling back to the gear; this is a cosmetic DOM swap by
   label text that silently keeps the gear on failure).
 
+### Phone access
+
+A new "Phone access" page in the settings: scan a QR code with your phone
+browser to reach the dsh web running on this computer:
+
+- **Token-gated links**: a built-in gateway (default port 3090, bound to
+  0.0.0.0) sends `?k=<token>` → HttpOnly Cookie → 302 to the loopback GUI; any
+  missing/wrong token gets a 404, and expired cookies are rejected
+- **One gateway start, one credential**: every "off → on" cycle rotates the
+  token and issues a brand-new link, instantly invalidating old links and any
+  already-authorized devices; restoring from the state file or re-clicking while
+  already on does not rotate
+- LAN and remote dual links: one `http://<ip>:3090/?k=…` per local IPv4, plus
+  `https://<domain>/?k=…` when a remote domain is configured (frp + caddy
+  templates in `scripts/vps/`) — scan and go
+- **Full HTTP/WS passthrough**: Host rewritten to the loopback upstream,
+  Origin stripped, gateway cookies never leak upstream; the terminal WebSocket
+  tunnel works both ways (the terminal can even be used from your phone remotely)
+- Security posture: a token equals full access on this machine (for your own
+  use only); the remote tunnel is TLS-encrypted; stopping the gateway makes
+  links unreachable and the next start issues a fresh credential
+- Gateway token/state live in `data/dsh-kit-phone-gateway.json`, not in settings
+
 ### Web search
 
 A host-side capability merged in from
@@ -144,15 +167,16 @@ A host-side capability merged in from
 The dsh-kit card under the official Settings → plugin configuration page
 (namespace `dsh-kit`):
 
-- Feature switches — terminal / file tree / source control / skills page /
-  web search — each independent: turning one off hides its entry button and
+- Feature switches — terminal / file tree / source control / **background
+  jobs** / skills page / web search / **sidebar-shortcut group** / **phone
+  access page** — each independent: turning one off hides its entry button and
   disables its shortcut, instantly resetting any open view; the skills-page
-  switch removes the Skills entry from the settings nav (skills themselves are
-  unaffected)
+  and phone-access switches remove their entries from the settings nav
+  (the capabilities themselves are unaffected)
 - Shortcut customization: terminal **Ctrl+/**, file tree **Ctrl+,**, source
   control **Ctrl+Alt+.** (the old Ctrl+. default is intercepted by Chinese IMEs
-  for punctuation toggle) — click Change to enter recording mode; the next key
-  combo becomes the new shortcut (Esc cancels)
+  for punctuation toggle), sidebar **Ctrl+B** — click Change to enter recording
+  mode; the next key combo becomes the new shortcut (Esc cancels)
 - A switch's child options stay collapsed until enabled (WYSIWYG); keys
   overridden at the user layer carry an "Overridden" badge with one-click
   reset to default
@@ -169,9 +193,10 @@ dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
 The package declares `dsh.bundle.patch`, so it is activated as a profile bundle
-layer (not just an inert dependency). Restart `dsh web` after installing; three
-toggles — Files / Source Control / Terminal — appear on the composer tool row,
-and the agent's `web_search` switches to the free multi-source chain.
+layer (not just an inert dependency). Restart `dsh web` after installing; four
+toggles — Files / Source Control / Background Jobs / Terminal — appear on the
+composer tool row, and the agent's `web_search` switches to the free
+multi-source chain.
 
 ### Local development
 
@@ -190,25 +215,37 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   single-level directory listing (the official browse RPC lists directories
   only, so the file tree uses this), a read-only `/dsh-kit/read?path=…`
   single-file text reader (512 KB cap + binary detection), `/dsh-kit/write`
-  edit save (cwd-subtree validation + mtime CAS), and `/dsh-kit/fs/op` file
+  edit save (cwd-subtree validation + mtime CAS), `/dsh-kit/fs/op` file
   management (create/rename/delete; targets confined to the cwd subtree,
-  deletes go to the Recycle Bin on Windows).
+  deletes go to the Recycle Bin on Windows), `/dsh-kit/jobs/kill` (POST: stop a
+  background job) and `/dsh-kit/jobs/output` (GET: incremental output read) —
+  both use the same caller-permission semantics as the official job_kill /
+  job_output tools, plus the phone-access info/link/gateway endpoints
+  (implementation in phone-gateway.js).
 - `src/skill-pool.js`: skill-management host side — `GET /dsh-kit/skills`
   enumerates skills under the whitelist roots (pool / user / project) with
   registry-based attribution enrichment, and `POST /dsh-kit/skills/op` performs
   copy/move/delete (into the pool trash area)/disable (frontmatter keys).
   Sources must be direct children of a root and every path is realpath-checked
   for containment.
+- `src/phone-gateway.js`: the phone-access gateway — a separate
+  HTTP/WS reverse proxy on its own port (default 3090, 0.0.0.0). `?k=` token →
+  HttpOnly Cookie → 302 to the loopback upstream; unauthorized requests get
+  404, Host is rewritten to loopback, Origin stripped, gateway cookies never
+  leak; `rotate()` (auto-rotated on off→on) and a state file
+  (`data/dsh-kit-phone-gateway.json`) persist on/off and the token.
 - `client/bundle.js`: browser side (hand-written ModuleLoader-format client
-  bundle, no build step) — registers three toggles (Files / Source Control /
-  Terminal) on the `conversation.input.left` slot; the file tree and source
-  control share the `sidebar.workspaces` slot, and clicking a file opens a
-  self-drawn right-docked preview/edit/diff panel — a `body.dshk-pane-open`
-  class + `--dshk-pane-w` variable shift the conversation column aside via
-  CSS, instead of the native details column / `ctx.layout`, because
-  `openDetails()` is fixed at 360 and `setDetails` is unreachable from dynamic
-  plugins); plus the Skills page on the `settings.section` slot and the plugin
-  settings card on `settings.plugin.item`.
+  bundle, no build step) — registers four toggles (Files / Source Control /
+  Background Jobs / Terminal) on the `conversation.input.left` slot; the file
+  tree and source control share the `sidebar.workspaces` slot, and clicking a
+  file opens a self-drawn right-docked preview/edit/diff panel — a
+  `body.dshk-pane-open` class + `--dshk-pane-w` variable shift the
+  conversation column aside via CSS, instead of the native details column /
+  `ctx.layout`, because `openDetails()` is fixed at 360 and `setDetails` is
+  unreachable from dynamic plugins); the background-jobs panel (running list +
+  output/stop controls) and the terminal dock render in `shell.overlay`; plus
+  the Skills page and the Phone access page on the `settings.section` slot and
+  the plugin settings card on `settings.plugin.item`.
 - `src/web-search.js` + `src/engine-chain.js` + `src/engines/*`: web-search
   host side (merged verbatim from dsh-free-search v0.2.0) — registers the
   `free-search` provider on the web seam, gated by the settings card's
