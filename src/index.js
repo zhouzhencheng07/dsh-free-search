@@ -52,6 +52,7 @@ import path from 'node:path'
 import { applySkillPool, findProjectRoot } from './skill-pool.js'
 import { applyWebSearch } from './web-search.js'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
+import { decodePreviewText } from './text-decode.js'
 
 /** 手机访问网关对外端口（0.0.0.0）；dsh web 主端口运行时从 webServer 服务读取 */
 const PHONE_PORT = 3090
@@ -463,14 +464,14 @@ export function apply(ctx) {
                   return
                 }
                 const head = buf.subarray(0, bytesRead)
-                const binary = head.includes(0)
+                const decoded = decodePreviewText(head, file.path)
                 json(200, {
                   path: file.path,
                   size: file.size,
                   mtimeMs: file.mtimeMs,
                   truncated: true,
-                  binary,
-                  content: binary ? null : head.toString('utf8'),
+                  binary: decoded.binary,
+                  content: decoded.content,
                 })
               })
             })
@@ -481,11 +482,11 @@ export function apply(ctx) {
               json(404, { error: `读取文件失败：${error?.message ?? error}` })
               return
             }
-            // 二进制探测：头部出现 NUL 字节视为二进制，不返回文本内容
-            const head = body.subarray(0, 4096)
-            const binary = head.includes(0)
-            const content = binary ? null : body.toString('utf8')
-            json(200, { path: file.path, size: file.size, mtimeMs: file.mtimeMs, truncated: false, binary, content })
+            // 文本/二进制判定与解码：BOM 优先（UTF-8/UTF-16 系），无 BOM 含 NUL
+            // 时文本类扩展名按 UTF-16LE 尝试恢复（Windows 常见存法），详见
+            // src/text-decode.js（有单测）
+            const decoded = decodePreviewText(body, file.path)
+            json(200, { path: file.path, size: file.size, mtimeMs: file.mtimeMs, truncated: false, binary: decoded.binary, content: decoded.content })
           })
         },
       })

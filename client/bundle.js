@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+Alt+.",
       sidebarShortcut: "Ctrl+B",
+      sidebarShortcutEnabled: true,
     };
     /** 组合键规范化主键：单字符统一大写、空格记作 Space */
     function normComboKey(key) {
@@ -175,6 +176,7 @@ window.__ModuleLoader__.load({
           typeof v.sidebarShortcut === "string" && parseCombo(v.sidebarShortcut)
             ? v.sidebarShortcut
             : CFG_DEFAULTS.sidebarShortcut,
+        sidebarShortcutEnabled: v.sidebarShortcutEnabled !== false,
       };
     }
     // 模块级通道（apply 注入 / KitSurfaces 订阅 / 设置卡捕获互斥）
@@ -319,6 +321,8 @@ window.__ModuleLoader__.load({
       cfgFileTreeShortcutHint: "切换文件树的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgSidebarShortcut: "侧边栏展开/收起快捷键",
       cfgSidebarShortcutHint: "切换侧边栏展开/收起的组合键（默认 Ctrl+B）；需一个主键加至少一个修饰键。",
+      cfgSidebarShortcutEnabled: "启用侧边栏快捷键",
+      cfgSidebarShortcutEnabledHint: "关闭后侧边栏快捷键不再响应。",
       cfgSourceControlEnabled: "启用源代码管理",
       cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
       cfgScShortcut: "源代码管理快捷键",
@@ -459,6 +463,8 @@ window.__ModuleLoader__.load({
       cfgFileTreeShortcutHint: "Combo that toggles the file tree; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgSidebarShortcut: "Sidebar toggle shortcut",
       cfgSidebarShortcutHint: "Combo that collapses/expands the sidebar (default Ctrl+B); needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
+      cfgSidebarShortcutEnabled: "Enable sidebar shortcut",
+      cfgSidebarShortcutEnabledHint: "When off, the sidebar toggle combo stops responding.",
       cfgSourceControlEnabled: "Enable source control",
       cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
       cfgScShortcut: "Source control shortcut",
@@ -716,7 +722,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 /* CodeMirror 宿主与语法配色令牌（明暗两套，随 data-ds-dark-theme） */
 .dshk-cm-host{flex:1;min-height:0;display:flex}
 .dshk-cm-host .cm-editor{flex:1;min-width:0;height:100%;background:var(--dsw-alias-bg-base)}
-.dshk-cm-host .cm-scroller{overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55}
+.dshk-cm-host .cm-scroller{overflow:auto;height:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55}
 /* 短文件长行：内容区至少撑满面板高度，横向滚动条钉在面板底部而非内容中部 */
 .dshk-cm-host .cm-content{min-height:100%}
 .dshk-cm-scope{--dshk-tok-keyword:#953800;--dshk-tok-string:#0a3069;--dshk-tok-comment:#697077;--dshk-tok-number:#0550ae;--dshk-tok-fn:#8250df;--dshk-tok-type:#0550ae;--dshk-tok-operator:#953800;--dshk-tok-meta:#6639ba;--dshk-tok-link:#0550ae;--dshk-tok-heading:#0550ae}
@@ -2398,28 +2404,36 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
     // ── 侧边栏兜底与快捷键 ──
     // 文件树/源代码管理视图承载在 sidebar.workspaces 里，侧边栏收起时只剩图标栏，
-    // 点了入口等于没反应——打开动作先自动展开。官方切换控件的形态两种都有：
-    // 展开态是带 aria-label 的按钮（"收起侧边栏"），收起态则可能不是 button
-    // （点整个 sidebar 根区域也能展开）——所以探测要覆盖 [aria-label] 任意元素，
-    // 并回退到 class 含 collapsed 的根元素。任何一步失败保持原状，快捷键兜底。
+    // 视图会挤进铁轨里很难看——所以：①打开动作走官方注入的 expandSidebar 回调
+    // 自动展开（拿不到再退回点击官方切换按钮）；②sidebar.workspaces 的 owner 带
+    // wide 标记，收起时不渲染内容（用户定稿：收起不显示，也无须占位提示）。
+    // 官方切换按钮恒在，aria-label 随状态变化：收起态是「打开侧边栏」/“Open
+    // sidebar”（注意关键字是「打开」不是「展开」，此前正则写错导致只能收不能开）。
+    let sidebarExpandRef = { current: null };
     function sidebarBtn() {
       try {
         const labelled = document.querySelectorAll("[aria-label]");
         for (const el of labelled) {
           const label = (el.getAttribute("aria-label") ?? "").trim();
           if (!/侧边栏|sidebar/i.test(label)) continue;
-          if (/^(展开|Expand)/i.test(label)) return { collapsed: true, btn: el };
+          if (/^(打开|展开|Open|Expand)/i.test(label)) return { collapsed: true, btn: el };
           if (/^(收起|Collapse)/i.test(label)) return { collapsed: false, btn: el };
         }
-        // 收起态回退：官方侧边栏根元素带 collapsed 类，点击根整体即可展开
-        const root = document.querySelector('[class*="collapsed"]');
-        if (root !== null) return { collapsed: true, btn: root };
       } catch {
         // 探测失败按展开处理
       }
       return { collapsed: false, btn: null };
     }
-    function ensureSidebarExpanded() {
+    /** 打开动作：优先官方 expandSidebar 回调；拿不到回退 DOM 按钮点击 */
+    function expandSidebarNow() {
+      if (sidebarExpandRef.current) {
+        try {
+          sidebarExpandRef.current();
+        } catch {
+          // 官方回调抛错不阻塞打开
+        }
+        return;
+      }
       const { collapsed, btn } = sidebarBtn();
       if (collapsed && btn) btn.click();
     }
@@ -2440,7 +2454,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           // Ctrl+E/按钮同语义：非文件树态 → 打开文件树；已是文件树 → 关闭回会话列表。
           // 打开动作先兜底展开被收起的侧边栏（否则视图渲染进图标栏等于不可见）；
           // 关闭动作保留文件预览（预览有独立 ✕，关来源视图不连带关预览）
-          if (!ui.treeOpen) ensureSidebarExpanded();
+          if (!ui.treeOpen) expandSidebarNow();
           setKitUi({ treeOpen: !ui.treeOpen, gitOpen: false });
         },
         children: jsxRuntime.jsx(FolderIcon, {}),
@@ -2456,7 +2470,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         "aria-pressed": ui.gitOpen,
         title: t("scTitle"),
         onClick: () => {
-          if (!ui.gitOpen) ensureSidebarExpanded();
+          if (!ui.gitOpen) expandSidebarNow();
           setKitUi({ gitOpen: !ui.gitOpen, treeOpen: false });
         },
         children: jsxRuntime.jsx(BranchIcon, {}),
@@ -2524,20 +2538,32 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [domainValue, setDomainValue] = react.useState("");
       const [domainTouched, setDomainTouched] = react.useState(false);
       const [domainSaving, setDomainSaving] = react.useState(false);
-      // 网关启停开关（写 settings 的 phoneGatewayOn；宿主 onChange 热同步启停）
+      // 网关启停开关（POST /dsh-kit/phone/gateway；状态文件直管，不经 settings）
       const [gateBusy, setGateBusy] = react.useState(false);
       const toggleGateway = async (next) => {
-        if (!cfgScope || gateBusy) return;
+        if (gateBusy) return;
         setGateBusy(true);
         try {
-          await cfgScope.set("phoneGatewayOn", next);
-          // 宿主热同步有毫秒级延迟，稍候刷新状态与链接
-          setTimeout(() => {
-            fetchPhoneInfo(new AbortController().signal).then(setInfo).catch(() => {});
-            if (next) fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
-          }, 400);
+          const res = await fetch("/dsh-kit/phone/gateway", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ on: next }),
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || !body || typeof body.gatewayOn !== "boolean") throw new Error(`HTTP ${res.status}`);
+          // 以端点回包为准更新状态（不依赖 settings 读取器，无滞后）
+          setInfo((info) =>
+            info === null
+              ? info
+              : { ...info, gatewayOn: body.gatewayOn, running: body.running === true, error: body.error ?? null },
+          );
+          if (body.gatewayOn && body.running) {
+            fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
+          } else {
+            setLinkData(null);
+          }
         } catch {
-          // 写入失败：以下一次 info 刷新为准
+          // 失败保持原状：下一次 info 刷新为准
         }
         setGateBusy(false);
       };
@@ -2790,12 +2816,18 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         if (!slotsCtx || (!ui.treeOpen && !ui.gitOpen)) return undefined;
         let dispose;
         try {
-          // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）
-          dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) =>
-            ui.gitOpen
+          // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）。
+          // owner 携带官方注入的 wide（侧边栏是否展开）与 expandSidebar 回调：
+          // ①宽态正常渲染面板；②收起态不渲染内容（用户定稿：收起不需要占位，
+          // 也不把树/SCM 挤进铁轨）；③把回调存到模块级，打开动作优先走它自动展开。
+          dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) => {
+            const side = owner ?? {};
+            sidebarExpandRef.current = typeof side.expandSidebar === "function" ? side.expandSidebar : null;
+            if (side.wide === false) return null;
+            return ui.gitOpen
               ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "scm" }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree" }), ...owner }),
-          );
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree" }), ...owner });
+          });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
           setKitUi({ treeOpen: false, gitOpen: false, openFile: null });
@@ -2845,7 +2877,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             e.stopPropagation();
             // Ctrl+E 只管文件树：非文件树态 → 打开（展开侧边栏）；已是 → 关闭回会话列表
             //（关闭保留文件预览）
-            if (!kitUi.treeOpen) ensureSidebarExpanded();
+            if (!kitUi.treeOpen) expandSidebarNow();
             setKitUi({ treeOpen: !kitUi.treeOpen, gitOpen: false });
             return;
           }
@@ -2853,11 +2885,11 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             e.preventDefault();
             e.stopPropagation();
             // 源代码管理同语义：非 SCM 态 → 打开（展开侧边栏）；已是 → 关闭回会话列表
-            if (!kitUi.gitOpen) ensureSidebarExpanded();
+            if (!kitUi.gitOpen) expandSidebarNow();
             setKitUi({ gitOpen: !kitUi.gitOpen, treeOpen: false });
             return;
           }
-          if (sidebarCombo && comboMatches(e, sidebarCombo)) {
+          if (sidebarCombo && cfg.sidebarShortcutEnabled !== false && comboMatches(e, sidebarCombo)) {
             e.preventDefault();
             e.stopPropagation();
             toggleSidebar();
@@ -2874,7 +2906,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return () => window.removeEventListener("keydown", onKey, true);
         // cwd 必须在依赖里：否则闭包缓存首帧（会话未水化时为 null）的工作区，
         // 之后按快捷键开终端永远绑到 null
-      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut, cfg.sidebarShortcut]);
+      }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut, cfg.sidebarShortcut, cfg.sidebarShortcutEnabled]);
 
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
@@ -3281,6 +3313,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "searchEnabled", kind: "bool" },
       { key: "phoneEnabled", kind: "bool" },
+      { key: "sidebarShortcutEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
       { key: "scShortcut", kind: "combo" },
@@ -3290,7 +3323,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // 组顺序：文件树 → 源代码管理 → 终端 → 技能页 → 网页搜索 → 手机访问（用户定稿
     // 放最下）。远程域名不在此卡——编辑入口在「手机访问」页面内（PhoneSection）。
     const CFG_GROUPS = [
-      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut", "sidebarShortcut"] },
+      { switchKey: "sidebarShortcutEnabled", fields: ["sidebarShortcut"] },
+      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },

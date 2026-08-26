@@ -95,19 +95,22 @@ function resolveLang(ext) {
   try { return [factory()]; } catch { return []; }
 }
 
-/** 创建编辑器实例。返回句柄供宿主薄层调用。 */
+/** 创建编辑器实例。返回句柄供宿主薄层调用。未知扩展名（txt/ini/log 等）
+ *  自动换行——不产生横向滚动条，观感与旧纯文本预览一致；带语言的代码文件
+ *  保持不换行（横向滚动条由宿主 CSS 钉底）。 */
 function create(container, opts) {
   const o = opts || {};
   const langComp = new Compartment();
   const roComp = new Compartment();
   let onChangeCb = null;
+  const langs = resolveLang(o.language);
   const view = new EditorView({
     state: EditorState.create({
       doc: String(o.doc ?? ""),
       extensions: [
         basicSetup,
         syntaxHighlighting(kitHighlight),
-        langComp.of(resolveLang(o.language)),
+        langComp.of(langs.length > 0 ? langs : [EditorView.lineWrapping]),
         roComp.of(o.readOnly ? EditorView.editable.of(false) : []),
         EditorView.updateListener.of((u) => {
           if (u.docChanged && typeof onChangeCb === "function") onChangeCb(view.state.doc.toString());
