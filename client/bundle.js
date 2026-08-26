@@ -228,6 +228,8 @@ window.__ModuleLoader__.load({
       contentClose: "关闭预览",
       toDiff: "切换到 diff 视图",
       toText: "切换到原文视图",
+      toMdView: "切换到渲染视图",
+      toMdSource: "切换到源码",
       edit: "编辑",
       editSave: "保存",
       editCancel: "取消",
@@ -378,6 +380,8 @@ window.__ModuleLoader__.load({
       contentClose: "Close preview",
       toDiff: "Switch to diff view",
       toText: "Switch to plain view",
+      toMdView: "Switch to rendered view",
+      toMdSource: "Switch to source",
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
@@ -688,6 +692,28 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 /* 轻提示（双击复制路径等的单例浮层） */
 .dshk-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%) translateY(8px);z-index:950;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1;padding:8px 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);box-shadow:0 4px 16px rgba(0,0,0,.12);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out),transform .15s var(--ds-ease-in-out)}
 .dshk-toast[data-show]{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 预览 Markdown 渲染视图 */
+.dshk-md{flex:1;min-height:0;overflow:auto;padding:12px 16px;font-size:13px;line-height:1.7;color:var(--dsw-alias-label-primary);user-select:text}
+.dshk-md h1,.dshk-md h2,.dshk-md h3,.dshk-md h4{margin:1.2em 0 .5em;line-height:1.3}
+.dshk-md h1{font-size:1.5em}.dshk-md h2{font-size:1.3em}.dshk-md h3{font-size:1.15em}
+.dshk-md p{margin:.6em 0}
+.dshk-md ul,.dshk-md ol{margin:.6em 0;padding-left:1.5em}
+.dshk-md code{font-family:ui-monospace,Consolas,monospace;font-size:.92em;background:var(--dsw-alias-bg-layer-3);border-radius:4px;padding:.15em .35em}
+.dshk-md pre{background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:10px 12px;overflow:auto}
+.dshk-md pre code{background:none;padding:0}
+.dshk-md blockquote{margin:.6em 0;padding:2px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
+.dshk-md table{border-collapse:collapse;margin:.6em 0;font-size:12px}
+.dshk-md th,.dshk-md td{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px;text-align:left}
+.dshk-md img{max-width:100%}
+.dshk-md hr{border:none;border-top:1px solid var(--dsw-alias-border-l2);margin:1em 0}
+.dshk-md a{color:var(--dsw-alias-brand-primary)}
+/* CodeMirror 宿主与语法配色令牌（明暗两套，随 data-ds-dark-theme） */
+.dshk-cm-host{flex:1;min-height:0;display:flex}
+.dshk-cm-host .cm-editor{flex:1;min-width:0;height:100%;background:var(--dsw-alias-bg-base)}
+.dshk-cm-host .cm-scroller{overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55}
+.dshk-cm-scope{--dshk-tok-keyword:#953800;--dshk-tok-string:#0a3069;--dshk-tok-comment:#697077;--dshk-tok-number:#0550ae;--dshk-tok-fn:#8250df;--dshk-tok-type:#0550ae;--dshk-tok-operator:#953800;--dshk-tok-meta:#6639ba;--dshk-tok-link:#0550ae;--dshk-tok-heading:#0550ae}
+body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-string:#a5d6ff;--dshk-tok-comment:#8b949e;--dshk-tok-number:#79c0ff;--dshk-tok-fn:#d2a8ff;--dshk-tok-type:#ffa657;--dshk-tok-operator:#ff7b72;--dshk-tok-meta:#79c0ff;--dshk-tok-link:#a5d6ff;--dshk-tok-heading:#f0883e}
+.dshk-editarea.dshk-cm-host{min-height:280px}
 /* git 状态徽标与 diff 着色 */
 .dshk-gitbadge{flex:none;margin-left:auto;font-size:10px;line-height:14px;padding:0 5px;border-radius:6px;font-family:ui-monospace,Consolas,monospace;border:1px solid currentColor}
 .dshk-gitbadge[data-k="U"]{color:#73c991}
@@ -762,6 +788,23 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
         s.onerror = () => reject(new Error("load failed: " + src));
         document.head.appendChild(s);
       });
+    }
+    /** 预览增强库按需加载：md 渲染（marked+DOMPurify）/ 代码读写（CodeMirror 6）。
+     *  全部走 /dsh-kit/vendor/*，不打开对应文件类型就一个字节都不下载。 */
+    function ensureMdLibs() {
+      const jobs = [];
+      if (typeof window.marked === "undefined") jobs.push(loadScript("/dsh-kit/vendor/marked.min.js"));
+      if (typeof window.DOMPurify === "undefined") jobs.push(loadScript("/dsh-kit/vendor/purify.min.js"));
+      return Promise.all(jobs);
+    }
+    function ensureCmLib() {
+      return typeof window.CM6 === "object" && window.CM6 !== null
+        ? Promise.resolve()
+        : loadScript("/dsh-kit/vendor/codemirror.bundle.js");
+    }
+    function extOf(p) {
+      const m = /\.([a-z0-9]+)$/i.exec(String(p ?? ""));
+      return m ? m[1].toLowerCase() : "";
     }
     let vendorPromise = null;
     /** 官方预编译 UMD：xterm.js → window.Terminal；addon-fit.js → window.FitAddon.FitAddon */
@@ -1960,6 +2003,17 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       // 拖过的宽度（px）；0 = 未拖过，用 CSS fallback 默认宽度
       const widthRef = react.useRef(0);
       const dragRef = react.useRef(null);
+      // 预览增强：md 渲染 + CodeMirror 读写高亮。库懒加载；mdRaw=false 且非编辑时
+      // .md 默认渲染视图，切「源码」或进编辑都是纯文本/CM。
+      const [cmReady, setCmReady] = react.useState(false);
+      const [mdRaw, setMdRaw] = react.useState(false);
+      const [mdHtml, setMdHtml] = react.useState(null);
+      const readHostRef = react.useRef(null);
+      const editHostRef = react.useRef(null);
+      react.useEffect(() => {
+        ensureCmLib().then(() => setCmReady(true)).catch(() => {});
+        return undefined;
+      }, []);
 
       // diff 拉取（静默版）：已有内容时后台更新不闪「加载中」，数据到位再整体替换
       const diffFetchRef = react.useRef(null);
@@ -2069,6 +2123,49 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
       const base = path.split(/[\\/]/).pop() || path;
       const displayPath = cwd && path.startsWith(cwd) ? path.slice(cwd.length).replace(/^[\\/]/, "") : path;
 
+      // ── md 渲染 + CM 只读/编辑挂载（依赖就绪后接管对应宿主 div）──
+      const isMd = /\.(md|markdown)$/i.test(path);
+      const ready = state.phase === "ready" && state.body && !state.body.binary && state.body.content !== null;
+      const mdActive = isMd && mode === "text" && !editing && !mdRaw && ready;
+      react.useEffect(() => {
+        if (!mdActive) {
+          setMdHtml(null);
+          return undefined;
+        }
+        let alive = true;
+        ensureMdLibs()
+          .then(() => {
+            if (!alive) return null;
+            const raw = window.marked.parse(state.body.content ?? "", { async: false, gfm: true, breaks: true });
+            return window.DOMPurify.sanitize(String(raw));
+          })
+          .then((html) => {
+            if (alive) setMdHtml(typeof html === "string" ? html : "");
+          })
+          .catch(() => {
+            if (alive) setMdHtml("");
+          });
+        return () => {
+          alive = false;
+        };
+      }, [mdActive, state.body?.content]);
+      // 只读视图：文本类文件统一交给 CM（只读实例）；md 渲染态不挂
+      react.useEffect(() => {
+        const host = readHostRef.current;
+        if (!cmReady || !host || mode !== "text" || editing || mdActive) return undefined;
+        if (!ready) return undefined;
+        const h = window.CM6.create(host, { doc: state.body.content ?? "", readOnly: true, language: extOf(path) });
+        return () => h.destroy();
+      }, [cmReady, mode, editing, mdActive, path, ready, state.body?.content]);
+      // 编辑视图：CM 可编辑实例，文档变更回写 draft（保存/未保存判定全部沿用 draft）
+      react.useEffect(() => {
+        const host = editHostRef.current;
+        if (!cmReady || !editing || !host) return undefined;
+        const h = window.CM6.create(host, { doc: draft, readOnly: false, language: extOf(path) });
+        h.onDocChanged((text) => setDraft(text));
+        return () => h.destroy();
+      }, [cmReady, editing, path]);
+
       /** diff 视图：优先全文件着色（hunk 套回完整内容，删除红/新增绿）；
        *  截断大文件或 hunk 对不上时回退原始 patch 渲染 */
       const renderDiffView = () => {
@@ -2137,12 +2234,14 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
                   : null,
               ],
             }),
-            jsxRuntime.jsx("textarea", {
-              className: "dshk-editarea",
-              value: draft,
-              spellCheck: false,
-              onChange: (e) => setDraft(e.target.value),
-            }),
+            cmReady
+              ? jsxRuntime.jsx("div", { className: "dshk-editarea dshk-cm-host", ref: editHostRef })
+              : jsxRuntime.jsx("textarea", {
+                  className: "dshk-editarea",
+                  value: draft,
+                  spellCheck: false,
+                  onChange: (e) => setDraft(e.target.value),
+                }),
           ],
         });
 
@@ -2198,7 +2297,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
             className: "dshk-pane-body",
             children: [
               b.truncated ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentTruncated") }) : null,
-              jsxRuntime.jsx("pre", { className: "dshk-pane-pre", children: b.content }),
+              mdActive
+                ? mdHtml === null
+                  ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
+                  : jsxRuntime.jsx("div", { className: "dshk-md", dangerouslySetInnerHTML: { __html: mdHtml } })
+                : cmReady
+                  ? jsxRuntime.jsx("div", { className: "dshk-cm-host", ref: readHostRef })
+                  : jsxRuntime.jsx("pre", { className: "dshk-pane-pre", children: b.content }),
             ],
           });
         }
@@ -2218,6 +2323,16 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
+              // .md 只读：渲染视图 ⇄ 源码（进编辑恒为源码）
+              state.phase === "ready" && state.body && !state.body.binary && isMd && !editing && mode === "text"
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t(mdRaw ? "toMdView" : "toMdSource"),
+                    onClick: () => setMdRaw((v) => !v),
+                    children: mdRaw ? "MD" : "</>",
+                  })
+                : null,
               // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）
               !editing
                 ? jsxRuntime.jsx("button", {

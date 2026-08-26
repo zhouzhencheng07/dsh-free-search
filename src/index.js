@@ -273,6 +273,9 @@ const VENDOR_FILES = new Map([
   ['/dsh-kit/vendor/addon-fit.js', 'addon-fit.js'],
   ['/dsh-kit/vendor/xterm.css', 'xterm.css'],
   ['/dsh-kit/vendor/qrcode.js', 'qrcode.js'],
+  ['/dsh-kit/vendor/marked.min.js', 'marked.min.js'],
+  ['/dsh-kit/vendor/purify.min.js', 'purify.min.js'],
+  ['/dsh-kit/vendor/codemirror.bundle.js', 'codemirror.bundle.js'],
 ])
 const VENDOR_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
