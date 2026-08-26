@@ -311,6 +311,7 @@ export function apply(ctx) {
       // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
       phoneEnabled: z.boolean().default(false),
       phoneRemoteDomain: z.string().default(''),
+      jobsEnabled: z.boolean().default(true),
       sidebarShortcut: z.string().default('Ctrl+B'),
       sidebarShortcutEnabled: z.boolean().default(true),
       terminalShortcut: z.string().default('Ctrl+/'),
@@ -334,6 +335,18 @@ export function apply(ctx) {
     skillsRegistry = skillsCtx.skills
   })
   applySkillPool(ctx, { getRegistry: () => skillsRegistry })
+
+  // 后台任务控制（实现见下）：浏览器半边「任务」面板的结束/读输出走这里。
+  // jobs 注册表（dsh-jobs-local）与 agents 注册表（dsh-agent）都是宿主组合里的
+  // 可选服务，分开注入捕获引用；缺失时对应端点返回 503（面板隐藏对应能力）。
+  let jobsRegistry = null
+  ctx.inject(['jobs'], (capacityCtx) => {
+    jobsRegistry = capacityCtx.jobs
+  })
+  let agentsRegistry = null
+  ctx.inject(['agents'], (capacityCtx) => {
+    agentsRegistry = capacityCtx.agents
+  })
 
   // webServer 可能在本插件 apply 之后才挂载，用动态注入等它就绪
   ctx.inject(['webServer'], (webCtx) => {
@@ -1369,6 +1382,123 @@ export function apply(ctx) {
         },
       })
 
+      // ── 后台任务控制端点 ──
+      // 浏览器半边「任务」面板（运行中任务 + 结束 + 输出）的数据源是官方
+      // session/jobs 推送（只带元数据，无输出正文）；这里补两个操作口：
+      //   1) POST /dsh-kit/jobs/kill    body {sessionId, jobId} —— 结束任务
+      //   2) GET  /dsh-kit/jobs/output?sessionId=&jobId= —— 增量读输出
+      // 权限对齐官方 job_kill/job_output 工具：caller 必须是任务所属 session 的
+      // agent（jobs-local assertAccess 校验 owner.id === caller.id），做不到的
+      // 请求（跨会话/未知任务）抛错 → 404/403。jobs 服务缺失（宿主组合没挂
+      // dsh-jobs-local）时能力整体不可用，返回 503。
+      const disposeJobsKill = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/jobs/kill',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'POST') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          if (req.headers.origin !== undefined && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          let raw = ''
+          req.on('data', (c) => { raw += c.toString('utf8') })
+          req.on('end', () => {
+            let body
+            try {
+              body = JSON.parse(raw || '{}')
+            } catch {
+              json(400, { error: 'bad json' })
+              return
+            }
+            const sessionId = String(body?.sessionId ?? '')
+            const jobId = String(body?.jobId ?? '')
+            if (sessionId === '' || jobId === '') {
+              json(400, { error: '需要 sessionId 与 jobId' })
+              return
+            }
+            if (!jobsRegistry || !agentsRegistry) {
+              json(503, { error: '后台任务能力不可用（jobs/agents 服务缺失）' })
+              return
+            }
+            const caller = agentsRegistry.get(sessionId)
+            if (!caller) {
+              json(404, { error: '会话不存在（本任务面板只操作当前会话的后台任务）' })
+              return
+            }
+            try {
+              const outcome = jobsRegistry.kill(jobId, caller, 'user requested via task panel')
+              json(200, {
+                outcome: outcome === 'already-finished' ? 'already-finished' : 'cancellation-requested',
+                jobId,
+              })
+            } catch (error) {
+              json(404, { error: String(error?.message ?? error) })
+            }
+          })
+        },
+      })
+      const disposeJobsOutput = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/jobs/output',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const sessionId = url.searchParams.get('sessionId') ?? ''
+          const jobId = url.searchParams.get('jobId') ?? ''
+          if (sessionId === '' || jobId === '') {
+            json(400, { error: '需要 sessionId 与 jobId' })
+            return
+          }
+          if (!jobsRegistry || !agentsRegistry) {
+            json(503, { error: '后台任务能力不可用（jobs/agents 服务缺失）' })
+            return
+          }
+          const caller = agentsRegistry.get(sessionId)
+          if (!caller) {
+            json(404, { error: '会话不存在（本任务面板只操作当前会话的后台任务）' })
+            return
+          }
+          try {
+            // read 返回增量（自上次读取以来），与 job_output 工具共享同一游标；
+            // 快照里的 status/detail 用于前端判断终态与停止轮询。
+            const read = jobsRegistry.read(jobId, caller)
+            json(200, {
+              text: read.text,
+              job: {
+                id: read.snapshot.id,
+                kind: read.snapshot.kind,
+                label: read.snapshot.label,
+                status: read.snapshot.status,
+                ...(read.snapshot.detail !== undefined ? { detail: read.snapshot.detail } : {}),
+                startedAt: read.snapshot.startedAt,
+                ...(read.snapshot.finishedAt !== undefined ? { finishedAt: read.snapshot.finishedAt } : {}),
+              },
+            })
+          } catch (error) {
+            json(404, { error: String(error?.message ?? error) })
+          }
+        },
+      })
+
       return () => {
         disposeVendor()
         disposeTree()
@@ -1385,6 +1515,8 @@ export function apply(ctx) {
         disposePhoneLink()
         disposePhoneRotate()
         disposePhoneGateway()
+        disposeJobsKill()
+        disposeJobsOutput()
         if (phoneGw) phoneGw.close()
       }
     }, 'dsh-kit: terminal/vendor/tree/read/write/fs-op/git/phone endpoints')

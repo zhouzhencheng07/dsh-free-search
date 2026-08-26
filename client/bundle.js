@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false };
+    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -101,6 +101,7 @@ window.__ModuleLoader__.load({
       searchEnabled: true,
       phoneEnabled: false,
       phoneRemoteDomain: "",
+      jobsEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+Alt+.",
@@ -160,6 +161,7 @@ window.__ModuleLoader__.load({
         searchEnabled: v.searchEnabled !== false,
         phoneEnabled: v.phoneEnabled === true,
         phoneRemoteDomain: typeof v.phoneRemoteDomain === "string" ? v.phoneRemoteDomain : "",
+        jobsEnabled: v.jobsEnabled !== false,
         terminalShortcut:
           typeof v.terminalShortcut === "string" && parseCombo(v.terminalShortcut)
             ? v.terminalShortcut
@@ -297,6 +299,8 @@ window.__ModuleLoader__.load({
       cfgSearchEnabledHint: "免费多源搜索（free-search）。关闭后 AI 的 web_search 走官方默认渠道；变更重启后生效。",
       cfgPhoneEnabled: "显示「手机访问」页",
       cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
+      cfgJobsEnabled: "启用后台任务面板",
+      cfgJobsEnabledHint: "输入框旁的任务按钮：查看运行中的后台任务、实时输出，并可一键结束。",
       phoneGateLabel: "启动网关（需要时开启；链接与令牌随之生成）",
       phoneGateStart: "启动网关",
       phoneGateStop: "关闭网关",
@@ -315,6 +319,23 @@ window.__ModuleLoader__.load({
       phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
       phoneCopy: "复制",
       phoneCopied: "已复制",
+      jobsTitle: "后台任务",
+      jobsEmpty: "没有运行中的后台任务。",
+      jobsStatusRunning: "运行中",
+      jobsStatusStopping: "停止中",
+      jobsStatusCompleted: "已完成",
+      jobsStatusKilled: "已结束",
+      jobsStatusFailed: "失败",
+      jobsDuration: "已运行 {duration}",
+      jobsKill: "结束",
+      jobsKillHint: "结束此任务（等同 job_kill）",
+      jobsKillDone: "已请求结束",
+      jobsKillFail: "结束失败：{error}",
+      jobsClose: "关闭任务面板",
+      jobsOutput: "输出",
+      jobsOutputHint: "查看此任务的实时输出（与 job_output 共享读取游标）",
+      jobsOutputEmpty: "（暂无输出）",
+      jobsOutputTransient: "输出读取失败：{error}",
       cfgTerminalShortcut: "终端快捷键",
       cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
@@ -450,6 +471,8 @@ window.__ModuleLoader__.load({
       cfgSearchEnabledHint: "Free multi-source web search (free-search). When off, the agent's web_search uses the official default channel; changes apply after restart.",
       cfgPhoneEnabled: "Show phone access page",
       cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
+      cfgJobsEnabled: "Enable background jobs panel",
+      cfgJobsEnabledHint: "Task button next to the composer: watch running background jobs, live output, and stop them with one click.",
       phoneGateLabel: "Start gateway (on demand; links are generated with it)",
       phoneGateStart: "Start gateway",
       phoneGateStop: "Stop gateway",
@@ -492,6 +515,23 @@ window.__ModuleLoader__.load({
       phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
       phoneCopy: "Copy",
       phoneCopied: "Copied",
+      jobsTitle: "Background jobs",
+      jobsEmpty: "No running background jobs.",
+      jobsStatusRunning: "running",
+      jobsStatusStopping: "stopping",
+      jobsStatusCompleted: "completed",
+      jobsStatusKilled: "cancelled",
+      jobsStatusFailed: "failed",
+      jobsDuration: "Running for {duration}",
+      jobsKill: "Stop",
+      jobsKillHint: "Stop this job (same as job_kill)",
+      jobsKillDone: "Stop requested",
+      jobsKillFail: "Failed to stop: {error}",
+      jobsClose: "Close tasks panel",
+      jobsOutput: "Output",
+      jobsOutputHint: "View live output (shares the read cursor with job_output)",
+      jobsOutputEmpty: "(no output yet)",
+      jobsOutputTransient: "Failed to read output: {error}",
     };
     const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
     const t = (key) => lang[key] ?? key;
@@ -693,6 +733,28 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-gatebtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-phone-gatebtn[disabled]{opacity:.5;cursor:default}
 .dshk-phone-gatebtn-stop{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
+/* 后台任务面板（任务按钮 + 居中浮层）。点击遮罩收起（kn应行为同 terminal 坞） */
+.dshk-jobs-mask{position:fixed;inset:0;z-index:840;background:rgba(0,0,0,.28);pointer-events:auto}
+.dshk-jobs-pop{position:fixed;z-index:850;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 32px));max-height:min(520px,calc(100vh - 48px));display:flex;flex-direction:column;background:var(--dsw-specific-menu,var(--dsw-alias-bg-base));border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:var(--dsw-shadow-lv3,0 6px 20px rgba(0,0,0,.14));padding:4px;overflow:hidden;pointer-events:auto}
+.dshk-jobs-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px 8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dshk-jobs-headside{display:flex;align-items:center;gap:6px}
+.dshk-jobs-count{font-weight:400;color:var(--dsw-alias-label-tertiary);font-size:11px}
+.dshk-jobs-close{appearance:none;border:1px solid transparent;background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;width:22px;height:22px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.dshk-jobs-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshk-jobs-list{display:flex;flex-direction:column;gap:1px;overflow:auto;padding:0 2px 2px}
+.dshk-jobs-row{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border-radius:8px;background:var(--dsw-alias-fill-l2,transparent)}
+.dshk-jobs-row[data-live="true"]{background:var(--dsw-alias-interactive-bg-hover,transparent)}
+.dshk-jobs-rowline{display:flex;align-items:center;gap:8px;min-width:0}
+.dshk-jobs-kind{flex:none;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);border-radius:5px;padding:0 6px;font-size:11px;line-height:18px}
+.dshk-jobs-label{flex:1;min-width:0;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.dshk-jobs-status{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dshk-jobs-actions{display:flex;align-items:center;gap:6px;flex:none}
+.dshk-jobs-btn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1;padding:4px 9px;border-radius:6px;cursor:pointer}
+.dshk-jobs-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-jobs-btn:disabled{opacity:.5;cursor:default}
+.dshk-jobs-btn-kill{border-color:color-mix(in srgb,var(--dsw-alias-danger,#cd3131) 45%,transparent);color:var(--dsw-alias-danger,#cd3131)}
+.dshk-jobs-output{margin-top:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto;user-select:text}
+.dshk-jobs-empty{padding:10px 8px;font-size:12px;color:var(--dsw-alias-label-tertiary);text-align:center}
 /* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
    类名是前端构建哈希（_3e4SsG_*），升级换哈希后本段静默失效——需跟随维护。 */
 @media (hover: none) {
@@ -1344,6 +1406,29 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             jsxRuntime.jsx("path", { d: "M2 4.5h12v8H2z" }),
             jsxRuntime.jsx("path", { d: "M4.4 7.2l1.8 1.3-1.8 1.3" }),
             jsxRuntime.jsx("path", { d: "M8.5 9.3h2.6" }),
+          ],
+        },
+      );
+    }
+
+    /** 后台任务图标：正方形框（用户定稿：任务标记用方框，不要待办清单样式）。
+    外框圆角方 + 顶部短横线（窗口/任务语义），与终端描边体系一致 */
+    function JobsIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("rect", { x: 3.2, y: 3.2, width: 9.6, height: 9.6, rx: 1.6 }),
+            jsxRuntime.jsx("path", { d: "M5.4 6.3h5.2" }),
           ],
         },
       );
@@ -2744,6 +2829,238 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       });
     }
 
+    // ─────────── 后台任务面板 ───────────
+    // 入口按钮（conversation.input.left）只负责开合；面板本体由 KitSurfaces 在
+    // shell.overlay 渲染（.dshk-jobs-pop 右上角浮层）。任务数据源与官方
+    // JobListAction 相同——useSessions 的 jobsBySession（session/jobs 推送）。
+    // 「结束」与「输出」走 dsh-kit 宿主端点（/dsh-kit/jobs/kill|output，权限按
+    // session 隔离，与 job_kill/job_output 同一套 caller 语义）。
+    function JobsEntry(props) {
+      const ui = useKitUi();
+      const useSessions = props && typeof props.useSessions === "function" ? props.useSessions : null;
+      const current = useSessions ? useSessions((s) => s.current) : undefined;
+      const jobs = useSessions ? useSessions((s) => (current ? s.jobsBySession[current] : undefined)) : undefined;
+      const live = Array.isArray(jobs) ? jobs.filter((j) => j.status === "running" || j.status === "stopping") : [];
+      const on = ui.jobsOpen;
+      return jsxRuntime.jsxs("button", {
+        type: "button",
+        className: "dshk-btn dshk-enbtn",
+        "aria-pressed": on,
+        title: live.length > 0 ? `${t("jobsTitle")} (${live.length})` : t("jobsTitle"),
+        onClick: () => setKitUi({ jobsOpen: !on }),
+        children: [
+          jsxRuntime.jsx(JobsIcon, {}),
+          live.length > 0
+            ? jsxRuntime.jsx("span", { className: "dshk-term-badge", "aria-hidden": true, children: String(live.length) })
+            : null,
+        ],
+      });
+    }
+
+    /** 任务时长：中文「x分y秒」/ 英文 "x m y s"，秒级取整 */
+    function fmtJobDuration(ms) {
+      const total = Math.max(0, Math.floor(ms / 1000));
+      const seconds = total % 60;
+      const minutes = Math.floor(total / 60) % 60;
+      const hours = Math.floor(total / 3600);
+      const zhLang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "");
+      if (hours > 0) return zhLang ? `${hours}小时${minutes}分` : `${hours}h ${minutes}m`;
+      if (minutes > 0) return zhLang ? `${minutes}分${seconds}秒` : `${minutes}m ${seconds}s`;
+      return zhLang ? `${seconds}秒` : `${seconds}s`;
+    }
+
+    function JobsPanel(props) {
+      const useSessions = props && typeof props.useSessions === "function" ? props.useSessions : null;
+      const current = useSessions ? useSessions((s) => s.current) : undefined;
+      const jobs = useSessions ? useSessions((s) => (current ? s.jobsBySession[current] : undefined)) : undefined;
+      const live = Array.isArray(jobs) ? jobs.filter((j) => j.status === "running" || j.status === "stopping") : [];
+      const [expandedId, setExpandedId] = react.useState(null);
+      const [outputs, setOutputs] = react.useState({});
+      const [killing, setKilling] = react.useState(null);
+      const [now, setNow] = react.useState(() => Date.now());
+
+      // 时长随秒更新（有 live 任务才计时）
+      react.useEffect(() => {
+        if (live.length === 0) return undefined;
+        setNow(Date.now());
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+      }, [live.length]);
+
+      // 输出增量轮询：展开且任务仍 live 时每秒拉一次；拉到终态即停。
+      // 注意 read 与 job_output 共享读取游标——面板打开期间模型侧读到的是
+      // 面板尚未读走的增量（官方语义，无法并行两份）。
+      react.useEffect(() => {
+        if (!expandedId || !current) return undefined;
+        let disposed = false;
+        let timer = null;
+        const load = () => {
+          fetch(
+            `/dsh-kit/jobs/output?sessionId=${encodeURIComponent(current)}&jobId=${encodeURIComponent(expandedId)}`,
+          )
+            .then((res) => res.json().catch(() => null))
+            .then((body) => {
+              if (disposed) return;
+              if (!body || !body.job) {
+                setOutputs((prev) => ({ ...prev, [expandedId]: { text: "", error: "HTTP" } }));
+                return;
+              }
+              setOutputs((prev) => ({
+                ...prev,
+                [expandedId]: {
+                  text: (prev[expandedId]?.text ?? "") + (typeof body.text === "string" ? body.text : ""),
+                  error: null,
+                },
+              }));
+              const done = body.job.status === "completed" || body.job.status === "killed" || body.job.status === "failed";
+              if (done && timer !== null) clearInterval(timer);
+            })
+            .catch(() => {
+              if (!disposed) setOutputs((prev) => ({ ...prev, [expandedId]: { text: prev[expandedId]?.text ?? "", error: "network" } }));
+            });
+        };
+        load();
+        timer = setInterval(load, 1000);
+        return () => {
+          disposed = true;
+          if (timer !== null) clearInterval(timer);
+        };
+      }, [expandedId, current]);
+
+      const killJob = async (job) => {
+        setKilling(job.id);
+        try {
+          const res = await fetch("/dsh-kit/jobs/kill", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sessionId: current, jobId: job.id }),
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+          flashToast(t("jobsKillDone"));
+          if (expandedId === job.id) setExpandedId(null);
+        } catch (error) {
+          flashToast(tf("jobsKillFail", { error: String(error?.message ?? error) }));
+        } finally {
+          setKilling(null);
+        }
+      };
+
+      const statusWord = (job) => {
+        switch (job.status) {
+          case "running": return t("jobsStatusRunning");
+          case "stopping": return t("jobsStatusStopping");
+          case "completed": return t("jobsStatusCompleted");
+          case "killed": return t("jobsStatusKilled");
+          case "failed": return t("jobsStatusFailed");
+          default: return job.status;
+        }
+      };
+
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
+        children: [
+          jsxRuntime.jsx("div", { className: "dshk-jobs-mask", onClick: () => setKitUi({ jobsOpen: false }) }),
+          jsxRuntime.jsxs("div", {
+            className: "dshk-jobs-pop",
+            role: "dialog",
+            "aria-label": t("jobsTitle"),
+        children: [
+          jsxRuntime.jsxs("div", {
+            className: "dshk-jobs-head",
+            children: [
+              jsxRuntime.jsxs("span", {
+                className: "dshk-jobs-headside",
+                children: [
+                  jsxRuntime.jsx("span", { children: t("jobsTitle") }),
+                  jsxRuntime.jsx("span", { className: "dshk-jobs-count", children: String(live.length) }),
+                ],
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-jobs-close",
+                "aria-label": t("jobsClose"),
+                title: t("jobsClose"),
+                onClick: () => setKitUi({ jobsOpen: false }),
+                children: "\u2715",
+              }),
+            ],
+          }),
+          live.length === 0
+            ? jsxRuntime.jsx("div", { className: "dshk-jobs-empty", children: t("jobsEmpty") })
+            : jsxRuntime.jsx("div", {
+                className: "dshk-jobs-list",
+                children: live.map((job) => {
+                  const isExpanded = expandedId === job.id;
+                  const out = outputs[job.id];
+                  const stopBusy = killing === job.id || job.status === "stopping";
+                  return jsxRuntime.jsxs("div", {
+                    className: "dshk-jobs-row",
+                    "data-live": job.status === "running" || undefined,
+                    children: [
+                      jsxRuntime.jsxs("div", {
+                        className: "dshk-jobs-rowline",
+                        children: [
+                          jsxRuntime.jsx("span", { className: "dshk-jobs-kind", children: job.kind }),
+                          jsxRuntime.jsx("span", { className: "dshk-jobs-label", title: job.label, children: job.label }),
+                          jsxRuntime.jsx("span", {
+                            className: "dshk-jobs-status",
+                            title: job.detail ?? statusWord(job),
+                            children:
+                              job.status === "running" || job.status === "stopping"
+                                ? `${statusWord(job)} · ${tf("jobsDuration", { duration: fmtJobDuration(now - job.startedAt) })}`
+                                : statusWord(job),
+                          }),
+                          jsxRuntime.jsxs("span", {
+                            className: "dshk-jobs-actions",
+                            children: [
+                              jsxRuntime.jsx("button", {
+                                type: "button",
+                                className: "dshk-jobs-btn",
+                                disabled: stopBusy,
+                                title: t("jobsOutputHint"),
+                                onClick: () => {
+                                  if (isExpanded) {
+                                    setExpandedId(null);
+                                  } else {
+                                    setOutputs((prev) => ({ ...prev, [job.id]: { text: "", error: null } }));
+                                    setExpandedId(job.id);
+                                  }
+                                },
+                                children: t("jobsOutput"),
+                              }),
+                              jsxRuntime.jsx("button", {
+                                type: "button",
+                                className: "dshk-jobs-btn dshk-jobs-btn-kill",
+                                disabled: stopBusy,
+                                title: t("jobsKillHint"),
+                                onClick: () => killJob(job),
+                                children: t("jobsKill"),
+                              }),
+                            ],
+                          }),
+                        ],
+                      }),
+                      isExpanded
+                        ? jsxRuntime.jsx("div", {
+                            className: "dshk-jobs-output",
+                            children:
+                              out && out.error
+                                ? tf("jobsOutputTransient", { error: out.error })
+                                : out && out.text && out.text.length > 0
+                                  ? out.text
+                                  : t("jobsOutputEmpty"),
+                          })
+                        : null,
+                    ],
+                  }, job.id);
+                }),
+              }),
+        ],
+          }),
+        ],
+      });
+    }
+
     // ─────────── 面板宿主（shell.overlay 全帧浮层）───────────
     // 终端停靠面板与文件预览面板在这里渲染（fixed 定位不受 composer 祖先
     // stacking context 影响）；文件树的 sidebar.workspaces 动态注册、让位 body 类、
@@ -2761,14 +3078,16 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         if (!slotsCtx) return undefined;
         const handles = [];
         const want = [
-          // 输入框入口排序（左→右）：文件树、源代码管理、终端；手机访问与技能页
-          // 同类，走 settings.section 页面入口（order：技能 40 → 手机 45）
+          // 输入框入口排序（左→右）：文件树、源代码管理、后台任务、终端；手机访问与
+          // 技能页同类，走 settings.section 页面入口（order：技能 40 → 手机 45）
           ["filetree", cfg.fileTreeEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-filetree", order: 10 }, FileTreeEntry)],
           ["scm", cfg.sourceControlEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-scm", order: 11 }, ScmEntry)],
+          ["jobs", cfg.jobsEnabled, () =>
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-jobs", order: 12 }, JobsEntry)],
           ["terminal", cfg.terminalEnabled, () =>
-            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 12 }, TerminalEntry)],
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 13 }, TerminalEntry)],
           ["skills", cfg.skillsPageEnabled, () =>
             slotsCtx.slots.register(
               { name: "settings.section", id: "kit-skills", order: 40, label: () => t("skillsLabel") },
@@ -2797,7 +3116,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             }
           }
         };
-      }, [cfg.phoneEnabled, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.skillsPageEnabled]);
+      }, [cfg.phoneEnabled, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.skillsPageEnabled, cfg.jobsEnabled]);
 
       // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉；
       // 终端功能关闭 = 结束全部终端会话（连 WS 杀 pty，与单终端时代语义一致）
@@ -2807,7 +3126,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
         if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
         if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
-      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled]);
+        if (!cfg.jobsEnabled && ui.jobsOpen) setKitUi({ jobsOpen: false });
+      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.jobsEnabled]);
 
       // 侧边栏浏览区占用：文件树与「更改」视图互斥共享 sidebar.workspaces 单槽
       // （gitOpen 时切换到更改页，✕ 关闭回到仍处打开状态的文件树）。
@@ -2899,6 +3219,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             if (kitUi.openFile) setKitUi({ openFile: null, openFrom: null });
             else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
+            else if (kitUi.jobsOpen) setKitUi({ jobsOpen: false });
             else if (kitUi.termDockOpen) setKitUi({ termDockOpen: false }); // 只隐藏，不杀会话
           }
         };
@@ -2935,6 +3256,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 onClose: () => setKitUi({ openFile: null, openFrom: null }),
               })
             : null,
+          cfg.jobsEnabled && ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
         ],
       });
     }
@@ -3313,6 +3635,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "searchEnabled", kind: "bool" },
       { key: "phoneEnabled", kind: "bool" },
+      { key: "jobsEnabled", kind: "bool" },
       { key: "sidebarShortcutEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
@@ -3326,6 +3649,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { switchKey: "sidebarShortcutEnabled", fields: ["sidebarShortcut"] },
       { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
+      { switchKey: "jobsEnabled", fields: [] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
       { switchKey: "searchEnabled", fields: [] },

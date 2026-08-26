@@ -48,7 +48,7 @@ const windowStub = {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -58,7 +58,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -99,6 +99,36 @@ check("FileTreeEntry 渲染无异常", !!out && typeof out === "object");
 callLog = [];
 out = comps.ScmEntry({});
 check("ScmEntry 渲染无异常", !!out && typeof out === "object");
+// 7.1) 后台任务面板：无 hooks（jobsBySession 未达 → 空列表）与有任务两种
+callLog = [];
+out = comps.JobsEntry({});
+check("JobsEntry 无hooks渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.JobsPanel({});
+check("JobsPanel 无hooks渲染无异常(空列表)", !!out && typeof out === "object");
+const jobsHooks = {
+  useSessions: (sel) =>
+    sel({
+      current: "s1",
+      byId: { s1: { cwd: "C:/x" } },
+      jobsBySession: {
+        s1: [
+          { id: "pwsh-1", kind: "pwsh", label: "npm run dev", status: "running", startedAt: Date.now() - 30000 },
+          { id: "pwsh-2", kind: "pwsh", label: "frpc 隧道", status: "stopping", startedAt: Date.now() - 120000 },
+        ],
+      },
+    }),
+  useWorkspaces: () => undefined,
+};
+out = comps.JobsEntry(jobsHooks);
+check("JobsEntry 带运行中任务渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.JobsPanel(jobsHooks);
+check("JobsPanel 带运行中任务渲染无异常", !!out && typeof out === "object");
+comps.setKitUi({ jobsOpen: true });
+out = comps.KitSurfaces({ ...jobsHooks });
+check("KitSurfaces 带jobsOpen渲染无异常", !!out && typeof out === "object");
+comps.setKitUi({ jobsOpen: false });
 
 // 6.5) PhoneSection：数据未达（fetch/effect 被桩跳过 → 纯 loading 分支）
 callLog = [];
