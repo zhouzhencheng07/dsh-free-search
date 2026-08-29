@@ -762,14 +762,13 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-gatebtn[disabled]{opacity:.5;cursor:default}
 .dshk-phone-gatebtn-stop{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 /* 后台任务面板（任务按钮 + 居中浮层）。点击遮罩收起（kn应行为同 terminal 坞） */
-.dshk-jobs-mask{position:fixed;inset:0;z-index:840;background:rgba(0,0,0,.28);pointer-events:auto}
-.dshk-jobs-pop{position:fixed;z-index:850;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 32px));max-height:min(520px,calc(100vh - 48px));display:flex;flex-direction:column;background:var(--dsw-specific-menu,var(--dsw-alias-bg-base));border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:var(--dsw-shadow-lv3,0 6px 20px rgba(0,0,0,.14));padding:4px;overflow:hidden;pointer-events:auto}
-.dshk-jobs-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px 8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+/* 后台任务面板：右侧停靠（复用 .dshk-pane，与文件预览互斥共享停靠位） */
+.dshk-jobs-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
 .dshk-jobs-headside{display:flex;align-items:center;gap:6px}
 .dshk-jobs-count{font-weight:400;color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dshk-jobs-close{appearance:none;border:1px solid transparent;background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;width:22px;height:22px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 .dshk-jobs-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshk-jobs-list{display:flex;flex-direction:column;gap:1px;overflow:auto;padding:0 2px 2px}
+.dshk-jobs-list{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:1px;overflow:auto;padding:0 10px 10px}
 .dshk-jobs-row{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border-radius:8px;background:var(--dsw-alias-fill-l2,transparent)}
 .dshk-jobs-row[data-live="true"]{background:var(--dsw-alias-interactive-bg-hover,transparent)}
 .dshk-jobs-rowline{display:flex;align-items:center;gap:8px;min-width:0}
@@ -2686,12 +2685,11 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
     // ── 侧边栏兜底与快捷键 ──
     // 文件树/源代码管理视图承载在 sidebar.workspaces 里，侧边栏收起时只剩图标栏，
-    // 视图会挤进铁轨里很难看——所以：①打开动作走官方注入的 expandSidebar 回调
-    // 自动展开（拿不到再退回点击官方切换按钮）；②sidebar.workspaces 的 owner 带
-    // wide 标记，收起时不渲染内容（用户定稿：收起不显示，也无须占位提示）。
-    // 官方切换按钮恒在，aria-label 随状态变化：收起态是「打开侧边栏」/“Open
-    // sidebar”（注意关键字是「打开」不是「展开」，此前正则写错导致只能收不能开）。
-    let sidebarExpandRef = { current: null };
+    // 视图会挤进铁轨里很难看——所以打开动作做自动展开：状态探测官方切换按钮
+    // （aria-label 随状态变化，收起态是「打开侧边栏」/"Open sidebar"，注意关键字
+    // 是「打开」不是「展开」），只在收起态点击——幂等且方向安全。此前优先走官方
+    // 注入的 expandSidebar 回调，但该闭包捕获渲染时的 folded 状态且槽位注销后不再
+    // 刷新，残留宽态实例调用是空操作（收起后首次打开不展开的根因），已整体移除。
     function sidebarBtn() {
       try {
         const labelled = document.querySelectorAll("[aria-label]");
@@ -2706,23 +2704,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       }
       return { collapsed: false, btn: null };
     }
-    /** 打开动作：状态探测优先——只在收起态（按钮文案「打开侧边栏」）点击，天然
-     *  幂等且方向安全。官方 expandSidebar 闭包捕获的是它那次渲染时的 collapsed，
-     *  树/SCM 关闭后槽位注销、回调不再刷新，残留宽态捕获的实例会变成空操作
-     *  （收起后首次打开不展开的根因），因此降为探测不到按钮时的最后手段 */
+    /** 打开动作：收起态才点击官方切换按钮 */
     function expandSidebarNow() {
       const { collapsed, btn } = sidebarBtn();
-      if (collapsed && btn) {
-        btn.click();
-        return;
-      }
-      if (sidebarExpandRef.current) {
-        try {
-          sidebarExpandRef.current();
-        } catch {
-          // 官方回调抛错不阻塞打开
-        }
-      }
+      if (collapsed && btn) btn.click();
     }
     /** 快捷键用：展开/收起侧边栏切换 */
     function toggleSidebar() {
@@ -3125,7 +3110,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
     // ─────────── 后台任务面板 ───────────
     // 入口按钮（conversation.input.left）只负责开合；面板本体由 KitSurfaces 在
-    // shell.overlay 渲染（.dshk-jobs-pop 右上角浮层）。任务数据源与官方
+    // shell.overlay 渲染——右侧停靠（复用 .dshk-pane，与文件预览共用停靠位、
+    // 互斥打开），对话可继续。任务数据源与官方
     // JobListAction 相同——useSessions 的 jobsBySession（session/jobs 推送）。
     // 「结束」与「输出」走 dsh-kit 宿主端点（/dsh-kit/jobs/kill|output，权限按
     // session 隔离，与 job_kill/job_output 同一套 caller 语义）。
@@ -3141,7 +3127,11 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": on,
         title: live.length > 0 ? `${t("jobsTitle")} (${live.length})` : t("jobsTitle"),
-        onClick: () => setKitUi({ jobsOpen: !on }),
+        onClick: () => {
+          // 打开时关掉文件预览——两者共用右侧停靠位（互斥）；关闭只收自己
+          if (on) setKitUi({ jobsOpen: false });
+          else setKitUi({ jobsOpen: true, openFile: null, openFrom: null, openUntracked: null });
+        },
         children: [
           jsxRuntime.jsx(JobsIcon, {}),
           live.length > 0
@@ -3240,6 +3230,52 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
       };
 
+      // 右停靠（与文件预览共用停靠位，入口互斥打开）：挂让位类 + 宽度变量。
+      // 宽度独立于预览，默认 min(560, innerWidth-880)，拖左缘 320~560 调整；
+      // useLayoutEffect 让变量在绘制前就位，避免打开瞬间闪 fallback 宽度
+      const widthRef = react.useRef(0);
+      const dragRef = react.useRef(null);
+      const [dragging, setDragging] = react.useState(false);
+      react.useLayoutEffect(() => {
+        document.body.classList.add("dshk-pane-open");
+        const maxW = Math.min(560, Math.max(360, window.innerWidth - 880));
+        widthRef.current = maxW;
+        document.documentElement.style.setProperty("--dshk-pane-w", `${maxW}px`);
+        return () => {
+          document.body.classList.remove("dshk-pane-open");
+          document.documentElement.style.removeProperty("--dshk-pane-w");
+        };
+      }, []);
+      react.useEffect(() => {
+        if (!dragging) return undefined;
+        const onMove = (e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const dx = d.startX - e.clientX; // 往左拖 → 面板变宽
+          const maxW = Math.min(560, Math.max(360, window.innerWidth - 880));
+          const w = Math.min(maxW, Math.max(320, d.startW + dx));
+          widthRef.current = w;
+          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        };
+        const onUp = () => {
+          dragRef.current = null;
+          setDragging(false);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+        };
+      }, [dragging]);
+      const onHandleDown = (e) => {
+        e.preventDefault();
+        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 440 };
+        setDragging(true);
+      };
+
       const statusWord = (job) => {
         switch (job.status) {
           case "running": return t("jobsStatusRunning");
@@ -3251,14 +3287,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
       };
 
-      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-pane",
+        "data-dragging": dragging || undefined,
+        role: "dialog",
+        "aria-label": t("jobsTitle"),
         children: [
-          jsxRuntime.jsx("div", { className: "dshk-jobs-mask", onClick: () => setKitUi({ jobsOpen: false }) }),
-          jsxRuntime.jsxs("div", {
-            className: "dshk-jobs-pop",
-            role: "dialog",
-            "aria-label": t("jobsTitle"),
-        children: [
+          jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
           jsxRuntime.jsxs("div", {
             className: "dshk-jobs-head",
             children: [
@@ -3350,8 +3385,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 }),
               }),
         ],
-          }),
-        ],
       });
     }
 
@@ -3431,16 +3464,14 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         let dispose;
         try {
           // 单槽遮蔽原生需要更低 priority（数字越小越先渲染，原生在 priority 0）。
-          // owner 携带官方注入的 wide（侧边栏是否展开）与 expandSidebar 回调：
-          // ①宽态正常渲染面板；②收起态不渲染内容（用户定稿：收起不需要占位，
-          // 也不把树/SCM 挤进铁轨）；③把回调存到模块级，打开动作优先走它自动展开。
+          // owner 携带官方注入的 wide（侧边栏是否展开）：①宽态正常渲染面板；
+          // ②收起态不渲染内容（用户定稿：收起不需要占位，也不把树/SCM 挤进铁轨）。
           dispose = slotsCtx.slots.register({ name: "sidebar.workspaces", priority: -1000 }, (owner) => {
             const side = owner ?? {};
-            sidebarExpandRef.current = typeof side.expandSidebar === "function" ? side.expandSidebar : null;
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false }), ...owner });
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, jobsOpen: false }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, jobsOpen: false }), ...owner });
           });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);

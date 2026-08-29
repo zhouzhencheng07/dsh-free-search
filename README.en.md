@@ -94,14 +94,16 @@ in-page git workbench:
 The background-jobs toggle in the composer toolbar (between source control and
 terminal), with a live count badge on the icon:
 
-- Opens a **centered modal** listing the current session's running background
-  jobs (the official job dropdown is read-only; this panel adds the controls)
+- Opens a **right-docked panel** listing the current session's running background
+  jobs (shares the dock with the file preview, mutually exclusive, so the
+  conversation keeps working; the official job dropdown is read-only; this
+  panel adds the controls)
 - Each row: kind badge + command + status · elapsed time; **Output** expands
   live incremental output (shares the read cursor with the model's
   `job_output`), **Stop** terminates the job (same as `job_kill`, permission
   scoped per session — cross-session requests are rejected)
-- Close via the ✕ button, clicking the backdrop, or Esc; finished jobs drop
-  off the list (running jobs only)
+- Close via the ✕ button or Esc; drag the left edge to resize; finished jobs
+  drop off the list (running jobs only)
 - Data flows through host endpoints `/dsh-kit/jobs/kill` (POST) and
   `/dsh-kit/jobs/output` (GET incremental read); the task source is the
   official `session/jobs` push — no extra polling
