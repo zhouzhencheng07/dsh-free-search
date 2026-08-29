@@ -296,19 +296,19 @@ window.__ModuleLoader__.load({
       cfgTitle: "套件（dsh-kit）",
       cfgDesc: "终端 / 文件树 / 技能页 / 网页搜索的功能开关与快捷键。",
       cfgTerminalEnabled: "启用终端",
-      cfgTerminalEnabledHint: "关闭后隐藏输入框旁的终端按钮，快捷键一并失效。",
+      cfgTerminalEnabledHint: "关闭后隐藏入口按钮与快捷键",
       cfgFileTreeEnabled: "启用文件树",
-      cfgFileTreeEnabledHint: "关闭后隐藏输入框旁的文件树按钮，快捷键一并失效。",
+      cfgFileTreeEnabledHint: "关闭后隐藏入口按钮与快捷键",
       cfgSkillsPageEnabled: "启用技能页",
-      cfgSkillsPageEnabledHint: "关闭后设置里不再显示「技能」页；技能本身不受影响。",
+      cfgSkillsPageEnabledHint: "关闭后设置里不显示「技能」页",
       cfgSearchEnabled: "启用网页搜索",
-      cfgSearchEnabledHint: "免费多源搜索（free-search）。关闭后 AI 的 web_search 走官方默认渠道；变更重启后生效。",
+      cfgSearchEnabledHint: "关闭后走官方搜索渠道（重启生效）",
       cfgSearchMaxResults: "搜索结果条数",
-      cfgSearchMaxResultsHint: "网页搜索返回的来源条数上限，1-8 的整数（默认 5）。条数越多 AI 上下文消耗越大；保存后即时生效。",
+      cfgSearchMaxResultsHint: "1-8，默认 5；越多越耗上下文，保存即生效",
       cfgPhoneEnabled: "显示「手机访问」页",
-      cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
+      cfgPhoneEnabledHint: "在设置中显示「手机访问」页",
       cfgJobsEnabled: "启用后台任务面板",
-      cfgJobsEnabledHint: "输入框旁的任务按钮：查看运行中的后台任务、实时输出，并可一键结束。",
+      cfgJobsEnabledHint: "输入框旁的任务按钮：查看并结束后台任务",
       phoneGateStart: "启动网关",
       phoneGateStop: "关闭网关",
       phoneStoppedHint: "网关未启动。开启后可用「刷新链接」作废旧链接。",
@@ -317,7 +317,7 @@ window.__ModuleLoader__.load({
       cfgPhonePort: "网关端口",
       cfgPhonePortHint: "手机网关监听端口，1-65535（默认 3090）；保存后网关自动按新端口重启。",
       cfgPhoneKeepGatewayOn: "重启后保留开启",
-      cfgPhoneKeepGatewayOnHint: "手机访问网关：勾选后 DSH 重启自动恢复上次的开启状态（同一令牌，已授权设备不掉线）；不勾则每次启动都是关闭的。保存后下次启动生效。",
+      cfgPhoneKeepGatewayOnHint: "重启后恢复上次的开启状态（保存后下次启动生效）",
       phoneTitle: "手机访问",
       phoneStatusOn: "网关运行中 · 端口 {port}",
       phoneStatusErr: "网关未运行：{error}",
@@ -355,9 +355,9 @@ window.__ModuleLoader__.load({
       cfgFileTreeShortcut: "文件树快捷键",
       cfgSidebarShortcut: "侧边栏展开/收起快捷键",
       cfgSidebarShortcutEnabled: "启用侧边栏快捷键",
-      cfgSidebarShortcutEnabledHint: "关闭后侧边栏快捷键不再响应。",
+      cfgSidebarShortcutEnabledHint: "关闭后快捷键不再响应",
       cfgSourceControlEnabled: "启用源代码管理",
-      cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
+      cfgSourceControlEnabledHint: "关闭后隐藏入口按钮与快捷键",
       cfgScShortcut: "源代码管理快捷键",
       cfgCapturing: "按下组合键…（Esc 取消）",
       cfgCapture: "修改",
@@ -477,19 +477,19 @@ window.__ModuleLoader__.load({
       cfgTitle: "Kit (dsh-kit)",
       cfgDesc: "Feature switches and shortcuts for terminal / files / skills / web search.",
       cfgTerminalEnabled: "Enable terminal",
-      cfgTerminalEnabledHint: "Hides the terminal button next to the composer and disables its shortcut.",
+      cfgTerminalEnabledHint: "Hides the entry button and its shortcut",
       cfgFileTreeEnabled: "Enable file tree",
-      cfgFileTreeEnabledHint: "Hides the file-tree button next to the composer and disables its shortcut.",
+      cfgFileTreeEnabledHint: "Hides the entry button and its shortcut",
       cfgSkillsPageEnabled: "Enable skills page",
-      cfgSkillsPageEnabledHint: "Removes the Skills entry from Settings (skills themselves are unaffected).",
+      cfgSkillsPageEnabledHint: "Hides the Skills page in Settings",
       cfgSearchEnabled: "Enable web search",
-      cfgSearchEnabledHint: "Free multi-source web search (free-search). When off, the agent's web_search uses the official default channel; changes apply after restart.",
+      cfgSearchEnabledHint: "Off = the official search channel (restart to apply)",
       cfgSearchMaxResults: "Search result count",
-      cfgSearchMaxResultsHint: "Upper bound of sources returned per web search, integer 1-8 (default 5). More results means more context usage; applies immediately after saving.",
+      cfgSearchMaxResultsHint: "1-8, default 5; more uses more context; applies on save",
       cfgPhoneEnabled: "Show phone access page",
-      cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
+      cfgPhoneEnabledHint: "Shows the \"Phone access\" page in Settings",
       cfgJobsEnabled: "Enable background jobs panel",
-      cfgJobsEnabledHint: "Task button next to the composer: watch running background jobs, live output, and stop them with one click.",
+      cfgJobsEnabledHint: "Composer-side button to watch and stop background jobs",
       phoneGateStart: "Start gateway",
       phoneGateStop: "Stop gateway",
       phoneStoppedHint: "Gateway is off. Use \"New link\" after starting to invalidate old links.",
@@ -498,14 +498,14 @@ window.__ModuleLoader__.load({
       cfgPhonePort: "Gateway port",
       cfgPhonePortHint: "Port the phone gateway listens on, 1-65535 (default 3090); the gateway restarts on the new port after saving.",
       cfgPhoneKeepGatewayOn: "Keep enabled across restarts",
-      cfgPhoneKeepGatewayOnHint: "Phone gateway: when checked, a DSH restart restores the last enabled state (same token, authorized devices stay signed in); unchecked, it starts off every time. Applies on the next start after saving.",
+      cfgPhoneKeepGatewayOnHint: "Restores the last enabled state on restart (applies next start)",
       cfgTerminalShortcut: "Terminal shortcut",
       cfgFileTreeShortcut: "File tree shortcut",
       cfgSidebarShortcut: "Sidebar toggle shortcut",
       cfgSidebarShortcutEnabled: "Enable sidebar shortcut",
-      cfgSidebarShortcutEnabledHint: "When off, the sidebar toggle combo stops responding.",
+      cfgSidebarShortcutEnabledHint: "Disables the sidebar shortcut",
       cfgSourceControlEnabled: "Enable source control",
-      cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
+      cfgSourceControlEnabledHint: "Hides the entry button and its shortcut",
       cfgScShortcut: "Source control shortcut",
       cfgCapturing: "Press a combo… (Esc to cancel)",
       cfgCapture: "Change",
@@ -705,20 +705,19 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cfg-chev{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s var(--ds-ease-in-out);display:block}
 .dshk-cfg-chev[data-open]{transform:rotate(180deg)}
 .dshk-cfg-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}
-.dshk-cfg-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}
+.dshk-cfg-field{display:flex;align-items:center;gap:8px;padding:8px 0}
 .dshk-cfg-group ~ .dshk-cfg-group{border-top:1px solid var(--dsw-alias-border-l2)}
 .dshk-cfg-sub{margin-left:14px}
-.dshk-cfg-fhead{display:flex;align-items:center;gap:8px}
-.dshk-cfg-label{flex:1;min-width:0;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}
-.dshk-cfg-badges{display:inline-flex;align-items:center;gap:8px;flex:none;height:19px}
+.dshk-cfg-label{flex:none;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}
+.dshk-cfg-badges{display:inline-flex;align-items:center;gap:8px;flex:none;height:19px;margin-left:auto}
 .dshk-cfg-badge{display:inline-flex;align-items:center;height:19px;box-sizing:border-box;padding:0 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:500;line-height:17px;white-space:nowrap}
 .dshk-cfg-reset{font:inherit;background:none;border:0;padding:0;height:18px;display:inline-flex;align-items:center;cursor:pointer;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
 .dshk-cfg-reset:hover:not(:disabled){color:var(--dsw-alias-label-primary)}
-.dshk-cfg-check{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary)}
-.dshk-cfg-hint{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
-.dshk-cfg-invalid{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
+.dshk-cfg-check{flex:none;width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary)}
+.dshk-cfg-hint{flex:1;min-width:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshk-cfg-invalid{flex:1;min-width:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-state-error-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dshk-cfg-status{padding:6px 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;margin:0}
-.dshk-cfg-combo{appearance:none;font:inherit;font-family:ui-monospace,Consolas,monospace;font-size:12px;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 12px;line-height:1.5}
+.dshk-cfg-combo{appearance:none;flex:1;min-width:0;font:inherit;font-family:ui-monospace,Consolas,monospace;font-size:12px;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 12px;line-height:1.5}
 .dshk-cfg-combo:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-cfg-combo:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-combo[data-capturing]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-secondary)}
@@ -4127,26 +4126,29 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     onClick: () => startCapture(field),
                     children: capturing === field ? t("cfgCapturing") : state.text,
                   });
+          // 紧凑单行（用户定稿）：勾选框在标题前，其余控件跟在标题后，短说明
+          // 占据剩余宽度（超长省略号 + 悬停看全），覆盖徽标恒右对齐；组合键
+          // 字段无说明——按钮文本即当前值，非法时原位显示错误
+          const hintEl = state.invalid
+            ? jsxRuntime.jsx("span", {
+                className: "dshk-cfg-invalid",
+                children: t(spec.kind === "number" ? "invalidNumber" : "invalidCombo"),
+              })
+            : spec.kind === "combo"
+              ? null
+              : jsxRuntime.jsx("span", {
+                  className: "dshk-cfg-hint",
+                  title: t(cfgLabelKey(field, "Hint")),
+                  children: t(cfgLabelKey(field, "Hint")),
+                });
           return jsxRuntime.jsxs("div", {
             className: isSub ? "dshk-cfg-field dshk-cfg-sub" : "dshk-cfg-field",
             children: [
-              jsxRuntime.jsxs("div", {
-                className: "dshk-cfg-fhead",
-                children: [
-                  jsxRuntime.jsx("span", { className: "dshk-cfg-label", children: t(cfgLabelKey(field, "")) }),
-                  badges(state, field),
-                ],
-              }),
-              control,
-              // 组合键字段的说明行整体去掉（用户定稿）：按钮文本已显示当前组合键
-              state.invalid || spec.kind !== "combo"
-                ? jsxRuntime.jsx("p", {
-                    className: state.invalid ? "dshk-cfg-invalid" : "dshk-cfg-hint",
-                    children: state.invalid
-                      ? t(spec.kind === "number" ? "invalidNumber" : "invalidCombo")
-                      : t(cfgLabelKey(field, "Hint")),
-                  })
-                : null,
+              spec.kind === "bool" ? control : null,
+              jsxRuntime.jsx("span", { className: "dshk-cfg-label", children: t(cfgLabelKey(field, "")) }),
+              spec.kind === "bool" ? null : control,
+              hintEl,
+              badges(state, field),
             ],
           });
         };
