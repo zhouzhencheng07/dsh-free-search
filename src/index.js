@@ -1329,7 +1329,6 @@ export function apply(ctx) {
             error: phoneGwError ?? phoneGw?.state().error ?? null,
             port: phoneGw ? (phoneGw.port() ?? phonePort()) : phonePort(),
             remoteDomain: phoneRemoteDomain(),
-            keepGatewayOn: phoneKeepGatewayOn(),
             fingerprint: phoneGw ? phoneGw.fingerprint() : null,
           })
         },

@@ -139,8 +139,9 @@ browser to reach the dsh web running on this computer:
   0.0.0.0 sends `?k=<token>` → HttpOnly Cookie → 302 to the loopback GUI; any
   missing/wrong token gets a 404, and expired cookies are rejected
 - **Off on every startup by default**: after a DSH restart the gateway no
-  longer restores itself; check "Keep enabled across restarts" in the page to
-  reuse the last enabled state (same token, authorized devices stay signed in)
+  longer restores itself; check "Keep enabled across restarts" on the dsh-kit
+  settings card (applies on the next start after saving) to reuse the last
+  enabled state (same token, authorized devices stay signed in)
 - **Manual token rotation**: the "New link" button in the page invalidates the
   current link and issues a fresh one — old links and authorized devices die
   instantly; start/stop no longer rotates automatically, restarts reuse the

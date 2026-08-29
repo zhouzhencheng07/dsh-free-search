@@ -103,6 +103,7 @@ window.__ModuleLoader__.load({
       phoneEnabled: false,
       phoneRemoteDomain: "",
       phonePort: 3090,
+      phoneKeepGatewayOn: false,
       jobsEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
@@ -317,6 +318,8 @@ window.__ModuleLoader__.load({
       cfgPhoneRemoteDomainHint: "可选。VPS 反向隧道指向本 GUI 的域名（如 dsh.example.com），填后面板会同时给出远程二维码。",
       cfgPhonePort: "网关端口",
       cfgPhonePortHint: "手机网关监听端口，1-65535（默认 3090）；保存后网关自动按新端口重启。",
+      cfgPhoneKeepGatewayOn: "重启后保留开启",
+      cfgPhoneKeepGatewayOnHint: "手机访问网关：勾选后 DSH 重启自动恢复上次的开启状态（同一令牌，已授权设备不掉线）；不勾则每次启动都是关闭的。保存后下次启动生效。",
       phoneTitle: "手机访问",
       phoneStatusOn: "网关运行中 · 端口 {port}",
       phoneStatusErr: "网关未运行：{error}",
@@ -330,8 +333,6 @@ window.__ModuleLoader__.load({
       phoneCopied: "已复制",
       phoneRemoteHidden: "远程链接含访问令牌，不直接展示——点「复制」获取后自行打开。",
       phonePortInvalid: "端口需为 1-65535 的整数",
-      phoneKeepOn: "重启后保留开启",
-      phoneKeepOnHint: "勾选后 DSH 重启会自动恢复网关开启状态（沿用同一令牌，已授权设备不掉线）；不勾则每次启动网关都是关闭的。",
       phoneRotate: "刷新链接",
       phoneRotateHint: "作废当前链接并生成新链接，已授权设备将全部失效。",
       phoneRotated: "链接已刷新，旧链接已失效",
@@ -505,6 +506,8 @@ window.__ModuleLoader__.load({
       cfgPhoneRemoteDomainHint: "Optional. Domain of your VPS tunnel pointing to this GUI (e.g. dsh.example.com); the panel then also offers a remote QR code.",
       cfgPhonePort: "Gateway port",
       cfgPhonePortHint: "Port the phone gateway listens on, 1-65535 (default 3090); the gateway restarts on the new port after saving.",
+      cfgPhoneKeepGatewayOn: "Keep enabled across restarts",
+      cfgPhoneKeepGatewayOnHint: "Phone gateway: when checked, a DSH restart restores the last enabled state (same token, authorized devices stay signed in); unchecked, it starts off every time. Applies on the next start after saving.",
       cfgTerminalShortcut: "Terminal shortcut",
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
@@ -543,8 +546,6 @@ window.__ModuleLoader__.load({
       phoneCopied: "Copied",
       phoneRemoteHidden: "The remote link contains the access token and is hidden — use Copy and open it yourself.",
       phonePortInvalid: "Port must be an integer from 1-65535",
-      phoneKeepOn: "Keep enabled across restarts",
-      phoneKeepOnHint: "When checked, a DSH restart restores the gateway's enabled state (same token, authorized devices stay signed in); unchecked, the gateway starts off every time.",
       phoneRotate: "New link",
       phoneRotateHint: "Invalidate the current link and issue a new one; all authorized devices are signed out.",
       phoneRotated: "Link rotated; the old one is dead",
@@ -771,7 +772,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-rotate{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:9px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
 .dshk-phone-rotate:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshk-phone-rotate[disabled]{opacity:.5;cursor:default}
-.dshk-phone-keepon{display:flex;gap:6px;align-items:center;margin:0 0 10px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;user-select:none}
 .dshk-phone-gatebtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-phone-gatebtn[disabled]{opacity:.5;cursor:default}
 .dshk-phone-gatebtn-stop{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
@@ -2817,23 +2817,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
         setGateBusy(false);
       };
-      // 「重启后保留开启」即时写设置，随后重读 info 让复选框落回权威值
-      const saveKeepOn = async (next) => {
-        if (!cfgScope) return;
-        setDomainSaving(true);
-        try {
-          await cfgScope.set("phoneKeepGatewayOn", next);
-          setNotice(t("save") + " ✓");
-        } catch {
-          // 写失败靠下方重读 info 覆盖，复选框回权威值
-        } finally {
-          setDomainSaving(false);
-          setTimeout(() => setNotice(""), 3000);
-          fetchPhoneInfo(new AbortController().signal)
-            .then((body) => setInfo(body))
-            .catch(() => {});
-        }
-      };
       const shownDomain = domainTouched
         ? domainValue
         : info && typeof info.remoteDomain === "string"
@@ -3032,24 +3015,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     },
                     children: t("save"),
                   }),
-                ],
-              })
-            : null,
-          cfgScope
-            ? jsxRuntime.jsxs("label", {
-                className: "dshk-phone-keepon",
-                title: t("phoneKeepOnHint"),
-                children: [
-                  jsxRuntime.jsx("input", {
-                    type: "checkbox",
-                    className: "dshk-cfg-check",
-                    checked: info !== null && info.keepGatewayOn === true,
-                    disabled: domainSaving,
-                    onChange: (e) => {
-                      saveKeepOn(e.target.checked);
-                    },
-                  }),
-                  jsxRuntime.jsx("span", { children: t("phoneKeepOn") }),
                 ],
               })
             : null,
@@ -3905,6 +3870,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "searchEnabled", kind: "bool" },
       { key: "searchMaxResults", kind: "number" },
       { key: "phoneEnabled", kind: "bool" },
+      { key: "phoneKeepGatewayOn", kind: "bool" },
       { key: "jobsEnabled", kind: "bool" },
       { key: "sidebarShortcutEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
@@ -3923,7 +3889,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
       { switchKey: "searchEnabled", fields: ["searchMaxResults"] },
-      { switchKey: "phoneEnabled", fields: [] },
+      { switchKey: "phoneEnabled", fields: ["phoneKeepGatewayOn"] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>
