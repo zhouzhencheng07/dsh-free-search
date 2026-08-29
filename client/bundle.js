@@ -2706,18 +2706,23 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       }
       return { collapsed: false, btn: null };
     }
-    /** 打开动作：优先官方 expandSidebar 回调；拿不到回退 DOM 按钮点击 */
+    /** 打开动作：状态探测优先——只在收起态（按钮文案「打开侧边栏」）点击，天然
+     *  幂等且方向安全。官方 expandSidebar 闭包捕获的是它那次渲染时的 collapsed，
+     *  树/SCM 关闭后槽位注销、回调不再刷新，残留宽态捕获的实例会变成空操作
+     *  （收起后首次打开不展开的根因），因此降为探测不到按钮时的最后手段 */
     function expandSidebarNow() {
+      const { collapsed, btn } = sidebarBtn();
+      if (collapsed && btn) {
+        btn.click();
+        return;
+      }
       if (sidebarExpandRef.current) {
         try {
           sidebarExpandRef.current();
         } catch {
           // 官方回调抛错不阻塞打开
         }
-        return;
       }
-      const { collapsed, btn } = sidebarBtn();
-      if (collapsed && btn) btn.click();
     }
     /** 快捷键用：展开/收起侧边栏切换 */
     function toggleSidebar() {
