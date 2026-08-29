@@ -74,7 +74,9 @@ in-page git workbench:
   rendering (removed red / added green, not a raw patch); very large files fall
   back to the raw diff. The header **⇄** toggles the plain-text view anytime —
   both entries share the same preview panel (the entry only picks the default),
-  and ✎ editing works from either side
+  and ✎ editing works from either side. **Untracked files** (never committed)
+  have no baseline: they open as the plain-text view by default, and the diff
+  view renders them as "all added" (green) instead of an empty note
 - Not a repository? One-click **Initialize Repository** (idempotent);
   non-ASCII filenames fully supported (`core.quotePath=false`)
 - Data flows through host endpoints `/dsh-kit/git/status`, `/dsh-kit/git/diff`,

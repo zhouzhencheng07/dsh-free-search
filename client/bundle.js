@@ -2080,7 +2080,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           {
             className: "dshk-row dshk-chg-row",
             title: item.abs,
-            onClick: () => onOpenFile(item.abs),
+            onClick: () => onOpenFile(item.abs, isUntracked),
             children: [
               jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
               dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
@@ -2217,13 +2217,14 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // 让位布局：挂 body.dshk-pane-open 类 + 根节点设 --dshk-pane-w，
     // 样式规则把中列（对话）margin-right 顶开面板宽度——对话左移，内容不被遮挡。
     // 默认宽度即最大（左移到底），左缘拖拽手柄可收窄/放宽。
-    function FileContentPane({ path, source, cwd, onClose }) {
+    function FileContentPane({ path, source, untracked, cwd, onClose }) {
       const [state, setState] = react.useState({ phase: "loading" });
       const [dragging, setDragging] = react.useState(false);
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
-      // 视图模式：默认随入口（源代码管理=diff，文件树=原文），头部 ⇄ 随时互切；
+      // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
+      // 基线，即便从 SCM 进入也默认原文），头部 ⇄ 随时互切；
       // 同一面板会话内换文件保留用户选中的模式
-      const [mode, setMode] = react.useState(source === "scm" ? "diff" : "text");
+      const [mode, setMode] = react.useState(source === "scm" && untracked !== true ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -2235,7 +2236,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       react.useEffect(() => {
         if (sourceRef.current === source) return;
         sourceRef.current = source;
-        setMode(source === "scm" ? "diff" : "text");
+        setMode(source === "scm" && untracked !== true ? "diff" : "text");
       }, [source]);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
@@ -2410,7 +2411,24 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         if (diff.phase === "loading") return jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
         if (diff.phase === "error")
           return jsxRuntime.jsx("div", { className: "dshk-note", title: diff.error, children: `${t("diffFail")}：${diff.error}` });
-        if (diff.untracked) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffUntracked") });
+        if (diff.untracked) {
+          // 未跟踪文件没有基线版本：整文件按"新增"着色展示（对齐 git 对未跟踪
+          // 文件的 diff 语义，避免只给一行空提示）；内容截断/未就绪时才回落提示
+          const content =
+            state.body && !state.body.truncated && typeof state.body.content === "string" ? state.body.content : null;
+          if (content !== null) {
+            return jsxRuntime.jsx(
+              "div",
+              {
+                className: "dshk-inline",
+                children: content.split("\n").map((text, i) =>
+                  jsxRuntime.jsx("div", { className: "dshk-il-add", children: text === "" ? " " : text }, i),
+                ),
+              },
+            );
+          }
+          return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffUntracked") });
+        }
         if (diff.clean || diff.text === null) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffEmpty") });
 
         const newLines =
@@ -3379,8 +3397,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             sidebarExpandRef.current = typeof side.expandSidebar === "function" ? side.expandSidebar : null;
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "scm" }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree" }), ...owner });
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false }), ...owner });
           });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
@@ -3486,8 +3504,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             ? jsxRuntime.jsx(FileContentPane, {
                 path: ui.openFile,
                 source: ui.openFrom ?? "tree",
+                untracked: ui.openUntracked === true,
                 cwd,
-                onClose: () => setKitUi({ openFile: null, openFrom: null }),
+                onClose: () => setKitUi({ openFile: null, openFrom: null, openUntracked: null }),
               })
             : null,
           cfg.jobsEnabled && ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
