@@ -134,16 +134,19 @@ A new "Skills" page in the settings panel:
 A new "Phone access" page in the settings: scan a QR code with your phone
 browser to reach the dsh web running on this computer:
 
-- **Token-gated links**: a built-in gateway (default port 3090, bound to
-  0.0.0.0) sends `?k=<token>` → HttpOnly Cookie → 302 to the loopback GUI; any
+- **Token-gated links**: a built-in gateway (default port 3090, **editable in
+  the page**, 1-65535, auto-restarts on the new port after saving) bound to
+  0.0.0.0 sends `?k=<token>` → HttpOnly Cookie → 302 to the loopback GUI; any
   missing/wrong token gets a 404, and expired cookies are rejected
 - **One gateway start, one credential**: every "off → on" cycle rotates the
   token and issues a brand-new link, instantly invalidating old links and any
   already-authorized devices; restoring from the state file or re-clicking while
   already on does not rotate
-- LAN and remote dual links: one `http://<ip>:3090/?k=…` per local IPv4, plus
+- LAN and remote dual links: one `http://<ip>:<port>/?k=…` per local IPv4, plus
   `https://<domain>/?k=…` when a remote domain is configured (frp + caddy
-  templates in `scripts/vps/`) — scan and go
+  templates in `scripts/vps/`) — scan and go; **remote links hide the address
+  text and QR code** (the URL carries the access token; prevents
+  screenshot/shoulder-surfing leaks) and keep only a copy button
 - **Full HTTP/WS passthrough**: Host rewritten to the loopback upstream,
   Origin stripped, gateway cookies never leak upstream; the terminal WebSocket
   tunnel works both ways (the terminal can even be used from your phone remotely)
@@ -171,6 +174,10 @@ A host-side capability merged in from
   chain, off = the official default channel (`deepseek-official`); changes
   apply after restart. A later profile patch can also pin `searchProvider`
   to anything
+- "Search result count" on the settings card (1-8, default 5): the per-search
+  source cap, applied as the smaller of the seam request and this limit — more
+  results means more context usage; applies immediately after saving (no
+  restart needed)
 
 ### Settings card
 

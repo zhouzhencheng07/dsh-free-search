@@ -54,7 +54,7 @@ import { applyWebSearch } from './web-search.js'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
 import { decodePreviewText } from './text-decode.js'
 
-/** 手机访问网关对外端口（0.0.0.0）；dsh web 主端口运行时从 webServer 服务读取 */
+/** 手机访问网关对外端口（0.0.0.0）的默认值，可在设置里改（phonePort，1-65535） */
 const PHONE_PORT = 3090
 
 export const name = 'dsh-kit'
@@ -292,14 +292,17 @@ export function apply(ctx) {
   // "namespace not registered"。installSettingsSection 内部自等 settings 服务
   // （ctx.inject），不能拿 ctx.get('settings') 判存在后跳过。
   // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
-  // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）。phoneEnabled
-  // 同为宿主消费：经 onChange 热同步网关启停，改开关立即生效无需重启。其余
-  // 开关全在浏览器端门控入口按钮，宿主不读。先注册设置层再挂搜索，
-  // 确保注入回调读到的是已落定值。
+  // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）；
+  // searchMaxResults 是每次搜索的来源条数上限（1-8，默认 5），provider 每次
+  // 调用现读，改完即生效。phoneEnabled 同为宿主消费：经 onChange 热同步网关
+  // 启停/端口，改开关立即生效无需重启。其余开关全在浏览器端门控入口按钮，
+  // 宿主不读。先注册设置层再挂搜索，确保注入回调读到的是已落定值。
   // readSettings 提升到 apply 作用域：webServer 注入回调（块外）的手机访问段
-  // 也要读开关（远程域名、页面可见性）。网关启用位已改状态文件直管，不再走
-  // settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
+  // 也要读开关（远程域名、端口、页面可见性）。网关启用位已改状态文件直管，
+  // 不再走 settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
   let readSettings = () => ({})
+  // 手机网关的设置联动钩子（端口变更热重启等），由 webServer 注入段回填
+  let onSettingsChanged = () => {}
   if (installSettingsSection && settingsNamespace && z && typeof z.object === 'function') {
     const Config = z.object({
       terminalEnabled: z.boolean().default(true),
@@ -307,10 +310,12 @@ export function apply(ctx) {
       sourceControlEnabled: z.boolean().default(true),
       skillsPageEnabled: z.boolean().default(true),
       searchEnabled: z.boolean().default(true),
+      searchMaxResults: z.number().step(1).min(1).max(8).default(5),
       // phoneEnabled = 「手机访问」页入口可见性（配置卡最下，纯显示开关）。
       // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
       phoneEnabled: z.boolean().default(false),
       phoneRemoteDomain: z.string().default(''),
+      phonePort: z.number().step(1).min(1).max(65535).default(3090),
       jobsEnabled: z.boolean().default(true),
       sidebarShortcut: z.string().default('Ctrl+B'),
       sidebarShortcutEnabled: z.boolean().default(true),
@@ -320,9 +325,12 @@ export function apply(ctx) {
     })
     installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
       setSource: (current) => { readSettings = current },
-      onChange: () => {},
+      onChange: () => { onSettingsChanged() },
     })
-    applyWebSearch(ctx, { getEnabled: () => readSettings().searchEnabled !== false })
+    applyWebSearch(ctx, {
+      getEnabled: () => readSettings().searchEnabled !== false,
+      getMaxResults: () => readSettings().searchMaxResults,
+    })
   } else {
     // 设置层不可用：搜索按开启处理直接挂链
     applyWebSearch(ctx)
@@ -1208,12 +1216,29 @@ export function apply(ctx) {
       const stateFile = defaultStateFile()
       const pageVisible = () => readSettings().phoneEnabled === true
       const phoneRemoteDomain = () => String(readSettings().phoneRemoteDomain ?? '').trim()
+      /** 网关端口：设置里读，缺失/非法回落默认 3090 */
+      const phonePort = () => {
+        const n = readSettings().phonePort
+        return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : PHONE_PORT
+      }
       const warnLog = (msg) => console.warn(`dsh-kit: ${msg}`)
       let phoneGw = null
       let phoneGwError = null
       let phoneGwWanted = loadGatewayState(stateFile, warnLog).enabled
+      /** 现役实例监听的端口；null = 无实例。用于识别端口配置变更 */
+      let gwPort = null
       /** 按当前启用位同步网关启停 */
       const syncPhoneGateway = () => {
+        // 端口配置变更：关掉旧端口的现役实例，走下方重启动路径按新端口起步
+        if (phoneGw !== null && gwPort !== null && gwPort !== phonePort()) {
+          try {
+            phoneGw.close()
+          } catch {
+            // 死实例 close 可能抛错，忽略
+          }
+          phoneGw = null
+          phoneGwError = null
+        }
         // 启动失败（如端口被占）后 phoneGw 仍持有已死实例且 state().error 落定，
         // 若只判 phoneGw === null 会永远跳过重试——带 error 的实例视为死实例，
         // 先关掉清空再重新起步。
@@ -1228,9 +1253,11 @@ export function apply(ctx) {
             phoneGwError = null
           }
           try {
-            phoneGw = startPhoneGateway({ port: PHONE_PORT, upstreamPort: webCtx.webServer.port, log: warnLog })
+            gwPort = phonePort()
+            phoneGw = startPhoneGateway({ port: gwPort, upstreamPort: webCtx.webServer.port, log: warnLog })
             phoneGwError = null
           } catch (error) {
+            gwPort = null
             phoneGwError = String(error?.message ?? error)
             warnLog(`手机访问网关启动失败：${phoneGwError}`)
           }
@@ -1240,6 +1267,10 @@ export function apply(ctx) {
         }
       }
       syncPhoneGateway()
+      // 设置变更联动：端口改了就热重启（其余键的写入也走这里，sync 幂等无副作用）
+      onSettingsChanged = () => {
+        syncPhoneGateway()
+      }
       /** 改启用位（持久化到状态文件 + 热启停）；由 /dsh-kit/phone/gateway 端点调用 */
       const setGatewayEnabled = (on) => {
         const wasOn = phoneGwWanted
@@ -1260,7 +1291,7 @@ export function apply(ctx) {
       const phoneLinks = () => {
         if (!phoneGw) return []
         const k = encodeURIComponent(phoneGw.token())
-        const links = lanAddresses().map((ip) => ({ label: 'lan', url: `http://${ip}:${PHONE_PORT}/?k=${k}` }))
+        const links = lanAddresses().map((ip) => ({ label: 'lan', url: `http://${ip}:${phonePort()}/?k=${k}` }))
         if (phoneRemoteDomain() !== '') {
           links.push({ label: 'remote', url: `https://${phoneRemoteDomain()}/?k=${k}` })
         }
@@ -1293,7 +1324,7 @@ export function apply(ctx) {
             gatewayOn: phoneGwWanted,
             running: phoneGw !== null && phoneGw.state().listening,
             error: phoneGwError ?? phoneGw?.state().error ?? null,
-            port: PHONE_PORT,
+            port: phoneGw ? (phoneGw.port() ?? phonePort()) : phonePort(),
             remoteDomain: phoneRemoteDomain(),
             fingerprint: phoneGw ? phoneGw.fingerprint() : null,
           })

@@ -99,8 +99,10 @@ window.__ModuleLoader__.load({
       sourceControlEnabled: true,
       skillsPageEnabled: true,
       searchEnabled: true,
+      searchMaxResults: 5,
       phoneEnabled: false,
       phoneRemoteDomain: "",
+      phonePort: 3090,
       jobsEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
@@ -300,6 +302,8 @@ window.__ModuleLoader__.load({
       cfgSkillsPageEnabledHint: "关闭后设置里不再显示「技能」页；技能本身不受影响。",
       cfgSearchEnabled: "启用网页搜索",
       cfgSearchEnabledHint: "免费多源搜索（free-search）。关闭后 AI 的 web_search 走官方默认渠道；变更重启后生效。",
+      cfgSearchMaxResults: "搜索结果条数",
+      cfgSearchMaxResultsHint: "网页搜索返回的来源条数上限，1-8 的整数（默认 5）。条数越多 AI 上下文消耗越大；保存后即时生效。",
       cfgPhoneEnabled: "显示「手机访问」页",
       cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
       cfgJobsEnabled: "启用后台任务面板",
@@ -311,6 +315,8 @@ window.__ModuleLoader__.load({
       cfgRemoteHint: "非本机访问：上游把设置镜像钉在本机浏览器，配置在手机/远程只读——请在电脑端查看与修改。",
       cfgPhoneRemoteDomain: "远程域名",
       cfgPhoneRemoteDomainHint: "可选。VPS 反向隧道指向本 GUI 的域名（如 dsh.example.com），填后面板会同时给出远程二维码。",
+      cfgPhonePort: "网关端口",
+      cfgPhonePortHint: "手机网关监听端口，1-65535（默认 3090）；保存后网关自动按新端口重启。",
       phoneTitle: "手机访问",
       phoneStatusOn: "网关运行中 · 端口 {port}",
       phoneStatusErr: "网关未运行：{error}",
@@ -322,6 +328,8 @@ window.__ModuleLoader__.load({
       phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
       phoneCopy: "复制",
       phoneCopied: "已复制",
+      phoneRemoteHidden: "远程链接含访问令牌，不直接展示——点「复制」获取后自行打开。",
+      phonePortInvalid: "端口需为 1-65535 的整数",
       jobsTitle: "后台任务",
       jobsEmpty: "没有运行中的后台任务。",
       jobsStatusRunning: "运行中",
@@ -363,6 +371,7 @@ window.__ModuleLoader__.load({
       loadingCfg: "正在读取配置…",
       saveFailed: "本部署没有接受这些值，已保留供你修改。",
       invalidCombo: "组合键需包含一个主键和至少一个修饰键。",
+      invalidNumber: "需为 1-8 的整数。",
     };
     const en = {
       label: "Terminal",
@@ -475,6 +484,8 @@ window.__ModuleLoader__.load({
       cfgSkillsPageEnabledHint: "Removes the Skills entry from Settings (skills themselves are unaffected).",
       cfgSearchEnabled: "Enable web search",
       cfgSearchEnabledHint: "Free multi-source web search (free-search). When off, the agent's web_search uses the official default channel; changes apply after restart.",
+      cfgSearchMaxResults: "Search result count",
+      cfgSearchMaxResultsHint: "Upper bound of sources returned per web search, integer 1-8 (default 5). More results means more context usage; applies immediately after saving.",
       cfgPhoneEnabled: "Show phone access page",
       cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
       cfgJobsEnabled: "Enable background jobs panel",
@@ -486,6 +497,8 @@ window.__ModuleLoader__.load({
       cfgRemoteHint: "Non-local access: upstream pins the settings mirror to the local machine, so config stays read-only here — please view and edit it on the computer.",
       cfgPhoneRemoteDomain: "Remote domain",
       cfgPhoneRemoteDomainHint: "Optional. Domain of your VPS tunnel pointing to this GUI (e.g. dsh.example.com); the panel then also offers a remote QR code.",
+      cfgPhonePort: "Gateway port",
+      cfgPhonePortHint: "Port the phone gateway listens on, 1-65535 (default 3090); the gateway restarts on the new port after saving.",
       cfgTerminalShortcut: "Terminal shortcut",
       cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
@@ -510,6 +523,7 @@ window.__ModuleLoader__.load({
       loadingCfg: "Reading configuration…",
       saveFailed: "The deployment did not accept these values; they were left for you to correct.",
       invalidCombo: "A combo needs one key plus at least one modifier.",
+      invalidNumber: "Must be an integer from 1-8.",
       phoneTitle: "Phone access",
       phoneStatusOn: "Gateway running · port {port}",
       phoneStatusErr: "Gateway not running: {error}",
@@ -521,6 +535,8 @@ window.__ModuleLoader__.load({
       phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
       phoneCopy: "Copy",
       phoneCopied: "Copied",
+      phoneRemoteHidden: "The remote link contains the access token and is hidden — use Copy and open it yourself.",
+      phonePortInvalid: "Port must be an integer from 1-65535",
       jobsTitle: "Background jobs",
       jobsEmpty: "No running background jobs.",
       jobsStatusRunning: "running",
@@ -708,6 +724,8 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-cfg-combo:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-combo[data-capturing]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-secondary)}
 .dshk-cfg-text{flex:1;min-width:0;width:200px;font:inherit;font-size:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 10px;line-height:1.5}
+.dshk-cfg-num{flex:none;width:64px}
+.dshk-phone-port{flex:none;width:5.5em;font-size:11px;padding:5px 8px}
 .dshk-cfg-text:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
 .dshk-cfg-footer{display:flex;justify-content:flex-end;align-items:center;gap:8px;border-top:1px solid var(--dsw-alias-border-l2);padding:12px 0 4px}
 .dshk-cfg-err{flex:1;min-width:0;margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
@@ -2728,6 +2746,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [domainValue, setDomainValue] = react.useState("");
       const [domainTouched, setDomainTouched] = react.useState(false);
       const [domainSaving, setDomainSaving] = react.useState(false);
+      // 网关端口页内编辑：与远程域名同一条保存链（保存后宿主按新端口重启网关）
+      const [portValue, setPortValue] = react.useState("");
+      const [portTouched, setPortTouched] = react.useState(false);
       // 网关启停开关（POST /dsh-kit/phone/gateway；状态文件直管，不经 settings）
       const [gateBusy, setGateBusy] = react.useState(false);
       const toggleGateway = async (next) => {
@@ -2762,15 +2783,47 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         : info && typeof info.remoteDomain === "string"
           ? info.remoteDomain
           : "";
-      const saveDomain = async () => {
+      const shownPort = portTouched
+        ? portValue
+        : info && Number.isFinite(info.port)
+          ? String(info.port)
+          : "3090";
+      const savePhoneNet = async () => {
         if (domainSaving || !cfgScope) return;
+        // 端口草稿非法：阻断保存并提示（不落盘、不清草稿）
+        let nextPort = null;
+        if (portTouched) {
+          const n = Number(String(portValue).trim());
+          if (!Number.isInteger(n) || n < 1 || n > 65535) {
+            setNotice(t("phonePortInvalid"));
+            setTimeout(() => setNotice(""), 3000);
+            return;
+          }
+          nextPort = n;
+        }
         setDomainSaving(true);
         try {
-          await cfgScope.set("phoneRemoteDomain", shownDomain.trim());
+          if (domainTouched) await cfgScope.set("phoneRemoteDomain", shownDomain.trim());
+          if (nextPort !== null) await cfgScope.set("phonePort", nextPort);
           setDomainTouched(false);
+          setPortTouched(false);
           setNotice(t("save") + " ✓");
           if (info !== null && info.gatewayOn && info.running) {
             fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
+          }
+          // 端口变更时宿主侧重启网关是异步的：延迟刷新状态与链接跟进新端口
+          if (nextPort !== null) {
+            setTimeout(() => {
+              fetchPhoneInfo(new AbortController().signal)
+                .then((body) => {
+                  setInfo(body);
+                  if (body.gatewayOn && body.running) {
+                    return fetchPhoneLinks(new AbortController().signal).then(setLinkData).catch(() => {});
+                  }
+                  return undefined;
+                })
+                .catch(() => {});
+            }, 1200);
           }
         } catch {
           // 保存失败保持草稿供修改
@@ -2808,6 +2861,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
       const links = linkData && Array.isArray(linkData.links) ? linkData.links : [];
       const activeUrl = links[activeIdx] ? links[activeIdx].url : "";
+      // 远程链接含访问令牌：不展示地址与二维码，只留复制按钮（防截屏/旁观泄露）
+      const activeIsRemote = !!(links[activeIdx] && links[activeIdx].label === "remote");
       react.useEffect(() => {
         if (!qrReady || activeUrl === "" || !canvasRef.current) return;
         try {
@@ -2818,14 +2873,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       }, [qrReady, activeUrl]);
 
       const copyActive = () => {
-        if (activeUrl === "" || typeof navigator === "undefined" || !navigator.clipboard) return;
-        navigator.clipboard.writeText(activeUrl).then(
-          () => {
+        if (activeUrl === "") return;
+        writeClipboard(activeUrl).then((ok) => {
+          if (ok) {
             setCopied(true);
             setTimeout(() => setCopied(false), 1600);
-          },
-          () => {},
-        );
+          }
+        });
       };
 
       const gatewayOn = info !== null && info.gatewayOn === true;
@@ -2881,12 +2935,27 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                       setDomainTouched(true);
                     },
                   }),
+                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("cfgPhonePort") }),
+                  jsxRuntime.jsx("input", {
+                    type: "number",
+                    className: "dshk-cfg-text dshk-phone-port",
+                    min: 1,
+                    max: 65535,
+                    step: 1,
+                    value: shownPort,
+                    title: t("cfgPhonePortHint"),
+                    disabled: domainSaving,
+                    onChange: (e) => {
+                      setPortValue(e.target.value);
+                      setPortTouched(true);
+                    },
+                  }),
                   jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-phone-copybtn",
-                    disabled: domainSaving || !domainTouched,
+                    disabled: domainSaving || (!domainTouched && !portTouched),
                     onClick: () => {
-                      saveDomain();
+                      savePhoneNet();
                     },
                     children: t("save"),
                   }),
@@ -2917,15 +2986,19 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           ),
                         })
                       : null,
-                    jsxRuntime.jsx("div", { className: "dshk-phone-qrwrap", children: jsxRuntime.jsx("canvas", { ref: canvasRef, "aria-label": "QR code" }) }),
+                    activeIsRemote
+                      ? null
+                      : jsxRuntime.jsx("div", { className: "dshk-phone-qrwrap", children: jsxRuntime.jsx("canvas", { ref: canvasRef, "aria-label": "QR code" }) }),
                     jsxRuntime.jsxs("div", {
                       className: "dshk-phone-urlrow",
                       children: [
-                        jsxRuntime.jsx("span", { className: "dshk-phone-url", children: activeUrl }),
+                        activeIsRemote
+                          ? null
+                          : jsxRuntime.jsx("span", { className: "dshk-phone-url", children: activeUrl }),
                         jsxRuntime.jsx("button", { type: "button", className: "dshk-phone-copybtn", onClick: copyActive, children: copied ? t("phoneCopied") : t("phoneCopy") }),
                       ],
                     }),
-                    jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t("phoneScanHint") }),
+                    jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t(activeIsRemote ? "phoneRemoteHidden" : "phoneScanHint") }),
                   ],
                 },
               )
@@ -3739,6 +3812,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "sourceControlEnabled", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "searchEnabled", kind: "bool" },
+      { key: "searchMaxResults", kind: "number" },
       { key: "phoneEnabled", kind: "bool" },
       { key: "jobsEnabled", kind: "bool" },
       { key: "sidebarShortcutEnabled", kind: "bool" },
@@ -3757,21 +3831,27 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { switchKey: "jobsEnabled", fields: [] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
-      { switchKey: "searchEnabled", fields: [] },
+      { switchKey: "searchEnabled", fields: ["searchMaxResults"] },
       { switchKey: "phoneEnabled", fields: [] },
     ];
     const cfgSpec = Object.fromEntries(CFG_FIELDS.map((f) => [f.key, f]));
     const cfgLabelKey = (field, suffix) =>
       `cfg${field[0].toUpperCase()}${field.slice(1)}${suffix}`;
 
-    /** 字段显示文本：bool → "true"/"false"；text/combo → 字符串（空回落内置默认） */
+    /** 字段显示文本：bool → "true"/"false"；number → 整数字符串；text/combo → 字符串（空回落内置默认） */
     function cfgFormat(field, value) {
       if (cfgSpec[field].kind === "bool") return value === false ? "false" : "true";
+      if (cfgSpec[field].kind === "number") return String(Number.isFinite(value) ? value : CFG_DEFAULTS[field]);
       return typeof value === "string" && value.trim() !== "" ? value : CFG_DEFAULTS[field];
     }
-    /** 草稿文本 → 写入计划；非法（组合键缺主键/修饰键）返回 undefined 阻断保存 */
+    /** 草稿文本 → 写入计划；非法（数字越界/非整数、组合键缺主键/修饰键）返回 undefined 阻断保存 */
     function cfgParse(field, text) {
       if (cfgSpec[field].kind === "bool") return { kind: "set", value: text === "true" };
+      if (cfgSpec[field].kind === "number") {
+        const trimmed = String(text ?? "").trim();
+        const n = Number(trimmed);
+        return Number.isInteger(n) && n >= 1 && n <= 8 ? { kind: "set", value: n } : undefined;
+      }
       if (cfgSpec[field].kind === "text") return { kind: "set", value: String(text ?? "").trim() };
       const trimmed = String(text ?? "").trim();
       return parseCombo(trimmed) ? { kind: "set", value: trimmed } : undefined;
@@ -3960,7 +4040,18 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                   disabled: !writable,
                   onChange: () => edit(field, state.text === "true" ? "false" : "true"),
                 })
-              : spec.kind === "text"
+              : spec.kind === "number"
+                ? jsxRuntime.jsx("input", {
+                    type: "number",
+                    className: "dshk-cfg-text dshk-cfg-num",
+                    min: 1,
+                    max: 8,
+                    step: 1,
+                    value: state.text,
+                    disabled: !writable,
+                    onChange: (e) => edit(field, e.target.value),
+                  })
+                : spec.kind === "text"
                 ? jsxRuntime.jsx("input", {
                     type: "text",
                     className: "dshk-cfg-text",
@@ -3991,7 +4082,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               control,
               jsxRuntime.jsx("p", {
                 className: state.invalid ? "dshk-cfg-invalid" : "dshk-cfg-hint",
-                children: state.invalid ? t("invalidCombo") : t(cfgLabelKey(field, "Hint")),
+                children: state.invalid
+                  ? t(spec.kind === "number" ? "invalidNumber" : "invalidCombo")
+                  : t(cfgLabelKey(field, "Hint")),
               }),
             ],
           });
