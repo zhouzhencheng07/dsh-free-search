@@ -194,8 +194,8 @@ dsh plugin --profile web add "file:/path/to/dsh-kit"
   全路径 realpath 后做包含校验。
 - `src/phone-gateway.js`:手机访问网关——独立端口(默认 3090,0.0.0.0)的
   HTTP/WS 反代,`?k=` 令牌 → HttpOnly Cookie → 302 回环上游;未授权 404、
-  Host 重写回环、剥 Origin、网关 Cookie 不外泄;`rotate()`(关→开自动轮换)
-  与状态文件(`data/dsh-kit-phone-gateway.json`)持久化启停与令牌。
+  Host 重写回环、剥 Origin、网关 Cookie 不外泄;`rotate()`(页内「刷新链接」
+  按钮手动轮换)与状态文件(`data/dsh-kit-phone-gateway.json`)持久化启停与令牌。
 - `client/bundle.js`:浏览器半边(手写 ModuleLoader 格式 client bundle,无构建)——
   在 `conversation.input.left` 槽位注册文件树 / 源代码管理 / 后台任务 / 终端
   四个开关;文件树与源代码管理共用 `sidebar.workspaces` 单槽,点击文件后自绘右侧

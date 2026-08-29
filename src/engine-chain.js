@@ -90,14 +90,3 @@ function capItems(items, maxResults) {
   if (!Array.isArray(items)) return []
   return maxResults > 0 ? items.slice(0, maxResults) : items
 }
-
-/** Shared HTTP helper: one fetch with timeout wiring already applied via signal. */
-export async function httpJson(url, init = {}) {
-  const resp = await fetch(url, init)
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} ${resp.statusText}`)
-  }
-  return resp.json()
-}
-
-export const chainEngines = ENGINES.map((e) => e.id)

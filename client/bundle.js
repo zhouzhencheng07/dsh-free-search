@@ -309,13 +309,11 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabledHint: "是否在设置中显示「手机访问」页；网关在该页内按需启停。",
       cfgJobsEnabled: "启用后台任务面板",
       cfgJobsEnabledHint: "输入框旁的任务按钮：查看运行中的后台任务、实时输出，并可一键结束。",
-      phoneGateLabel: "启动网关（需要时开启；链接与令牌随之生成）",
       phoneGateStart: "启动网关",
       phoneGateStop: "关闭网关",
-      phoneStoppedHint: "网关未启动。开启网关会生成全新链接，旧链接立即失效。",
+      phoneStoppedHint: "网关未启动。开启后可用「刷新链接」作废旧链接。",
       cfgRemoteHint: "非本机访问：上游把设置镜像钉在本机浏览器，配置在手机/远程只读——请在电脑端查看与修改。",
       cfgPhoneRemoteDomain: "远程域名",
-      cfgPhoneRemoteDomainHint: "可选。VPS 反向隧道指向本 GUI 的域名（如 dsh.example.com），填后面板会同时给出远程二维码。",
       cfgPhonePort: "网关端口",
       cfgPhonePortHint: "手机网关监听端口，1-65535（默认 3090）；保存后网关自动按新端口重启。",
       cfgPhoneKeepGatewayOn: "重启后保留开启",
@@ -323,13 +321,12 @@ window.__ModuleLoader__.load({
       phoneTitle: "手机访问",
       phoneStatusOn: "网关运行中 · 端口 {port}",
       phoneStatusErr: "网关未运行：{error}",
-      phoneOff: "手机访问未启用：请在 设置 → 插件配置 → dsh-kit 打开「启用手机访问」并重启。",
       phoneLoading: "正在生成链接…",
       phoneLoadFail: "读取失败：{error}",
       phoneLan: "局域网",
       phoneRemote: "远程",
       phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
-      phoneCopy: "复制",
+      phoneCopy: "复制链接",
       phoneCopied: "已复制",
       phoneRemoteHidden: "远程链接含访问令牌，不直接展示——点「复制」获取后自行打开。",
       phonePortInvalid: "端口需为 1-65535 的整数",
@@ -355,17 +352,13 @@ window.__ModuleLoader__.load({
       jobsOutputEmpty: "（暂无输出）",
       jobsOutputTransient: "输出读取失败：{error}",
       cfgTerminalShortcut: "终端快捷键",
-      cfgTerminalShortcutHint: "切换终端面板的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgFileTreeShortcut: "文件树快捷键",
-      cfgFileTreeShortcutHint: "切换文件树的组合键；需一个主键加至少一个修饰键（Ctrl/Alt/Shift/Meta）。",
       cfgSidebarShortcut: "侧边栏展开/收起快捷键",
-      cfgSidebarShortcutHint: "切换侧边栏展开/收起的组合键（默认 Ctrl+B）；需一个主键加至少一个修饰键。",
       cfgSidebarShortcutEnabled: "启用侧边栏快捷键",
       cfgSidebarShortcutEnabledHint: "关闭后侧边栏快捷键不再响应。",
       cfgSourceControlEnabled: "启用源代码管理",
       cfgSourceControlEnabledHint: "关闭后隐藏源代码管理按钮，快捷键一并失效。",
       cfgScShortcut: "源代码管理快捷键",
-      cfgScShortcutHint: "切换源代码管理视图的组合键；需一个主键加至少一个修饰键。默认避开中文输入法占用的 Ctrl+.（中英文标点切换）。",
       cfgCapturing: "按下组合键…（Esc 取消）",
       cfgCapture: "修改",
       overridden: "已覆盖",
@@ -497,29 +490,23 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabledHint: "Whether the \"Phone access\" page appears in Settings; the gateway starts/stops inside that page on demand.",
       cfgJobsEnabled: "Enable background jobs panel",
       cfgJobsEnabledHint: "Task button next to the composer: watch running background jobs, live output, and stop them with one click.",
-      phoneGateLabel: "Start gateway (on demand; links are generated with it)",
       phoneGateStart: "Start gateway",
       phoneGateStop: "Stop gateway",
-      phoneStoppedHint: "Gateway is stopped. Starting it issues a brand-new link and invalidates old ones.",
+      phoneStoppedHint: "Gateway is off. Use \"New link\" after starting to invalidate old links.",
       cfgRemoteHint: "Non-local access: upstream pins the settings mirror to the local machine, so config stays read-only here — please view and edit it on the computer.",
       cfgPhoneRemoteDomain: "Remote domain",
-      cfgPhoneRemoteDomainHint: "Optional. Domain of your VPS tunnel pointing to this GUI (e.g. dsh.example.com); the panel then also offers a remote QR code.",
       cfgPhonePort: "Gateway port",
       cfgPhonePortHint: "Port the phone gateway listens on, 1-65535 (default 3090); the gateway restarts on the new port after saving.",
       cfgPhoneKeepGatewayOn: "Keep enabled across restarts",
       cfgPhoneKeepGatewayOnHint: "Phone gateway: when checked, a DSH restart restores the last enabled state (same token, authorized devices stay signed in); unchecked, it starts off every time. Applies on the next start after saving.",
       cfgTerminalShortcut: "Terminal shortcut",
-      cfgTerminalShortcutHint: "Combo that toggles the terminal panel; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgFileTreeShortcut: "File tree shortcut",
-      cfgFileTreeShortcutHint: "Combo that toggles the file tree; needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgSidebarShortcut: "Sidebar toggle shortcut",
-      cfgSidebarShortcutHint: "Combo that collapses/expands the sidebar (default Ctrl+B); needs a modifier (Ctrl/Alt/Shift/Meta) + a key.",
       cfgSidebarShortcutEnabled: "Enable sidebar shortcut",
       cfgSidebarShortcutEnabledHint: "When off, the sidebar toggle combo stops responding.",
       cfgSourceControlEnabled: "Enable source control",
       cfgSourceControlEnabledHint: "Hides the source-control button and disables its shortcut.",
       cfgScShortcut: "Source control shortcut",
-      cfgScShortcutHint: "Combo that toggles the source control view; needs a modifier (Ctrl/Alt/Shift/Meta) + a key. The default avoids Ctrl+., which Chinese IMEs claim for punctuation toggle.",
       cfgCapturing: "Press a combo… (Esc to cancel)",
       cfgCapture: "Change",
       overridden: "Overridden",
@@ -536,13 +523,12 @@ window.__ModuleLoader__.load({
       phoneTitle: "Phone access",
       phoneStatusOn: "Gateway running · port {port}",
       phoneStatusErr: "Gateway not running: {error}",
-      phoneOff: "Phone access is disabled: turn it on under Settings → Plugin config → dsh-kit, then restart.",
       phoneLoading: "Generating links…",
       phoneLoadFail: "Failed to load: {error}",
       phoneLan: "LAN",
       phoneRemote: "Remote",
       phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
-      phoneCopy: "Copy",
+      phoneCopy: "Copy link",
       phoneCopied: "Copied",
       phoneRemoteHidden: "The remote link contains the access token and is hidden — use Copy and open it yourself.",
       phonePortInvalid: "Port must be an integer from 1-65535",
@@ -758,7 +744,6 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-tab[aria-pressed="true"]{background:var(--dsw-alias-brand-primary);color:#fff}
 .dshk-phone-qrwrap{display:flex;align-items:center;justify-content:center;min-height:120px;border-radius:10px;background:#fff;padding:6px;align-self:center}
 .dshk-phone-urlrow{display:flex;align-items:center;gap:6px;width:100%}
-.dshk-phone-url{flex:1;min-width:0;font-family:ui-monospace,Consolas,monospace;font-size:10px;line-height:1.4;color:var(--dsw-alias-label-secondary);word-break:break-all;user-select:text}
 .dshk-phone-copybtn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1;padding:7px 10px;border-radius:8px;cursor:pointer}
 .dshk-phone-copybtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-phone-copybtn[disabled]{opacity:.5;cursor:default}
@@ -767,9 +752,7 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-domain-label{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dshk-phone-domain-input{flex:1;min-width:0;font-size:11px;padding:5px 8px}
 .dshk-phone-gatebtn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1;padding:9px 10px;border-radius:8px;cursor:pointer;width:100%;margin-bottom:10px}
-.dshk-phone-btnrow{display:flex;gap:8px;margin-bottom:10px}
-.dshk-phone-btnrow .dshk-phone-gatebtn{flex:1;margin-bottom:0}
-.dshk-phone-rotate{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:9px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.dshk-phone-rotate{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:1;padding:7px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}
 .dshk-phone-rotate:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshk-phone-rotate[disabled]{opacity:.5;cursor:default}
 .dshk-phone-gatebtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -2918,14 +2901,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
       const links = linkData && Array.isArray(linkData.links) ? linkData.links : [];
       const activeUrl = links[activeIdx] ? links[activeIdx].url : "";
-      // 远程链接含访问令牌：不展示地址与二维码，只留复制按钮（防截屏/旁观泄露）
+      // 链接地址（含令牌）一律不直接展示：远程不出二维码，局域网保留二维码；
+      // 只给复制按钮（悬停 title 可查看完整链接）
       const activeIsRemote = !!(links[activeIdx] && links[activeIdx].label === "remote");
       react.useEffect(() => {
         if (!qrReady || activeUrl === "" || !canvasRef.current) return;
         try {
           drawPhoneQr(canvasRef.current, activeUrl);
         } catch {
-          // 绘制失败不阻塞面板：URL 文案仍可手动输入
+          // 绘制失败不阻塞面板：仍可点「复制链接」获取
         }
       }, [qrReady, activeUrl]);
 
@@ -2964,31 +2948,14 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             ],
           }),
           cfgScope
-            ? jsxRuntime.jsxs("div", {
-                className: "dshk-phone-btnrow",
-                children: [
-                  jsxRuntime.jsx("button", {
-                    type: "button",
-                    className: gatewayOn ? "dshk-phone-gatebtn dshk-phone-gatebtn-stop" : "dshk-phone-gatebtn",
-                    disabled: gateBusy,
-                    onClick: () => {
-                      toggleGateway(!gatewayOn);
-                    },
-                    children: t(gatewayOn ? "phoneGateStop" : "phoneGateStart"),
-                  }),
-                  gatewayOn
-                    ? jsxRuntime.jsx("button", {
-                        type: "button",
-                        className: "dshk-phone-rotate",
-                        title: t("phoneRotateHint"),
-                        disabled: gateBusy,
-                        onClick: () => {
-                          rotateLink();
-                        },
-                        children: t("phoneRotate"),
-                      })
-                    : null,
-                ],
+            ? jsxRuntime.jsx("button", {
+                type: "button",
+                className: gatewayOn ? "dshk-phone-gatebtn dshk-phone-gatebtn-stop" : "dshk-phone-gatebtn",
+                disabled: gateBusy,
+                onClick: () => {
+                  toggleGateway(!gatewayOn);
+                },
+                children: t(gatewayOn ? "phoneGateStop" : "phoneGateStart"),
               })
             : null,
           statusNode,
@@ -2996,7 +2963,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             ? jsxRuntime.jsxs("div", {
                 className: "dshk-phone-domain",
                 children: [
-                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("phoneRemoteDomain") }),
+                  jsxRuntime.jsx("span", { className: "dshk-phone-domain-label", children: t("cfgPhoneRemoteDomain") }),
                   jsxRuntime.jsx("input", {
                     type: "text",
                     className: "dshk-cfg-text dshk-phone-domain-input",
@@ -3066,10 +3033,25 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     jsxRuntime.jsxs("div", {
                       className: "dshk-phone-urlrow",
                       children: [
-                        activeIsRemote
-                          ? null
-                          : jsxRuntime.jsx("span", { className: "dshk-phone-url", children: activeUrl }),
-                        jsxRuntime.jsx("button", { type: "button", className: "dshk-phone-copybtn", onClick: copyActive, children: copied ? t("phoneCopied") : t("phoneCopy") }),
+                        jsxRuntime.jsx("button", {
+                          type: "button",
+                          className: "dshk-phone-copybtn",
+                          title: activeUrl,
+                          onClick: copyActive,
+                          children: copied ? t("phoneCopied") : t("phoneCopy"),
+                        }),
+                        gatewayOn
+                          ? jsxRuntime.jsx("button", {
+                              type: "button",
+                              className: "dshk-phone-rotate",
+                              title: t("phoneRotateHint"),
+                              disabled: gateBusy,
+                              onClick: () => {
+                                rotateLink();
+                              },
+                              children: t("phoneRotate"),
+                            })
+                          : null,
                       ],
                     }),
                     jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t(activeIsRemote ? "phoneRemoteHidden" : "phoneScanHint") }),
@@ -4156,12 +4138,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 ],
               }),
               control,
-              jsxRuntime.jsx("p", {
-                className: state.invalid ? "dshk-cfg-invalid" : "dshk-cfg-hint",
-                children: state.invalid
-                  ? t(spec.kind === "number" ? "invalidNumber" : "invalidCombo")
-                  : t(cfgLabelKey(field, "Hint")),
-              }),
+              // 组合键字段的说明行整体去掉（用户定稿）：按钮文本已显示当前组合键
+              state.invalid || spec.kind !== "combo"
+                ? jsxRuntime.jsx("p", {
+                    className: state.invalid ? "dshk-cfg-invalid" : "dshk-cfg-hint",
+                    children: state.invalid
+                      ? t(spec.kind === "number" ? "invalidNumber" : "invalidCombo")
+                      : t(cfgLabelKey(field, "Hint")),
+                  })
+                : null,
             ],
           });
         };
