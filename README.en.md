@@ -20,7 +20,10 @@ A terminal toggle on the composer tool row or **Ctrl+/** shows/hides the bottom
   terminals keep running and buffering output; each tab's ✕ kills that session;
   the badge on the entry icon shows how many are alive. Refreshing the page ends
   everything (no orphan processes)
-- On Windows prefers pwsh (PowerShell 7+), falls back to powershell.exe
+- On Windows prefers pwsh (PowerShell 7+), falls back to powershell.exe; the
+  spawn args explicitly enable **PSReadLine history prediction** — gray
+  suggestions over typed history, → to accept (older Windows PowerShell skips
+  automatically)
 
 ### File tree
 
@@ -39,6 +42,8 @@ A file-tree toggle on the composer tool row:
   column steps aside, drag the left edge to widen/narrow; ✎ enters edit mode
   (draft-based save, mtime CAS conflict asks to reload, truncated previews are
   not editable), ✕ closes back; ⇄ switches to the colored diff view
+- **md preview**: code blocks get a header bar — language label + one-click
+  copy (the button flashes "Copied")
 - Data flows through the plugin host's `/dsh-kit/tree` (directory listing),
   `/dsh-kit/read` (file content, 512 KB cap with truncation + text decoding),
   `/dsh-kit/write` (edit save: cwd-subtree validation + mtime CAS guard against

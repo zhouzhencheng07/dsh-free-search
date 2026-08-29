@@ -230,6 +230,17 @@ function recycleDelete(target, isDir) {
 
 /** Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；其它平台用 $SHELL 或 bash。结果缓存。 */
 let shellCache
+/** PSReadLine 历史预测初始化（灰字建议 + → 接受整条建议，fish 风格）：PowerShell
+ *  默认不启用，启动参数显式开启。-EncodedCommand（UTF-16LE base64）把初始化脚本
+ *  变成单一 token，规避 Windows 命令行的引号/空格问题；-NoExit 保证执行完初始化
+ *  仍进入交互会话，用户 profile 照常加载。Windows PowerShell 5.1 自带的旧版
+ *  PSReadLine 无该参数，try/catch 静默跳过；预测要求 VT 控制台，node-pty 的
+ *  ConPTY 满足（实测 PREDICT=History）。 */
+const PS_PREDICT_INIT = Buffer.from(
+  'try { Set-PSReadLineOption -PredictionSource History -ErrorAction Ignore } catch {}',
+  'utf16le',
+).toString('base64')
+
 function resolveShell() {
   if (shellCache) return shellCache
   if (process.platform === 'win32') {
@@ -246,8 +257,8 @@ function resolveShell() {
       }
     }
     shellCache = pwsh
-      ? { file: pwsh, args: ['-NoLogo'], label: 'pwsh' }
-      : { file: 'powershell.exe', args: ['-NoLogo'], label: 'powershell' }
+      ? { file: pwsh, args: ['-NoLogo', '-NoExit', '-EncodedCommand', PS_PREDICT_INIT], label: 'pwsh' }
+      : { file: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-EncodedCommand', PS_PREDICT_INIT], label: 'powershell' }
   } else {
     const file = process.env.SHELL || '/bin/bash'
     shellCache = { file, args: [], label: file }

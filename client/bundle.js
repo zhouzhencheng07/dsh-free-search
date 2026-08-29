@@ -252,6 +252,8 @@ window.__ModuleLoader__.load({
       diffFail: "diff 加载失败",
       diffEmpty: "（无未暂存差异）",
       diffUntracked: "未跟踪文件，暂无 diff",
+      mdCopyCode: "复制代码",
+      mdCopied: "已复制",
       gitM: "已修改",
       gitA: "新文件",
       gitD: "已删除",
@@ -427,6 +429,8 @@ window.__ModuleLoader__.load({
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
+      mdCopyCode: "Copy",
+      mdCopied: "Copied",
       gitM: "Modified",
       gitA: "Added",
       gitD: "Deleted",
@@ -799,6 +803,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-md code{font-family:ui-monospace,Consolas,monospace;font-size:.92em;background:var(--dsw-alias-bg-layer-3);border-radius:4px;padding:.15em .35em}
 .dshk-md pre{background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:10px 12px;overflow:auto}
 .dshk-md pre code{background:none;padding:0}
+.dshk-md-code{margin:.6em 0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
+.dshk-md-code pre{margin:0;border:0;border-radius:0}
+.dshk-md-codebar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 10px;background:var(--dsw-alias-bg-layer-3);border-bottom:1px solid var(--dsw-alias-border-l2)}
+.dshk-md-lang{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.dshk-md-copy{appearance:none;border:0;background:none;font:inherit;font-size:11px;line-height:1.4;cursor:pointer;color:var(--dsw-alias-label-secondary);padding:2px 6px;border-radius:4px}
+.dshk-md-copy:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-md blockquote{margin:.6em 0;padding:2px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
 .dshk-md table{border-collapse:collapse;margin:.6em 0;font-size:12px}
 .dshk-md th,.dshk-md td{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px;text-align:left}
@@ -2230,6 +2240,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // 需要源码时进编辑即是源码（无独立「切源码」按钮）。
       const [cmReady, setCmReady] = react.useState(false);
       const [mdHtml, setMdHtml] = react.useState(null);
+      const mdHostRef = react.useRef(null);
       const readHostRef = react.useRef(null);
       const editHostRef = react.useRef(null);
       react.useEffect(() => {
@@ -2370,6 +2381,51 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           alive = false;
         };
       }, [mdActive, state.body?.content]);
+      // md 代码块增强：给每个 pre>code 包一层头部条（语言标签 + 复制按钮），
+      // 复制走容器级事件委托。dangerouslySetInnerHTML 的内容 React 不再触碰，
+      // DOM 后处理不会被重渲染覆盖；内容变化时 mdHtml 变更触发重挂 innerHTML，
+      // 本 effect 随之重跑（React 会复用同一容器节点，委托监听重挂即可）。
+      react.useEffect(() => {
+        const host = mdHostRef.current;
+        if (!mdActive || mdHtml === null || !host) return undefined;
+        host.querySelectorAll("pre > code").forEach((code) => {
+          const pre = code.parentElement;
+          if (!pre || (pre.parentElement && pre.parentElement.classList.contains("dshk-md-code"))) return;
+          const m = /language-([\w+#.-]+)/.exec(code.className || "");
+          const bar = document.createElement("div");
+          bar.className = "dshk-md-codebar";
+          const lang = document.createElement("span");
+          lang.className = "dshk-md-lang";
+          lang.textContent = m ? m[1] : "";
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "dshk-md-copy";
+          btn.textContent = t("mdCopyCode");
+          bar.appendChild(lang);
+          bar.appendChild(btn);
+          const wrap = document.createElement("div");
+          wrap.className = "dshk-md-code";
+          pre.replaceWith(wrap);
+          wrap.appendChild(bar);
+          wrap.appendChild(pre);
+        });
+        const onClick = (e) => {
+          const btn = e.target instanceof Element ? e.target.closest(".dshk-md-copy") : null;
+          if (!btn) return;
+          const wrap = btn.closest(".dshk-md-code");
+          const code = wrap ? wrap.querySelector("pre > code") : null;
+          if (!code) return;
+          writeClipboard(code.textContent ?? "").then((ok) => {
+            if (!ok) return;
+            btn.textContent = t("mdCopied");
+            setTimeout(() => {
+              btn.textContent = t("mdCopyCode");
+            }, 1600);
+          });
+        };
+        host.addEventListener("click", onClick);
+        return () => host.removeEventListener("click", onClick);
+      }, [mdActive, mdHtml]);
       // 只读视图：文本类文件统一交给 CM（只读实例）；md 渲染态不挂
       react.useEffect(() => {
         const host = readHostRef.current;
@@ -2538,7 +2594,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               mdActive
                 ? mdHtml === null
                   ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
-                  : jsxRuntime.jsx("div", { className: "dshk-md", dangerouslySetInnerHTML: { __html: mdHtml } })
+                  : jsxRuntime.jsx("div", { className: "dshk-md", ref: mdHostRef, dangerouslySetInnerHTML: { __html: mdHtml } })
                 : cmReady
                   ? jsxRuntime.jsx("div", { className: "dshk-cm-host", ref: readHostRef })
                   : jsxRuntime.jsx("pre", { className: "dshk-pane-pre", children: b.content }),

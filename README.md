@@ -16,7 +16,9 @@
 - 入口按钮与快捷键只**开关坞的显示**——隐藏时后台 shell 继续运行、输出继续缓冲；
   每个标签 ✕ 结束对应会话，入口图标角标显示存活终端数；页面刷新结束全部
   （不留孤儿进程）
-- Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe
+- Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；启动参数显式开启
+  **PSReadLine 历史预测**——输入过的基础上出现灰字建议，按 → 接受（旧版
+  Windows PowerShell 自动跳过）
 
 ### 文件树（file tree）
 
@@ -30,6 +32,7 @@
 - 点击文件 → 右侧停靠面板预览/编辑内容：对话列自动让位，左缘拖动调宽/调窄；
   ✎ 进编辑态（草稿保存，mtime CAS 冲突时询问重载，截断预览不可编辑），✕ 关闭返回；
   ⇄ 可切到 diff 着色视图
+- **md 预览**：代码块带头部条——语言标签 + 一键复制（点击短暂变「已复制」）
 - 数据走插件宿主端点 `/dsh-kit/tree`（目录列表）、`/dsh-kit/read`（文件内容，
   512 KB 限长 + 文本解码）、`/dsh-kit/write`（编辑保存：cwd 子树校验 +
   mtime CAS 防并发覆盖）与 `/dsh-kit/fs/op`（新建/重命名/删除：目标必须位于
