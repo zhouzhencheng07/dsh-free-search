@@ -316,6 +316,7 @@ export function apply(ctx) {
       phoneEnabled: z.boolean().default(false),
       phoneRemoteDomain: z.string().default(''),
       phonePort: z.number().step(1).min(1).max(65535).default(3090),
+      phoneKeepGatewayOn: z.boolean().default(false),
       jobsEnabled: z.boolean().default(true),
       sidebarShortcut: z.string().default('Ctrl+B'),
       sidebarShortcutEnabled: z.boolean().default(true),
@@ -1221,10 +1222,19 @@ export function apply(ctx) {
         const n = readSettings().phonePort
         return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : PHONE_PORT
       }
+      /** 重启后保留开启：勾选时启动才恢复上次启用位；不勾=每次启动网关都是关的 */
+      const phoneKeepGatewayOn = () => readSettings().phoneKeepGatewayOn === true
       const warnLog = (msg) => console.warn(`dsh-kit: ${msg}`)
       let phoneGw = null
       let phoneGwError = null
-      let phoneGwWanted = loadGatewayState(stateFile, warnLog).enabled
+      const bootGwState = loadGatewayState(stateFile, warnLog)
+      // 默认每次 DSH 启动网关都是关的；「重启后保留开启」开着才恢复上次启用位。
+      // 落定值回写状态文件：未恢复时清掉残留的 enabled:true，避免之后勾上
+      // 「保留开启」时被陈旧启用位误恢复。
+      let phoneGwWanted = phoneKeepGatewayOn() && bootGwState.enabled === true
+      if (bootGwState.enabled !== phoneGwWanted) {
+        saveGatewayState(stateFile, { token: bootGwState.token, enabled: phoneGwWanted }, warnLog)
+      }
       /** 现役实例监听的端口；null = 无实例。用于识别端口配置变更 */
       let gwPort = null
       /** 按当前启用位同步网关启停 */
@@ -1271,21 +1281,14 @@ export function apply(ctx) {
       onSettingsChanged = () => {
         syncPhoneGateway()
       }
-      /** 改启用位（持久化到状态文件 + 热启停）；由 /dsh-kit/phone/gateway 端点调用 */
+      /** 改启用位（持久化到状态文件 + 热启停）；由 /dsh-kit/phone/gateway 端点调用。
+       *  令牌轮换不再随启停自动发生——页内「刷新链接」按钮经 rotate 端点手动触发，
+       *  重启/重开沿用同一令牌（已授权设备不掉线） */
       const setGatewayEnabled = (on) => {
-        const wasOn = phoneGwWanted
         phoneGwWanted = on === true
         const token = phoneGw ? phoneGw.token() : loadGatewayState(stateFile, warnLog).token
         saveGatewayState(stateFile, { token, enabled: phoneGwWanted }, warnLog)
         syncPhoneGateway()
-        // 「关闭 → 开启」自动轮换令牌（ZCode 一次一证语义：每次开启换新链接，
-        // 旧链接与已存设备即时失效；手动刷新按钮随之取消）。启动时按状态文件
-        // 恢复开启、或本来就开着再点，都不轮换。
-        // 注意不能等 state().listening：listen 事件晚于本轮事件循环，此刻必为
-        // false（同启停竞态）；rotate 只换令牌，不依赖监听状态。
-        if (phoneGwWanted && !wasOn && phoneGw !== null) {
-          phoneGw.rotate()
-        }
       }
       /** 带令牌的可扫码链接：局域网每个 IPv4 一条 + 远程域名（配置了才有） */
       const phoneLinks = () => {
@@ -1326,6 +1329,7 @@ export function apply(ctx) {
             error: phoneGwError ?? phoneGw?.state().error ?? null,
             port: phoneGw ? (phoneGw.port() ?? phonePort()) : phonePort(),
             remoteDomain: phoneRemoteDomain(),
+            keepGatewayOn: phoneKeepGatewayOn(),
             fingerprint: phoneGw ? phoneGw.fingerprint() : null,
           })
         },
@@ -1343,8 +1347,8 @@ export function apply(ctx) {
           phoneJson(res, 200, { links: phoneLinks(), fingerprint: phoneGw.fingerprint() })
         },
       })
-      // 手动轮换端点（保留）：UI 已无入口——「关闭→开启」自动轮换；此端点
-      // 供脚本/异常场景作废旧链接用。
+      // 手动轮换端点：页内「刷新链接」按钮（+ 脚本/异常场景）作废旧链接用。
+      // 启停不再自动轮换——见 setGatewayEnabled。
       const disposePhoneRotate = webCtx.webServer.register({
         kind: 'exact',
         path: '/dsh-kit/phone/rotate',

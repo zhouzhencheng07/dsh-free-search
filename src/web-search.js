@@ -2,9 +2,9 @@
 //
 // 向 web seam 注册 id 为 'free-search' 的搜索 provider，替换 base 层钉死的
 // `searchProvider: deepseek-official`（付费 DeepSeek 模型调用）——引擎链见
-// ./engine-chain.js（Tavily 免 key 优先，Sogou/GitHub/arXiv/StackExchange/HN
-// 回退），原生引用卡片照常渲染（seam 直接消费 sources[]）。cordis.patch.yml
-// 负责 patch web 行的 searchProvider 配置，本文件只负责注册。
+// ./engine-chain.js（Tavily 免 key 优先，Bing RSS/Sogou/GitHub/arXiv/
+// StackExchange/HN 回退），原生引用卡片照常渲染（seam 直接消费 sources[]）。
+// cordis.patch.yml 负责 patch web 行的 searchProvider 配置，本文件只负责注册。
 //
 // 设置卡 searchEnabled 开关（默认开）在【启动期】一次定夺该 id 背后挂哪种实现：
 //   开 = 免费引擎链；

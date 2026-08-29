@@ -138,10 +138,13 @@ browser to reach the dsh web running on this computer:
   the page**, 1-65535, auto-restarts on the new port after saving) bound to
   0.0.0.0 sends `?k=<token>` → HttpOnly Cookie → 302 to the loopback GUI; any
   missing/wrong token gets a 404, and expired cookies are rejected
-- **One gateway start, one credential**: every "off → on" cycle rotates the
-  token and issues a brand-new link, instantly invalidating old links and any
-  already-authorized devices; restoring from the state file or re-clicking while
-  already on does not rotate
+- **Off on every startup by default**: after a DSH restart the gateway no
+  longer restores itself; check "Keep enabled across restarts" in the page to
+  reuse the last enabled state (same token, authorized devices stay signed in)
+- **Manual token rotation**: the "New link" button in the page invalidates the
+  current link and issues a fresh one — old links and authorized devices die
+  instantly; start/stop no longer rotates automatically, restarts reuse the
+  same token
 - LAN and remote dual links: one `http://<ip>:<port>/?k=…` per local IPv4, plus
   `https://<domain>/?k=…` when a remote domain is configured (frp + caddy
   templates in `scripts/vps/`) — scan and go; **remote links hide the address
@@ -165,7 +168,8 @@ A host-side capability merged in from
   base layer's pinned `deepseek-official` (which costs one paid DeepSeek model
   call per search)
 - A keyless engine chain fails over by priority: **Tavily** (keyless; set
-  `TAVILY_API_KEY` for keyed quota) → **Sogou** (general fallback), with four
+  `TAVILY_API_KEY` for keyed quota) → **Bing** (RSS output, keyless) →
+  **Sogou** (general fallback), with four
   domain engines — **GitHub / arXiv / StackExchange / Hacker News** — joining
   first when a query strongly signals their domain. Zero configuration.
 - The agent's `web_search` tool keeps producing native citation cards

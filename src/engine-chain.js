@@ -2,9 +2,9 @@
 //
 // Tries engines in priority order and fails over automatically. Specialized
 // engines (GitHub, arXiv, StackExchange, HN) only participate when the query
-// strongly signals their domain; general engines (Tavily keyless, Sogou HTML)
-// always participate. All engines are free: Tavily runs in keyless mode
-// unless TAVILY_API_KEY is set, everything else needs no key at all.
+// strongly signals their domain; general engines (Tavily keyless, Bing RSS,
+// Sogou HTML) always participate. All engines are free: Tavily runs in keyless
+// mode unless TAVILY_API_KEY is set, everything else needs no key at all.
 //
 // Engine contract:
 //   {
@@ -18,6 +18,7 @@
 //   }
 
 import { tavilyEngine } from './engines/tavily.js'
+import { bingEngine } from './engines/bing.js'
 import { sogouEngine } from './engines/sogou.js'
 import { githubEngine } from './engines/github.js'
 import { arxivEngine } from './engines/arxiv.js'
@@ -25,13 +26,14 @@ import { stackExchangeEngine } from './engines/stackexchange.js'
 import { hnEngine } from './engines/hn.js'
 
 // Priority order: specialized first when matched (they are the best fit for
-// their domain), then the general engines.
+// their domain), then the general engines by result quality.
 const ENGINES = [
   githubEngine,
   arxivEngine,
   stackExchangeEngine,
   hnEngine,
   tavilyEngine,
+  bingEngine,
   sogouEngine,
 ]
 

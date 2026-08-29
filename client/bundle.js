@@ -330,6 +330,12 @@ window.__ModuleLoader__.load({
       phoneCopied: "已复制",
       phoneRemoteHidden: "远程链接含访问令牌，不直接展示——点「复制」获取后自行打开。",
       phonePortInvalid: "端口需为 1-65535 的整数",
+      phoneKeepOn: "重启后保留开启",
+      phoneKeepOnHint: "勾选后 DSH 重启会自动恢复网关开启状态（沿用同一令牌，已授权设备不掉线）；不勾则每次启动网关都是关闭的。",
+      phoneRotate: "刷新链接",
+      phoneRotateHint: "作废当前链接并生成新链接，已授权设备将全部失效。",
+      phoneRotated: "链接已刷新，旧链接已失效",
+      phoneRotateFail: "刷新失败：{error}",
       jobsTitle: "后台任务",
       jobsEmpty: "没有运行中的后台任务。",
       jobsStatusRunning: "运行中",
@@ -537,6 +543,12 @@ window.__ModuleLoader__.load({
       phoneCopied: "Copied",
       phoneRemoteHidden: "The remote link contains the access token and is hidden — use Copy and open it yourself.",
       phonePortInvalid: "Port must be an integer from 1-65535",
+      phoneKeepOn: "Keep enabled across restarts",
+      phoneKeepOnHint: "When checked, a DSH restart restores the gateway's enabled state (same token, authorized devices stay signed in); unchecked, the gateway starts off every time.",
+      phoneRotate: "New link",
+      phoneRotateHint: "Invalidate the current link and issue a new one; all authorized devices are signed out.",
+      phoneRotated: "Link rotated; the old one is dead",
+      phoneRotateFail: "Rotate failed: {error}",
       jobsTitle: "Background jobs",
       jobsEmpty: "No running background jobs.",
       jobsStatusRunning: "running",
@@ -754,6 +766,12 @@ body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 .dshk-phone-domain-label{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dshk-phone-domain-input{flex:1;min-width:0;font-size:11px;padding:5px 8px}
 .dshk-phone-gatebtn{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1;padding:9px 10px;border-radius:8px;cursor:pointer;width:100%;margin-bottom:10px}
+.dshk-phone-btnrow{display:flex;gap:8px;margin-bottom:10px}
+.dshk-phone-btnrow .dshk-phone-gatebtn{flex:1;margin-bottom:0}
+.dshk-phone-rotate{appearance:none;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:9px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.dshk-phone-rotate:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshk-phone-rotate[disabled]{opacity:.5;cursor:default}
+.dshk-phone-keepon{display:flex;gap:6px;align-items:center;margin:0 0 10px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;user-select:none}
 .dshk-phone-gatebtn:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshk-phone-gatebtn[disabled]{opacity:.5;cursor:default}
 .dshk-phone-gatebtn-stop{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
@@ -2778,6 +2796,44 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
         setGateBusy(false);
       };
+      // 手动轮换令牌：作废旧链接生成新链接（启停不再自动轮换，见宿主 setGatewayEnabled）
+      const rotateLink = async () => {
+        if (gateBusy) return;
+        setGateBusy(true);
+        try {
+          const res = await fetch("/dsh-kit/phone/rotate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || !body || !Array.isArray(body.links)) throw new Error(`HTTP ${res.status}`);
+          setLinkData(body);
+          setNotice(t("phoneRotated"));
+          setTimeout(() => setNotice(""), 3000);
+        } catch (e) {
+          setNotice(tf("phoneRotateFail", { error: String(e?.message ?? e) }));
+          setTimeout(() => setNotice(""), 3000);
+        }
+        setGateBusy(false);
+      };
+      // 「重启后保留开启」即时写设置，随后重读 info 让复选框落回权威值
+      const saveKeepOn = async (next) => {
+        if (!cfgScope) return;
+        setDomainSaving(true);
+        try {
+          await cfgScope.set("phoneKeepGatewayOn", next);
+          setNotice(t("save") + " ✓");
+        } catch {
+          // 写失败靠下方重读 info 覆盖，复选框回权威值
+        } finally {
+          setDomainSaving(false);
+          setTimeout(() => setNotice(""), 3000);
+          fetchPhoneInfo(new AbortController().signal)
+            .then((body) => setInfo(body))
+            .catch(() => {});
+        }
+      };
       const shownDomain = domainTouched
         ? domainValue
         : info && typeof info.remoteDomain === "string"
@@ -2907,14 +2963,31 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             ],
           }),
           cfgScope
-            ? jsxRuntime.jsx("button", {
-                type: "button",
-                className: gatewayOn ? "dshk-phone-gatebtn dshk-phone-gatebtn-stop" : "dshk-phone-gatebtn",
-                disabled: gateBusy,
-                onClick: () => {
-                  toggleGateway(!gatewayOn);
-                },
-                children: t(gatewayOn ? "phoneGateStop" : "phoneGateStart"),
+            ? jsxRuntime.jsxs("div", {
+                className: "dshk-phone-btnrow",
+                children: [
+                  jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: gatewayOn ? "dshk-phone-gatebtn dshk-phone-gatebtn-stop" : "dshk-phone-gatebtn",
+                    disabled: gateBusy,
+                    onClick: () => {
+                      toggleGateway(!gatewayOn);
+                    },
+                    children: t(gatewayOn ? "phoneGateStop" : "phoneGateStart"),
+                  }),
+                  gatewayOn
+                    ? jsxRuntime.jsx("button", {
+                        type: "button",
+                        className: "dshk-phone-rotate",
+                        title: t("phoneRotateHint"),
+                        disabled: gateBusy,
+                        onClick: () => {
+                          rotateLink();
+                        },
+                        children: t("phoneRotate"),
+                      })
+                    : null,
+                ],
               })
             : null,
           statusNode,
@@ -2959,6 +3032,24 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     },
                     children: t("save"),
                   }),
+                ],
+              })
+            : null,
+          cfgScope
+            ? jsxRuntime.jsxs("label", {
+                className: "dshk-phone-keepon",
+                title: t("phoneKeepOnHint"),
+                children: [
+                  jsxRuntime.jsx("input", {
+                    type: "checkbox",
+                    className: "dshk-cfg-check",
+                    checked: info !== null && info.keepGatewayOn === true,
+                    disabled: domainSaving,
+                    onChange: (e) => {
+                      saveKeepOn(e.target.checked);
+                    },
+                  }),
+                  jsxRuntime.jsx("span", { children: t("phoneKeepOn") }),
                 ],
               })
             : null,
