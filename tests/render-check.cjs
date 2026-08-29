@@ -37,8 +37,8 @@ const reactStub = {
 };
 const jsxRuntimeStub = {
   Fragment: function Fragment() {},
-  jsx: (type, props) => { callLog.push(["jsx", type]); return { type, props, $$dshk: "jsx" }; },
-  jsxs: (type, props) => { callLog.push(["jsxs", type]); return { type, props, $$dshk: "jsxs" }; },
+  jsx: (type, props) => { callLog.push(["jsx", type, props]); return { type, props, $$dshk: "jsx" }; },
+  jsxs: (type, props) => { callLog.push(["jsxs", type, props]); return { type, props, $$dshk: "jsxs" }; },
 };
 const windowStub = {
   __ModuleLoader__: { load: () => { /* noop */ } },
@@ -75,6 +75,30 @@ check("TreeNode 文件渲染无异常", !!out && typeof out === "object");
 callLog = [];
 out = comps.TreeNode({ entry: { name: "src", path: "C:/x/src", dir: true }, depth: 0, expanded: {}, onToggle: () => {}, onOpenFile: () => {} });
 check("TreeNode 目录渲染无异常", !!out && typeof out === "object");
+
+// 4b) TreeNode 带 actions：行悬停出现复制绝对/相对路径按钮，点击回调携带 relative 标志
+let copiedRel = null;
+callLog = [];
+out = comps.TreeNode({
+  entry: { name: "b.js", path: "D:/w/b.js", dir: false },
+  depth: 0,
+  expanded: {},
+  onToggle: () => {},
+  onOpenFile: () => {},
+  actions: { onCopyPath: (_entry, rel) => { copiedRel = rel; } },
+});
+const findBtnByTitle = (...titles) => {
+  const hit = callLog.find(([, , p]) => p && typeof p === "object" && titles.includes(p.title));
+  return hit ? hit[2] : null;
+};
+const absBtn = findBtnByTitle("复制绝对路径", "Copy absolute path");
+const relBtn = findBtnByTitle("复制相对路径", "Copy relative path");
+check("TreeNode 复制路径按钮渲染(绝对+相对)", !!absBtn && !!relBtn);
+const fakeEvent = { stopPropagation() {} };
+absBtn.onClick(fakeEvent);
+check("复制绝对路径回调 relative=false", copiedRel === false);
+relBtn.onClick(fakeEvent);
+check("复制相对路径回调 relative=true", copiedRel === true);
 
 // 5) FileTreePanel：cwd 有/无
 callLog = [];

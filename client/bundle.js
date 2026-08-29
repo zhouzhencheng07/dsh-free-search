@@ -212,6 +212,9 @@ window.__ModuleLoader__.load({
       treeNewFolder: "新建文件夹",
       treeRename: "重命名",
       treeDelete: "删除",
+      treeCopyAbs: "复制绝对路径",
+      treeCopyRel: "复制相对路径",
+      treeCopied: "已复制路径",
       promptFileName: "新文件名：",
       promptFolderName: "新文件夹名：",
       confirmDelete: "删除「{name}」？内容将移入回收站。",
@@ -384,6 +387,9 @@ window.__ModuleLoader__.load({
       treeNewFolder: "New Folder",
       treeRename: "Rename",
       treeDelete: "Delete",
+      treeCopyAbs: "Copy absolute path",
+      treeCopyRel: "Copy relative path",
+      treeCopied: "Path copied",
       promptFileName: "New file name:",
       promptFolderName: "New folder name:",
       confirmDelete: "Delete \"{name}\"? It will be moved to the Recycle Bin.",
@@ -911,6 +917,32 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       toastTimer = window.setTimeout(() => {
         if (toastEl) toastEl.removeAttribute("data-show");
       }, 1600);
+    }
+
+    /** 写剪贴板：优先 Clipboard API；手机经局域网 http 访问时无安全上下文，退 execCommand */
+    function writeClipboard(text) {
+      const fallback = () => {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          ta.remove();
+          return ok;
+        } catch {
+          return false;
+        }
+      };
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        return navigator.clipboard.writeText(text).then(
+          () => true,
+          () => fallback(),
+        );
+      }
+      return Promise.resolve(fallback());
     }
 
     // ─────────── 当前会话工作区 ───────────
@@ -1501,6 +1533,50 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       );
     }
 
+    /** 复制绝对路径图标：经典双矩形 copy */
+    function CopyAbsIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M9.5 3.5h-5a1 1 0 0 0-1 1v5" }),
+            jsxRuntime.jsx("rect", { x: "6.5", y: "6.5", width: "7", height: "7", rx: "1" }),
+          ],
+        },
+      );
+    }
+
+    /** 复制相对路径图标：单矩形 + 省略点（前缀被略去） */
+    function CopyRelIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("rect", { x: "3.5", y: "4.5", width: "9.5", height: "7.5", rx: "1" }),
+            jsxRuntime.jsx("path", { d: "M6 8.25h.01M8.25 8.25h.01M10.5 8.25h.01", strokeWidth: 1.6 }),
+          ],
+        },
+      );
+    }
+
     /** 展开箭头：对齐原生工作区树的 IconTriangleRightFill14（右向实心三角，展开时 rotate 90° 朝下） */
     function ChevronIcon({ open }) {
       return jsxRuntime.jsx(
@@ -1533,6 +1609,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
      * 单层目录状态：{status:'loading'|'ready'|'error', entries?, truncated?, error?}
      * actions 可选——缺省时不渲染行悬停操作（渲染级验证桩调用即不带）：
      *   onCreate(dirPath,isDir) / onDelete(entry) / onRename(entry)=进入行内改名；
+     *   onCopyPath(entry, relative)=复制绝对/相对路径；
      *   renamingPath + onRenameSubmit(entry,value) + onRenameCancel() 驱动行内输入框。
      */
     function TreeNode({ entry, depth, expanded, onToggle, onOpenFile, actions }) {
@@ -1543,6 +1620,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       if (entry.dir && acts.onCreate) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFile"), onClick: () => acts.onCreate(entry.path, false), children: jsxRuntime.jsx(FilePlusIcon, {}) }, "nf"));
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFolder"), onClick: () => acts.onCreate(entry.path, true), children: jsxRuntime.jsx(FolderPlusIcon, {}) }, "nd"));
+      }
+      if (acts.onCopyPath) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeCopyAbs"), onClick: () => acts.onCopyPath(entry, false), children: jsxRuntime.jsx(CopyAbsIcon, {}) }, "ca"));
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeCopyRel"), onClick: () => acts.onCopyPath(entry, true), children: jsxRuntime.jsx(CopyRelIcon, {}) }, "cr"));
       }
       if (acts.onRename && !renaming) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeRename"), onClick: () => acts.onRename(entry), children: "✎" }, "rn"));
@@ -1696,6 +1777,19 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
         return i > 0 ? p.slice(0, i) : cwd ?? p;
       };
+      // ── 复制路径：entry.path 本就是绝对路径；相对路径 = 去掉树根（cwd）前缀 ──
+      // 前缀比较必须卡在分隔符边界（cwd=D:\proj 时 D:\project2\x 不能误切成 ect2\x），
+      // 不满足边界时回落绝对路径
+      const copyEntryPath = (entry, relative) => {
+        let text = entry.path;
+        if (relative && cwd && entry.path.startsWith(cwd)) {
+          const rest = entry.path.slice(cwd.length);
+          if (rest === "" || /^[\\/]/.test(rest)) text = rest.replace(/^[\\/]+/, "");
+        }
+        writeClipboard(text).then((ok) => {
+          if (ok) flashToast(t("treeCopied"));
+        });
+      };
       /** 清掉以 prefix 为根的整棵子树的展开缓存（目录改名/删除后这些键全部过期） */
       const pruneExpandedFrom = (prefix) => {
         const a = `${prefix}\\`;
@@ -1778,6 +1872,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         onCreate: createEntry,
         onDelete: deleteEntry,
         onRename: startRename,
+        onCopyPath: copyEntryPath,
         renamingPath,
         onRenameSubmit: submitRename,
         onRenameCancel: cancelRename,
