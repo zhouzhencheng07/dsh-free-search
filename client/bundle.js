@@ -2966,7 +2966,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             className: "dshk-head",
             children: [
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
-              jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
+              // 第二段是相对工作区根的路径；文件就在根目录时它等于文件名，纯重复不显示
+              displayPath !== base
+                ? jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath })
+                : null,
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
               // PDF 页码指示器：挂标题栏固定区不遮内容；文档加载失败时不给槽位
               isPdf && state.phase === "ready" && !pdfError
