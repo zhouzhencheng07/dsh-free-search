@@ -679,7 +679,8 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-pdf-scroll{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%}
 .dshk-pdf-slot{background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);max-width:100%;display:flex;align-items:center;justify-content:center}
 .dshk-pdf-slotno{color:#9a9a9a;font-size:13px;user-select:none}
-.dshk-pdf-indicator{position:sticky;bottom:10px;align-self:flex-end;margin-right:6px;z-index:2;display:flex;align-items:center;gap:2px;padding:3px 10px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 2px 8px rgba(0,0,0,.18);font-size:12px;color:var(--dsw-alias-label-secondary)}
+/* 页码指示器挂预览面板标题栏（固定 UI 区，不遮内容），占位/canvas 全由 mountPdfViewer 管 */
+.dshk-pdf-indicator{flex:none;display:flex;align-items:center;gap:2px;padding:2px 10px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshk-pdf-jump{width:3.2em;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:center;outline:none}
 /* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
 .dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
@@ -976,10 +977,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     /** PDF 懒加载查看器：先按第 1 页纵横比铺全量占位（滚动条即真实页数长度），
      *  占位进入预载区（IntersectionObserver，root=滚动容器）才渲染 canvas，
      *  距所有预载区页超过 EVICT 页则释放位图——大文档内存只随视口附近页数走。
-     *  右下角悬浮页码指示器：实时当前页（滚动内容 offset 二分），输入数字回车
-     *  跳页（跳转由占位承接，滚过去即渲染）。cancelled() 为真则中止；返回
+     *  页码指示器（实时当前页 + 回车跳页）挂 headSlot（面板标题栏槽位，固定区
+     *  不遮内容），跳转由占位承接、滚过去即渲染。cancelled() 为真则中止；返回
      *  dispose（断观察器/监听 + 清 DOM）或 null（未建成）。 */
-    async function mountPdfViewer(scrollEl, doc, cancelled) {
+    async function mountPdfViewer(scrollEl, headSlot, doc, cancelled) {
       const p1 = await doc.getPage(1);
       if (cancelled()) return null;
       const vb1 = p1.getViewport({ scale: 1 });
@@ -1036,9 +1037,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         slots.push(slot);
         frag.appendChild(slot);
       }
-      // 指示器放列尾 + sticky bottom：非末屏时始终悬浮在滚动视口下缘
-      frag.appendChild(indicator);
       scrollEl.appendChild(frag);
+      // 指示器挂标题栏槽位（React 提供挂载点）；槽位缺席时静默降级为无指示器
+      if (headSlot) headSlot.appendChild(indicator);
 
       const applySizes = () => {
         lastW = slotWidth();
@@ -1186,8 +1187,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         ro.disconnect();
         scroller.removeEventListener("scroll", onScroll);
         // 只在本查看器 DOM 还挂着时清空——effect 清理可能已 innerHTML=""，
-        // 而新一次 mount 已建好内容，此时再清会误伤新查看器
-        if (indicator.isConnected) scrollEl.textContent = "";
+        // 而新一次 mount 已建好内容，此时再清会误伤新查看器；指示器 pill 自摘
+        if (slots[1] && slots[1].isConnected) scrollEl.textContent = "";
+        indicator.remove();
       };
       syncCurrent();
       return teardown;
@@ -2528,6 +2530,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [pdfDone, setPdfDone] = react.useState(false);
       const mdHostRef = react.useRef(null);
       const pdfHostRef = react.useRef(null);
+      // 标题栏页码指示器槽位（React 只给挂载点，内容归 mountPdfViewer 命令式管理）
+      const pdfIndicatorRef = react.useRef(null);
       const readHostRef = react.useRef(null);
       const editHostRef = react.useRef(null);
       react.useEffect(() => {
@@ -2741,7 +2745,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           .then((d) => {
             if (!alive || !d) return undefined;
             doc = d;
-            return mountPdfViewer(host, d, () => !alive);
+            return mountPdfViewer(host, pdfIndicatorRef.current, d, () => !alive);
           })
           .then((dispose) => {
             if (!dispose) return;
@@ -2964,6 +2968,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
+              // PDF 页码指示器：挂标题栏固定区不遮内容；文档加载失败时不给槽位
+              isPdf && state.phase === "ready" && !pdfError
+                ? jsxRuntime.jsx("span", { ref: pdfIndicatorRef })
+                : null,
               // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）；
               // PDF 无 diff 视图，不显示
               !editing && !isPdf
