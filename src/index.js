@@ -55,6 +55,7 @@ import { applyWebSearch } from './web-search.js'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
 import { decodePreviewText } from './text-decode.js'
 import { rawContentType, parseRangeHeader } from './raw-file.js'
+import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from './upload.js'
 
 /** 手机访问网关对外端口（0.0.0.0）的默认值，可在设置里改（phonePort，1-65535） */
 const PHONE_PORT = 3090
@@ -717,6 +718,96 @@ export function apply(ctx) {
               json(200, { ok: true, mtimeMs: next ?? null })
             })
           })
+        },
+      })
+
+      // ── 上传端点：POST /dsh-kit/upload?dir=<绝对目录>（multipart 文件，落盘该目录）──
+      // 场景：手机访问 DSH 时用 <input type=file> 唤起手机自己的选择器（原生对话框
+      // 只会弹在运行它的机器上，手机够不到电脑的），选完经 HTTP 传回写入工作区。
+      // 校验链与 /write 一致：同源（POST 强制 Origin）→ dir 走 validateCwd；文件名
+      // 只取 basename + 去非法字符，重名自动追加 " (n)" 序号不覆盖。整体缓冲有上限，
+      // 单文件另设上限（multipart 手工解析，见 src/upload.js）。
+      const UPLOAD_TOTAL_LIMIT = 200 * 1024 * 1024
+      const UPLOAD_FILE_LIMIT = 100 * 1024 * 1024
+      const disposeUpload = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/upload',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'POST') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          if (!sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const dir = validateCwd(url.searchParams.get('dir') ?? '')
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          const boundary = multipartBoundary(req.headers['content-type'])
+          if (!boundary) {
+            json(415, { error: '需要 multipart/form-data' })
+            return
+          }
+          const chunks = []
+          let total = 0
+          let aborted = false
+          req.on('data', (c) => {
+            if (aborted) return
+            total += c.length
+            if (total > UPLOAD_TOTAL_LIMIT) {
+              aborted = true
+              json(413, { error: `上传总大小超过 ${Math.round(UPLOAD_TOTAL_LIMIT / 1048576)}MB 上限` })
+              req.destroy()
+              return
+            }
+            chunks.push(c)
+          })
+          req.on('end', () => {
+            if (aborted) return
+            const parts = parseMultipart(Buffer.concat(chunks), boundary)
+            if (parts.length === 0) {
+              json(400, { error: '没有可解析的文件' })
+              return
+            }
+            const saved = []
+            let warning = null
+            for (const part of parts) {
+              const name = safeUploadName(part.filename)
+              if (!name) {
+                warning = `跳过非法文件名：${part.filename}`
+                continue
+              }
+              if (part.data.length > UPLOAD_FILE_LIMIT) {
+                warning = `${name} 超过单文件 100MB 上限，已跳过`
+                continue
+              }
+              const final = dedupeName(dir.path, name, (p) => fs.existsSync(p))
+              if (!final) {
+                warning = `${name} 重名冲突无法命名，已跳过`
+                continue
+              }
+              try {
+                fs.writeFileSync(path.join(dir.path, final), part.data)
+                saved.push({ name: final, size: part.data.length })
+              } catch (error) {
+                warning = `写入失败：${error?.message ?? error}`
+              }
+            }
+            if (saved.length === 0) {
+              json(400, { error: warning ?? '没有可保存的文件' })
+              return
+            }
+            json(200, { saved, warning })
+          })
+          req.on('error', () => {})
         },
       })
 
@@ -1648,6 +1739,7 @@ export function apply(ctx) {
         disposeRead()
         disposeRaw()
         disposeWrite()
+        disposeUpload()
         disposeFsOp()
         disposeGitStatus()
         disposeGitDiff()
@@ -1663,6 +1755,6 @@ export function apply(ctx) {
         disposeJobsOutput()
         if (phoneGw) phoneGw.close()
       }
-    }, 'dsh-kit: terminal/vendor/tree/read/write/fs-op/git/phone endpoints')
+    }, 'dsh-kit: terminal/vendor/tree/read/write/upload/fs-op/git/phone endpoints')
   })
 }

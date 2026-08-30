@@ -215,6 +215,9 @@ window.__ModuleLoader__.load({
       treeTruncated: "条目过多，列表已截断",
       treeNewFile: "新建文件",
       treeNewFolder: "新建文件夹",
+      treeUpload: "上传文件到当前目录",
+      uploadDone: "已上传 {n} 个文件",
+      uploadFail: "上传失败",
       treeRename: "重命名",
       treeDelete: "删除",
       treeCopyAbs: "复制绝对路径",
@@ -266,7 +269,7 @@ window.__ModuleLoader__.load({
       contentBinary: "二进制文件，无法预览",
       pdfNewTab: "在新标签页打开",
       pdfJump: "跳转到指定页",
-      sheetRowCap: "表格较大，仅预览前 500 行 × 64 列",
+      sheetRowCap: "表格较大，仅加载部分行列；悬停单元格可看完整内容",
       previewTooLarge: "文件超过 20MB，不预览",
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
@@ -402,6 +405,9 @@ window.__ModuleLoader__.load({
       treeTruncated: "Too many entries, list truncated",
       treeNewFile: "New File",
       treeNewFolder: "New Folder",
+      treeUpload: "Upload files to this folder",
+      uploadDone: "Uploaded {n} file(s)",
+      uploadFail: "Upload failed",
       treeRename: "Rename",
       treeDelete: "Delete",
       treeCopyAbs: "Copy absolute path",
@@ -453,7 +459,7 @@ window.__ModuleLoader__.load({
       contentBinary: "Binary file, preview unavailable",
       pdfNewTab: "Open in new tab",
       pdfJump: "Jump to page",
-      sheetRowCap: "Large sheet: showing first 500 rows × 64 columns",
+      sheetRowCap: "Large sheet: partially loaded; hover a cell for full content",
       previewTooLarge: "File exceeds 20MB, preview skipped",
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
@@ -686,14 +692,20 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 /* 页码指示器挂预览面板标题栏（固定 UI 区，不遮内容），占位/canvas 全由 mountPdfViewer 管 */
 .dshk-pdf-indicator{flex:none;display:flex;align-items:center;gap:2px;padding:2px 10px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshk-pdf-jump{width:3.2em;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:center;outline:none}
-/* Excel 预览：工作表标签 + 只读表格（SheetJS sheet_to_html 产物经 DOMPurify 消毒） */
+/* Excel 预览：工作表标签 + 虚拟滚动表（冻结表头 sticky、窗口渲染、固定行高列宽，
+   单元格 textContent 注入免消毒） */
 .dshk-sheetwrap{padding:6px 0 16px;display:flex;flex-direction:column;gap:8px}
 .dshk-sheet-tabs{display:flex;gap:4px;flex-wrap:wrap}
 .dshk-sheet-tab{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer;max-width:14em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshk-sheet-tab-on,.dshk-sheet-tab-on:hover{background:var(--dsw-alias-button-tool-bar-fill);color:var(--dsw-alias-label-primary);border-color:transparent}
-.dshk-sheet-scroll{width:100%}
-.dshk-sheet-scroll table{border-collapse:collapse;font-size:12px}
-.dshk-sheet-scroll td{border:1px solid var(--dsw-alias-border-l1);padding:2px 8px;white-space:nowrap;max-width:26em;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
+.dshk-sheet-scroll{flex:1 1 auto;min-height:0;overflow:auto}
+.dshk-sheet-head{position:sticky;top:0;z-index:2;display:flex;width:max-content;min-width:100%;background:var(--dsw-alias-bg-base);border-bottom:2px solid var(--dsw-alias-border-l2)}
+.dshk-sheet-hcell{flex:none;padding:0 8px;line-height:25px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshk-sheet-body{position:relative}
+.dshk-sheet-window{position:absolute;left:0}
+.dshk-sheet-row{display:flex;width:max-content;min-width:100%}
+.dshk-sheet-cell{flex:none;padding:0 8px;line-height:25px;font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshk-sheet-num{text-align:right;font-variant-numeric:tabular-nums}
 /* docx 预览：mammoth 语义 HTML 复用 .dshk-md 排版，补表格/图片规则 */
 .dshk-docwrap{padding:8px 0 16px}
 .dshk-doc{max-width:72em;margin:0 auto}
@@ -1000,38 +1012,68 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         win.pdfjsLib.GlobalWorkerOptions.workerSrc = location.origin + "/dsh-kit/vendor/pdf.worker.min.js";
       });
     }
-    /** SheetJS 解析：每表裁剪到 500 行 × 64 列（合并单元格收进界内防表结构破损），
-     *  sheet_to_html 出表格 HTML，主文档侧再过 DOMPurify。 */
+    /** SheetJS 解析：打开工作簿留在沙箱（__dshkSheetOpen），按表号取**全量格式化
+     *  矩阵**（__dshkSheetGet）——虚拟滚动渲染，不再生成表格 HTML。上限 5 万行 ×
+     *  256 列 + 150 万单元格总量（超限裁行并标记 truncated）；列宽取自工作簿
+     *  !cols（wpx/wch 换算），无则默认。raw:false 取显示文本（日期等已格式化）。 */
     function ensureSheetBox() {
       return ensureBox("sheet", ["/dsh-kit/vendor/xlsx.full.min.js"], (win) => {
-        win.__dshkSheetParse = (bytes) => {
-          const X = win.XLSX;
-          const wb = X.read(bytes, { type: "array" });
-          const ROW_CAP = 500;
-          const COL_CAP = 64;
-          return wb.SheetNames.map((name) => {
-            const ws = wb.Sheets[name];
-            const range = X.utils.decode_range(ws["!ref"] ?? "A1");
-            const totalRows = range.e.r - range.s.r + 1;
-            const totalCols = range.e.c - range.s.c + 1;
-            const truncated = totalRows > ROW_CAP || totalCols > COL_CAP;
-            range.e.r = Math.min(range.e.r, range.s.r + ROW_CAP - 1);
-            range.e.c = Math.min(range.e.c, range.s.c + COL_CAP - 1);
-            const merges = (ws["!merges"] ?? [])
-              .map((m) => ({
-                s: { r: Math.max(m.s.r, range.s.r), c: Math.max(m.s.c, range.s.c) },
-                e: { r: Math.min(m.e.r, range.e.r), c: Math.min(m.e.c, range.e.c) },
-              }))
-              .filter((m) => m.e.r >= m.s.r && m.e.c >= m.s.c);
-            const clipped = Object.assign({}, ws, { "!ref": X.utils.encode_range(range), "!merges": merges });
-            return {
-              name,
-              html: X.utils.sheet_to_html(clipped, { header: "", footer: "" }),
-              truncated,
-              totalRows,
-              totalCols,
-            };
+        const X = win.XLSX;
+        const ROW_CAP = 50000;
+        const COL_CAP = 256;
+        const CELL_CAP = 1500000;
+        let boxWb = null;
+        win.__dshkSheetOpen = (bytes) => {
+          boxWb = X.read(bytes, { type: "array" });
+          return boxWb.SheetNames.slice();
+        };
+        win.__dshkSheetGet = (idx) => {
+          if (!boxWb) throw new Error("工作簿未打开");
+          const name = boxWb.SheetNames[idx];
+          const ws = boxWb.Sheets[name];
+          const range = X.utils.decode_range(ws["!ref"] ?? "A1");
+          const totalRows = range.e.r - range.s.r + 1;
+          const totalCols = range.e.c - range.s.c + 1;
+          const cols = Math.min(totalCols, COL_CAP);
+          const rows = Math.min(totalRows, ROW_CAP, Math.max(1, Math.floor(CELL_CAP / cols)));
+          range.e.c = range.s.c + cols - 1;
+          range.e.r = range.s.r + rows - 1;
+          // 裁剪后的工作表：范围收界；合并只保留完整落界的（虚拟滚动不跨格渲染，
+          // 仅首行横向合并由渲染层单独处理）
+          const merges = (ws["!merges"] ?? []).filter((m) => m.e.r <= range.e.r && m.e.c <= range.e.c);
+          const clipped = Object.assign({}, ws, { "!ref": X.utils.encode_range(range), "!merges": merges });
+          const matrix = X.utils.sheet_to_json(clipped, { header: 1, raw: false, defval: "" });
+          const norm = matrix.map((r) => {
+            const out = new Array(cols);
+            for (let c = 0; c < cols; c++) out[c] = r && r[c] != null ? String(r[c]) : "";
+            return out;
           });
+          while (norm.length < rows) norm.push(new Array(cols).fill(""));
+          const header = norm.shift() ?? new Array(cols).fill("");
+          const headerSpans = merges
+            .filter((m) => m.s.r === range.s.r)
+            .map((m) => ({ c: m.s.c - range.s.c, span: Math.min(m.e.c, range.e.c) - m.s.c + 1 }))
+            .filter((s) => s.c >= 0 && s.span > 1);
+          const rawCols = ws["!cols"] ?? [];
+          const colWidths = [];
+          for (let c = 0; c < cols; c++) {
+            const w = rawCols[c];
+            if (w && w.wpx) colWidths.push(Math.min(360, Math.max(40, Math.round(w.wpx))));
+            else if (w && w.wch) colWidths.push(Math.min(360, Math.max(40, Math.round(w.wch * 8 + 12))));
+            else colWidths.push(110);
+          }
+          return {
+            name,
+            header,
+            headerSpans,
+            rows: norm,
+            colWidths,
+            totalRows,
+            totalCols,
+            shownRows: rows,
+            shownCols: cols,
+            truncated: totalRows > rows || totalCols > cols,
+          };
         };
       });
     }
@@ -1266,6 +1308,75 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       };
       syncCurrent();
       return teardown;
+    }
+    /** Excel 虚拟滚动表：冻结表头（sticky）+ 窗口渲染——数据全量在手，只画视口
+     *  附近 ±若干行，滚动时重算窗口（rAF 节流）；固定行高 + 固定列宽（来自工作
+     *  簿）是窗口化的前提。单元格用 textContent 注入，天然免消毒。返回 dispose。 */
+    function mountSheetTable(scrollEl, sheet) {
+      scrollEl.textContent = "";
+      const ROW_H = 26;
+      const totalW = sheet.colWidths.reduce((a, b) => a + b, 0);
+      // 冻结表头：sticky 钉在滚动口顶部，横向随内容滚动，宽度对齐列
+      const head = document.createElement("div");
+      head.className = "dshk-sheet-head";
+      head.style.height = `${ROW_H}px`;
+      const spans = new Map(sheet.headerSpans.map((s) => [s.c, s.span]));
+      let c = 0;
+      while (c < sheet.header.length) {
+        const cell = document.createElement("div");
+        cell.className = "dshk-sheet-hcell";
+        const span = spans.has(c) ? spans.get(c) : 1;
+        cell.style.width = `${sheet.colWidths.slice(c, c + span).reduce((a, b) => a + b, 0)}px`;
+        cell.textContent = sheet.header[c] ?? "";
+        head.appendChild(cell);
+        c += span;
+      }
+      // 撑出真实滚动高度的空壳 + 绝对定位的渲染窗口
+      const bodyWrap = document.createElement("div");
+      bodyWrap.className = "dshk-sheet-body";
+      bodyWrap.style.height = `${sheet.rows.length * ROW_H}px`;
+      bodyWrap.style.width = `${totalW}px`;
+      const winEl = document.createElement("div");
+      winEl.className = "dshk-sheet-window";
+      bodyWrap.appendChild(winEl);
+      scrollEl.append(head, bodyWrap);
+
+      let raf = 0;
+      const isNumeric = (v) => /^-?[\d,.\s]+%?$/.test(v) && /\d/.test(v);
+      const render = () => {
+        raf = 0;
+        const first = Math.max(0, Math.floor(scrollEl.scrollTop / ROW_H) - 5);
+        const count = Math.ceil(scrollEl.clientHeight / ROW_H) + 11;
+        const last = Math.min(sheet.rows.length, first + count);
+        winEl.style.top = `${first * ROW_H}px`;
+        winEl.textContent = "";
+        const frag = document.createDocumentFragment();
+        for (let i = first; i < last; i++) {
+          const row = document.createElement("div");
+          row.className = "dshk-sheet-row";
+          row.style.height = `${ROW_H}px`;
+          const cells = sheet.rows[i];
+          for (let j = 0; j < cells.length; j++) {
+            const cell = document.createElement("div");
+            cell.className = "dshk-sheet-cell" + (isNumeric(cells[j]) ? " dshk-sheet-num" : "");
+            cell.style.width = `${sheet.colWidths[j]}px`;
+            cell.textContent = cells[j];
+            cell.title = cells[j]; // 省略时悬停看全值
+            row.appendChild(cell);
+          }
+          frag.appendChild(row);
+        }
+        winEl.appendChild(frag);
+      };
+      const onScroll = () => {
+        if (!raf) raf = requestAnimationFrame(render);
+      };
+      scrollEl.addEventListener("scroll", onScroll, { passive: true });
+      render();
+      return () => {
+        if (raf) cancelAnimationFrame(raf);
+        scrollEl.removeEventListener("scroll", onScroll);
+      };
     }
     function extOf(p) {
       const m = /\.([a-z0-9]+)$/i.exec(String(p ?? ""));
@@ -1849,6 +1960,29 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       );
     }
 
+    /** 上传图标：向上箭头 + 底部托盘 */
+    function UploadIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("path", { d: "M8 10.5V2.5" }),
+            jsxRuntime.jsx("path", { d: "M4.8 5.7L8 2.5l3.2 3.2" }),
+            jsxRuntime.jsx("path", { d: "M2.5 10.5v3h11v-3" }),
+          ],
+        },
+      );
+    }
+
     /** 新建文件图标：文件折角 + 加号 */
     function FilePlusIcon() {
       return jsxRuntime.jsxs(
@@ -2251,6 +2385,34 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         pruneExpandedFrom(entry.path);
         loadDir(parentOf(entry.path));
       };
+      // 上传：input[type=file] 唤起设备自己的选择器（手机上是手机相册/文件——
+      // 原生对话框只弹在运行它的机器上，手机够不到电脑端），选完 POST
+      // /dsh-kit/upload 写入当前目录，成功后 bump nonce 刷新树
+      const uploadInputRef = react.useRef(null);
+      const uploadFiles = async (fileList) => {
+        const files = [...(fileList ?? [])];
+        if (!cwd || files.length === 0) return;
+        const saved = [];
+        const fails = [];
+        for (const f of files) {
+          try {
+            const fd = new FormData();
+            fd.append("file", f, f.name);
+            const r = await fetch(`/dsh-kit/upload?dir=${encodeURIComponent(cwd)}`, { method: "POST", body: fd });
+            const j = await r.json().catch(() => ({}));
+            if (r.ok) saved.push(...(j.saved ?? []));
+            else fails.push(`${f.name}：${j.error ?? `HTTP ${r.status}`}`);
+          } catch (error) {
+            fails.push(`${f.name}：${error?.message ?? error}`);
+          }
+        }
+        if (saved.length > 0) {
+          flashToast(t("uploadDone").replace("{n}", String(saved.length)));
+          setNonce((n) => n + 1);
+        }
+        if (fails.length > 0) flashToast(`${t("uploadFail")}：${fails[0]}`);
+      };
+
       const treeActions = {
         onCreate: createEntry,
         onDelete: deleteEntry,
@@ -2291,12 +2453,33 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     children: jsxRuntime.jsx(FolderPlusIcon, {}),
                   })
                 : null,
+              cwd
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t("treeUpload"),
+                    onClick: () => uploadInputRef.current?.click(),
+                    children: jsxRuntime.jsx(UploadIcon, {}),
+                  })
+                : null,
               jsxRuntime.jsx("button", {
                 type: "button",
                 className: "dshk-btn",
                 title: t("treeRefresh"),
                 onClick: () => setNonce((n) => n + 1),
                 children: "⟳",
+              }),
+              // 隐藏的文件选择器：按钮只负责 click()，选择结果走 uploadFiles
+              jsxRuntime.jsx("input", {
+                ref: uploadInputRef,
+                type: "file",
+                multiple: true,
+                style: { display: "none" },
+                onChange: (e) => {
+                  const files = e.target.files;
+                  uploadFiles(files);
+                  e.target.value = "";
+                },
               }),
             ],
           }),
@@ -2604,13 +2787,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // PDF 渲染态：错误信息 / 渲染完成（占位与 canvas 由 mountPdfViewer 直接管）
       const [pdfError, setPdfError] = react.useState(null);
       const [pdfDone, setPdfDone] = react.useState(false);
-      // Excel 渲染态：{sheets:[{name,html,truncated,totalRows,totalCols}]} / 活动表 /
-      // 错误 / 解析完成（sheetSafeRef 缓存各表消毒后的 HTML，切表不重消毒）
-      const [sheetData, setSheetData] = react.useState(null);
+      // Excel 渲染态：sheetNames（非 null 即工作簿已在沙箱打开）/ sheetIdx（活动表）/
+      // sheet（活动表全量矩阵，虚拟滚动渲染）/ 错误
+      const [sheetNames, setSheetNames] = react.useState(null);
       const [sheetIdx, setSheetIdx] = react.useState(0);
+      const [sheet, setSheet] = react.useState(null);
       const [sheetError, setSheetError] = react.useState(null);
-      const [sheetDone, setSheetDone] = react.useState(false);
-      const sheetSafeRef = react.useRef(new Map());
+      const sheetHostRef = react.useRef(null);
       // docx 渲染态：消毒后的语义 HTML / 错误
       const [docHtml, setDocHtml] = react.useState(null);
       const [docError, setDocError] = react.useState(null);
@@ -2847,15 +3030,14 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           if (doc) doc.destroy();
         };
       }, [isPdf, state.phase, path, reloadNonce]);
-      // ── Excel 渲染：fetch raw 字节 → SheetJS 沙箱解析 → 各表懒消毒渲染
+      // ── Excel 渲染：fetch raw 字节 → 沙箱打开工作簿（全量留沙箱）→ 按表取矩阵
       react.useEffect(() => {
         if (!isSheet || state.phase !== "ready") return undefined;
         let alive = true;
-        setSheetData(null);
+        setSheetNames(null);
+        setSheet(null);
         setSheetIdx(0);
         setSheetError(null);
-        setSheetDone(false);
-        sheetSafeRef.current = new Map();
         if ((state.body?.size ?? 0) > 20 * 1024 * 1024) {
           setSheetError(t("previewTooLarge"));
           return undefined;
@@ -2867,14 +3049,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             return r.arrayBuffer();
           }),
           ensureSheetBox(),
-          ensureMdLibs(),
         ])
-          .then(([buf, win]) => win.__dshkSheetParse(new Uint8Array(buf)))
-          .then((sheets) => {
-            if (!alive) return;
-            setSheetData({ sheets });
-            setSheetDone(true);
-          })
+          .then(([buf, win]) => setSheetNames(win.__dshkSheetOpen(new Uint8Array(buf))))
           .catch((error) => {
             if (alive) setSheetError(String(error?.message ?? error));
           });
@@ -2882,6 +3058,29 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           alive = false;
         };
       }, [isSheet, state.phase, path, reloadNonce]);
+      // 活动表矩阵加载（工作簿留在沙箱，切表零重复解析）
+      react.useEffect(() => {
+        if (!isSheet || sheetNames === null) return undefined;
+        let alive = true;
+        setSheet(null);
+        ensureSheetBox()
+          .then((win) => {
+            if (!alive) return;
+            setSheet(win.__dshkSheetGet(Math.min(sheetIdx, sheetNames.length - 1)));
+          })
+          .catch((error) => {
+            if (alive) setSheetError(String(error?.message ?? error));
+          });
+        return () => {
+          alive = false;
+        };
+      }, [isSheet, sheetNames, sheetIdx]);
+      // 矩阵 → 虚拟滚动表挂载（切表/换文件时 host 内容由 mount 自己清）
+      react.useEffect(() => {
+        const host = sheetHostRef.current;
+        if (!isSheet || !sheet || !host) return undefined;
+        return mountSheetTable(host, sheet);
+      }, [isSheet, sheet]);
       // ── docx 渲染：fetch raw 字节 → mammoth 沙箱转语义 HTML → DOMPurify 消毒
       react.useEffect(() => {
         if (!isDoc || state.phase !== "ready") return undefined;
@@ -3085,43 +3284,39 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             ],
           });
         } else if (isSheet) {
-          const sheets = sheetData ? sheetData.sheets : null;
-          const activeIdx = sheets ? Math.min(sheetIdx, sheets.length - 1) : 0;
-          const active = sheets && sheets.length > 0 ? sheets[activeIdx] : null;
-          if (active && !sheetSafeRef.current.has(activeIdx)) {
-            sheetSafeRef.current.set(activeIdx, window.DOMPurify.sanitize(active.html));
-          }
-          const activeHtml = active ? sheetSafeRef.current.get(activeIdx) : null;
+          const activeIdx = sheetNames ? Math.min(sheetIdx, sheetNames.length - 1) : 0;
           body = jsxRuntime.jsxs("div", {
             className: "dshk-pane-body dshk-sheetwrap",
             children: [
               sheetError
                 ? jsxRuntime.jsx("div", { className: "dshk-note", title: sheetError, children: `${t("contentFail")}：${sheetError}` })
                 : null,
-              sheets
+              sheetNames
                 ? jsxRuntime.jsx(
                     "div",
                     {
                       className: "dshk-sheet-tabs",
-                      children: sheets.map((s, i) =>
+                      children: sheetNames.map((name, i) =>
                         jsxRuntime.jsx("button", {
                           type: "button",
                           className: "dshk-sheet-tab" + (i === activeIdx ? " dshk-sheet-tab-on" : ""),
-                          title: s.name,
+                          title: name,
                           onClick: () => setSheetIdx(i),
-                          children: s.name,
+                          children: name,
                         }),
                       ),
                     },
                   )
                 : null,
-              activeHtml
-                ? jsxRuntime.jsx("div", { className: "dshk-sheet-scroll", dangerouslySetInnerHTML: { __html: activeHtml } })
+              jsxRuntime.jsx("div", { className: "dshk-sheet-scroll", ref: sheetHostRef }),
+              sheet && sheet.truncated
+                ? jsxRuntime.jsx("div", {
+                    className: "dshk-note",
+                    title: `共 ${sheet.totalRows} 行 × ${sheet.totalCols} 列，已加载前 ${sheet.shownRows} 行 × ${sheet.shownCols} 列`,
+                    children: t("sheetRowCap"),
+                  })
                 : null,
-              active && active.truncated
-                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("sheetRowCap") })
-                : null,
-              !sheetError && !sheetDone
+              !sheetError && sheetNames === null
                 ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
                 : null,
             ],
