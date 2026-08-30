@@ -12,7 +12,8 @@
 //     文件树，关闭时 dispose 注销、原生工作区列表自动回归。根目录 = 当前会话工作
 //     目录，数据走宿主半边 /dsh-kit/tree。点击文件 → 右侧停靠面板预览内容（默认
 //     开满宽度、对话左移让位、左缘可拖宽），数据走宿主半边 /dsh-kit/read；
-//     PDF 走 /dsh-kit/raw 原始字节端点（Range/206），iframe 内嵌浏览器自带查看器。
+//     PDF 走 /dsh-kit/raw 原始字节端点（Range/206），pdf.js（vendor 懒加载）
+//     逐页 canvas 渲染——Edge 内置查看器对 http:// 源灰屏，不可依赖。
 //     面板让位用 body.dshk-pane-open + --dshk-pane-w，自绘不依赖原生 details 列。
 // xterm 不打进 bundle，由宿主半边伺服 /dsh-kit/vendor/* 静态资源（官方预编译
 // UMD），首次打开终端面板时按需加载。
@@ -264,6 +265,7 @@ window.__ModuleLoader__.load({
       contentLoading: "加载中…",
       contentBinary: "二进制文件，无法预览",
       pdfNewTab: "在新标签页打开",
+      pdfPageCap: "文件较大，仅渲染前 50 页",
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
@@ -448,6 +450,7 @@ window.__ModuleLoader__.load({
       contentLoading: "Loading…",
       contentBinary: "Binary file, preview unavailable",
       pdfNewTab: "Open in new tab",
+      pdfPageCap: "Large file: only the first 50 pages rendered",
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
       contentEmpty: "(empty file)",
@@ -669,9 +672,10 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-pane[data-dragging]{transition:none}
 .dshk-pane-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 10px 12px}
 .dshk-pane-pre{margin:0;padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;tab-size:4;-webkit-overflow-scrolling:touch;user-select:text}
-/* PDF 预览：iframe 占满面板身（面板自身不滚动，浏览器查看器自带翻页/缩放/搜索） */
-.dshk-pdfwrap{padding:0;overflow:hidden;display:flex;flex-direction:column}
-.dshk-pdf-frame{flex:1 1 auto;min-height:0;width:100%;border:0;background:#fff}
+/* PDF 预览：pdf.js 逐页 canvas，纵向滚动（面板身即滚动容器） */
+.dshk-pdfwrap{padding:8px 0 16px;display:flex;flex-direction:column;align-items:center}
+.dshk-pdf-scroll{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%}
+.dshk-pdf-page{background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);max-width:100%}
 /* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
 .dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
 .dshk-pane-handle:hover::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;background:var(--dsw-alias-interactive-bg-hover);border-radius:2px}
@@ -916,6 +920,53 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       return typeof window.CM6 === "object" && window.CM6 !== null
         ? Promise.resolve()
         : loadScript("/dsh-kit/vendor/codemirror.bundle.js");
+    }
+    /** pdf.js 渲染沙箱（vendored 3.11 legacy UMD）。不用浏览器内置查看器：Edge 对
+     *  http:// 明文源的 PDF 一律灰屏（https/file 正常，实测 152），DSH 本地服务恰是
+     *  http://127.0.0.1。也不能直接在宿主页面跑：DSH 前端把 window.Promise 换成了
+     *  自己的实现（外观伪装 native），pdf.js 3.x 渲染管线在它上面会卡死——第 1 页
+     *  渲染后所有后续 page.render() 永久 pending（同浏览器同库在同源空白页 34ms
+     *  渲染成功，已二分定位）。srcdoc iframe 是全新 realm、原生 Promise，库/worker/
+     *  canvas 全在里面跑，渲染好的 canvas 跨文档 append 自动采纳，位图不丢。 */
+    let pdfBoxPromise = null;
+    function ensurePdfBox() {
+      if (pdfBoxPromise !== null) return pdfBoxPromise;
+      pdfBoxPromise = new Promise((resolve, reject) => {
+        const ifr = document.createElement("iframe");
+        ifr.style.display = "none";
+        ifr.srcdoc = "<!doctype html><html><head></head><body></body></html>";
+        ifr.onload = () => {
+          try {
+            const win = ifr.contentWindow;
+            const origin = location.origin;
+            const s = win.document.createElement("script");
+            s.src = origin + "/dsh-kit/vendor/pdf.min.js";
+            s.onload = () => {
+              try {
+                win.pdfjsLib.GlobalWorkerOptions.workerSrc = origin + "/dsh-kit/vendor/pdf.worker.min.js";
+                resolve(win);
+              } catch (error) {
+                pdfBoxPromise = null;
+                reject(error);
+              }
+            };
+            s.onerror = () => {
+              pdfBoxPromise = null;
+              reject(new Error("pdf.min.js 加载失败"));
+            };
+            win.document.head.appendChild(s);
+          } catch (error) {
+            pdfBoxPromise = null;
+            reject(error);
+          }
+        };
+        ifr.onerror = () => {
+          pdfBoxPromise = null;
+          reject(new Error("pdf 沙箱 iframe 创建失败"));
+        };
+        document.body.appendChild(ifr);
+      });
+      return pdfBoxPromise;
     }
     function extOf(p) {
       const m = /\.([a-z0-9]+)$/i.exec(String(p ?? ""));
@@ -2248,7 +2299,12 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // 需要源码时进编辑即是源码（无独立「切源码」按钮）。
       const [cmReady, setCmReady] = react.useState(false);
       const [mdHtml, setMdHtml] = react.useState(null);
+      // PDF 渲染态：错误信息 / 页数上限提示 / 渲染完成（canvas 由 effect 直接挂 pdfHostRef）
+      const [pdfError, setPdfError] = react.useState(null);
+      const [pdfCapped, setPdfCapped] = react.useState(false);
+      const [pdfDone, setPdfDone] = react.useState(false);
       const mdHostRef = react.useRef(null);
+      const pdfHostRef = react.useRef(null);
       const readHostRef = react.useRef(null);
       const editHostRef = react.useRef(null);
       react.useEffect(() => {
@@ -2434,6 +2490,71 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         host.addEventListener("click", onClick);
         return () => host.removeEventListener("click", onClick);
       }, [mdActive, mdHtml]);
+      // ── PDF 渲染：pdf.js 在 iframe 沙箱（原生 Promise realm）里逐页画 canvas
+      // （库懒加载；顺序渲染，页数上限防大文档卡死）；canvas 跨文档挂进宿主容器
+      react.useEffect(() => {
+        if (!isPdf || state.phase !== "ready") return undefined;
+        const host = pdfHostRef.current;
+        if (!host) return undefined;
+        let alive = true;
+        let doc = null;
+        const PAGE_CAP = 50;
+        const render = async (win, d) => {
+          const cap = Math.min(d.numPages, PAGE_CAP);
+          for (let i = 1; i <= cap; i++) {
+            const page = await d.getPage(i);
+            if (!alive) return;
+            const base = page.getViewport({ scale: 1 });
+            // 适配面板宽度；canvas 按 devicePixelRatio 放大保证清晰，CSS 尺寸还原。
+            // canvas 必须建在主文档（跨文档采纳会丢位图），沙箱 pdf.js 只执笔作画
+            const width = Math.max(280, (host.clientWidth || 480) - 20);
+            const dpr = window.devicePixelRatio || 1;
+            const viewport = page.getViewport({ scale: (width / base.width) * dpr });
+            const canvas = document.createElement("canvas");
+            canvas.className = "dshk-pdf-page";
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
+            canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+            host.appendChild(canvas);
+            // intent:"print"——渲染续行走微任务而非 rAF：display 意图的分块续绘
+            // 依赖 requestAnimationFrame，宿主窗口被遮挡时 rAF 冻结，看起来像卡死
+            // （几十秒不动）；print 意图不受可见性影响，实测 12~78ms/页。
+            await page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "#ffffff", intent: "print" }).promise;
+          }
+          if (alive && d.numPages > PAGE_CAP) setPdfCapped(true);
+          if (alive) setPdfDone(true);
+        };
+        setPdfError(null);
+        setPdfCapped(false);
+        setPdfDone(false);
+        const origin = location.origin;
+        ensurePdfBox()
+          .then((win) => {
+            if (!alive) return null;
+            return win.pdfjsLib
+              .getDocument({
+                url: `${origin}/dsh-kit/raw?path=${encodeURIComponent(path)}`,
+                cMapUrl: `${origin}/dsh-kit/vendor/cmaps/`,
+                cMapPacked: true,
+                standardFontDataUrl: `${origin}/dsh-kit/vendor/standard_fonts/`,
+              })
+              .promise.then((d) => ({ win, d }));
+          })
+          .then((r) => {
+            if (!alive || !r) return undefined;
+            doc = r.d;
+            return render(r.win, r.d);
+          })
+          .catch((error) => {
+            if (alive) setPdfError(String(error?.message ?? error));
+          });
+        return () => {
+          alive = false;
+          host.innerHTML = "";
+          if (doc) doc.destroy();
+        };
+      }, [isPdf, state.phase, path, reloadNonce]);
       // 只读视图：文本类文件统一交给 CM（只读实例）；md 渲染态不挂
       react.useEffect(() => {
         const host = readHostRef.current;
@@ -2591,15 +2712,20 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       } else {
         const b = state.body;
         if (isPdf) {
-          // PDF：浏览器自带查看器（iframe 内嵌 raw 端点，翻页/缩放/搜索都现成）。
-          // 不看 b.binary——纯 ASCII 的极简 PDF 会被 /read 解码成文本，仍走查看器
-          body = jsxRuntime.jsx("div", {
+          // PDF：pdf.js 逐页 canvas 渲染（Edge 内置查看器对 http:// 源一律灰屏，
+          // iframe/顶层都不可用——见 src/index.js raw 端点注释）
+          body = jsxRuntime.jsxs("div", {
             className: "dshk-pane-body dshk-pdfwrap",
-            children: jsxRuntime.jsx("iframe", {
-              className: "dshk-pdf-frame",
-              src: `/dsh-kit/raw?path=${encodeURIComponent(path)}`,
-              title: base,
-            }),
+            children: [
+              pdfError
+                ? jsxRuntime.jsx("div", { className: "dshk-note", title: pdfError, children: `${t("contentFail")}：${pdfError}` })
+                : null,
+              jsxRuntime.jsx("div", { className: "dshk-pdf-scroll", ref: pdfHostRef }),
+              !pdfError && !pdfCapped && !pdfDone
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
+                : null,
+              pdfCapped ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("pdfPageCap") }) : null,
+            ],
           });
         } else if (b.binary) {
           body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentBinary") });

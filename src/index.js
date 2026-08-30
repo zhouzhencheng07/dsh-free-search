@@ -290,6 +290,14 @@ const VENDOR_FILES = new Map([
   ['/dsh-kit/vendor/marked.min.js', 'marked.min.js'],
   ['/dsh-kit/vendor/purify.min.js', 'purify.min.js'],
   ['/dsh-kit/vendor/codemirror.bundle.js', 'codemirror.bundle.js'],
+  // pdf.js 预览（主文件懒加载；worker/cmaps/standard_fonts 由库按需再取）
+  ['/dsh-kit/vendor/pdf.min.js', 'pdf.min.js'],
+  ['/dsh-kit/vendor/pdf.worker.min.js', 'pdf.worker.min.js'],
+])
+// pdf.js 按需取用的资源子目录（CJK cmaps / 标准字体回退），单文件白名单覆盖不了
+const VENDOR_SUBDIRS = new Map([
+  ['cmaps', 'cmaps'],
+  ['standard_fonts', 'standard_fonts'],
 ])
 const VENDOR_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
@@ -379,16 +387,26 @@ export function apply(ctx) {
         path: '/dsh-kit/vendor',
         handler: (req, res) => {
           const pathname = new URL(req.url ?? '/', 'http://dsh-kit.local').pathname
-          const file = VENDOR_FILES.get(pathname)
-          if (file === undefined || (req.method !== 'GET' && req.method !== 'HEAD')) {
+          const notFound = () => {
             res.writeHead(404)
             res.end()
+          }
+          // 子目录资源（cmaps/*.bcmap、standard_fonts/*.pfb 等）：单段文件名
+          // 白名单字符校验，杜绝路径穿越
+          let file = null
+          const sub = /^\/dsh-kit\/vendor\/(cmaps|standard_fonts)\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(pathname)
+          if (sub) {
+            file = path.join(VENDOR_SUBDIRS.get(sub[1]), sub[2])
+          } else {
+            file = VENDOR_FILES.get(pathname) ?? null
+          }
+          if (file === null || (req.method !== 'GET' && req.method !== 'HEAD')) {
+            notFound()
             return
           }
           fs.readFile(path.join(VENDOR_DIR, file), (error, body) => {
             if (error) {
-              res.writeHead(404)
-              res.end()
+              notFound()
               return
             }
             res.writeHead(200, {
@@ -528,8 +546,8 @@ export function apply(ctx) {
 
       // ── 原始字节端点：GET /dsh-kit/raw?path=<绝对文件> ──
       // 二进制透传（PDF 预览用）：扩展名白名单给 content-type，完整流式返回
-      // 不截断，支持 Range/206（浏览器 PDF 查看器渐进渲染需要）。安全链与
-      // /read 相同；手机网关是全路径反代，新路径无需单独登记。
+      // 不截断，支持 Range/206（pdf.js 渐进加载需要）。安全链与 /read 相同；
+      // 手机网关是全路径反代，新路径无需单独登记。
       const disposeRaw = webCtx.webServer.register({
         kind: 'exact',
         path: '/dsh-kit/raw',
@@ -563,7 +581,7 @@ export function apply(ctx) {
             'cache-control': 'no-cache',
             'accept-ranges': 'bytes',
             'x-content-type-options': 'nosniff',
-            // inline + 编码文件名：浏览器 PDF 查看器标题与另存名取这里，中文不乱码
+            // inline + 编码文件名：浏览器标题/另存名取这里，中文不乱码
             'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(path.basename(file.path))}`,
           }
           const range = parseRangeHeader(req.headers.range, file.size)

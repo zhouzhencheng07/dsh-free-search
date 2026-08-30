@@ -113,9 +113,8 @@ callLog = [];
 out = comps.FileContentPane({ path: "C:/x/b.js", cwd: "C:/x", onClose: () => {} });
 check("FileContentPane 渲染无异常", !!out && typeof out === "object");
 
-// 6.1) FileContentPane PDF ready 分支：二进制 body → iframe 内嵌 raw 端点 + ↗ 兜底。
-//      桩的 useEffect 不执行，state 到不了 ready——重置序号后预置 useState#0（组件
-//      首个 useState 即 state），让渲染体真正走一遍新分支。
+// 6.1) FileContentPane PDF ready 分支：pdf.js 宿主容器 + ↗ 兜底（canvas 由
+//      effect 挂载，桩覆盖不到——重置序号预置 useState#0 让渲染体走到新分支）
 stateSeq = 0;
 stateStore.clear();
 stateStore.set(0, {
@@ -124,13 +123,9 @@ stateStore.set(0, {
 });
 callLog = [];
 out = comps.FileContentPane({ path: "C:/x/doc.pdf", cwd: "C:/x", onClose: () => {} });
-const pdfFrame = callLog.find((c) => c[0] === "jsx" && c[2] && c[2].className === "dshk-pdf-frame");
+const pdfHost = callLog.find((c) => c[0] === "jsx" && c[2] && c[2].className === "dshk-pdf-scroll");
 check("FileContentPane PDF ready 渲染无异常", !!out && typeof out === "object");
-check(
-  "PDF 走 iframe(/dsh-kit/raw) 且路径已编码",
-  !!pdfFrame && typeof pdfFrame[2].src === "string" &&
-    pdfFrame[2].src.includes("/dsh-kit/raw?path=") && pdfFrame[2].src.includes("C%3A%2Fx%2Fdoc.pdf"),
-);
+check("PDF 渲染出 pdf.js 宿主容器", !!pdfHost);
 
 // 7) 入口按钮 / 浮层宿主顶部渲染（conversation.input.left + shell.overlay 槽位）
 callLog = [];
