@@ -265,7 +265,7 @@ window.__ModuleLoader__.load({
       contentLoading: "加载中…",
       contentBinary: "二进制文件，无法预览",
       pdfNewTab: "在新标签页打开",
-      pdfPageCap: "文件较大，仅渲染前 50 页",
+      pdfJump: "跳转到指定页",
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
@@ -450,7 +450,7 @@ window.__ModuleLoader__.load({
       contentLoading: "Loading…",
       contentBinary: "Binary file, preview unavailable",
       pdfNewTab: "Open in new tab",
-      pdfPageCap: "Large file: only the first 50 pages rendered",
+      pdfJump: "Jump to page",
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
       contentEmpty: "(empty file)",
@@ -672,10 +672,15 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-pane[data-dragging]{transition:none}
 .dshk-pane-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 10px 12px}
 .dshk-pane-pre{margin:0;padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;tab-size:4;-webkit-overflow-scrolling:touch;user-select:text}
-/* PDF 预览：pdf.js 逐页 canvas，纵向滚动（面板身即滚动容器） */
+/* PDF 预览：pdf.js 逐页 canvas，纵向滚动（面板身即滚动容器）。懒加载：
+   全量占位（第 1 页纵横比）撑出真实滚动条，进预载区才渲染 canvas、滚远释放位图；
+   右下角 sticky 悬浮页码指示器（当前页实时 + 输入回车跳页） */
 .dshk-pdfwrap{padding:8px 0 16px;display:flex;flex-direction:column;align-items:center}
 .dshk-pdf-scroll{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%}
-.dshk-pdf-page{background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);max-width:100%}
+.dshk-pdf-slot{background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);max-width:100%;display:flex;align-items:center;justify-content:center}
+.dshk-pdf-slotno{color:#9a9a9a;font-size:13px;user-select:none}
+.dshk-pdf-indicator{position:sticky;bottom:10px;align-self:flex-end;margin-right:6px;z-index:2;display:flex;align-items:center;gap:2px;padding:3px 10px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 2px 8px rgba(0,0,0,.18);font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshk-pdf-jump{width:3.2em;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:center;outline:none}
 /* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
 .dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
 .dshk-pane-handle:hover::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;background:var(--dsw-alias-interactive-bg-hover);border-radius:2px}
@@ -967,6 +972,225 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         document.body.appendChild(ifr);
       });
       return pdfBoxPromise;
+    }
+    /** PDF 懒加载查看器：先按第 1 页纵横比铺全量占位（滚动条即真实页数长度），
+     *  占位进入预载区（IntersectionObserver，root=滚动容器）才渲染 canvas，
+     *  距所有预载区页超过 EVICT 页则释放位图——大文档内存只随视口附近页数走。
+     *  右下角悬浮页码指示器：实时当前页（滚动内容 offset 二分），输入数字回车
+     *  跳页（跳转由占位承接，滚过去即渲染）。cancelled() 为真则中止；返回
+     *  dispose（断观察器/监听 + 清 DOM）或 null（未建成）。 */
+    async function mountPdfViewer(scrollEl, doc, cancelled) {
+      const p1 = await doc.getPage(1);
+      if (cancelled()) return null;
+      const vb1 = p1.getViewport({ scale: 1 });
+      const total = doc.numPages;
+      const scroller = scrollEl.closest(".dshk-pane-body") ?? scrollEl;
+      const EVICT = 6; // 距所有预载区页超过此数才释放位图（滞回，防边界反复渲染）
+      const slots = [null];
+      const rendered = new Map(); // 页码 → canvas
+      const pending = new Set();  // 已入队未完成
+      const visible = new Set();  // 预载区内的页（observer 维护）
+      const queue = [];
+      let disposed = false;
+      let rendering = false;
+      let pageTops = null; // 各占位在滚动内容中的 offset（二分当前页/跳页用）
+      let topsDirty = true;
+      let currentPage = 1;
+      let scrollRaf = 0;
+      let resizeTimer = 0;
+      let lastW = 0;
+
+      const slotWidth = () => Math.max(280, (scrollEl.clientWidth || 480) - 20);
+      const slotLabel = (p) => {
+        const no = document.createElement("span");
+        no.className = "dshk-pdf-slotno";
+        no.textContent = String(p);
+        return no;
+      };
+      // canvas 释放/重建尺寸后把占位还原成带页码的空白页
+      const restoreSlot = (p) => {
+        const slot = slots[p];
+        slot.textContent = "";
+        slot.appendChild(slotLabel(p));
+        slot.style.aspectRatio = `${vb1.width} / ${vb1.height}`;
+        topsDirty = true;
+      };
+
+      const frag = document.createDocumentFragment();
+      const indicator = document.createElement("div");
+      indicator.className = "dshk-pdf-indicator";
+      const jump = document.createElement("input");
+      jump.className = "dshk-pdf-jump";
+      jump.type = "text";
+      jump.inputMode = "numeric";
+      jump.value = "1";
+      jump.setAttribute("aria-label", t("pdfJump"));
+      const totalSpan = document.createElement("span");
+      totalSpan.textContent = `/ ${total}`;
+      indicator.append(jump, totalSpan);
+      for (let i = 1; i <= total; i++) {
+        const slot = document.createElement("div");
+        slot.className = "dshk-pdf-slot";
+        slot.dataset.page = String(i);
+        slot.appendChild(slotLabel(i));
+        slots.push(slot);
+        frag.appendChild(slot);
+      }
+      // 指示器放列尾 + sticky bottom：非末屏时始终悬浮在滚动视口下缘
+      frag.appendChild(indicator);
+      scrollEl.appendChild(frag);
+
+      const applySizes = () => {
+        lastW = slotWidth();
+        for (let i = 1; i <= total; i++) slots[i].style.width = `${lastW}px`;
+      };
+      applySizes();
+      for (let i = 1; i <= total; i++) slots[i].style.aspectRatio = `${vb1.width} / ${vb1.height}`;
+
+      const nearVisible = (p, slack) => {
+        for (const v of visible) if (Math.abs(p - v) <= slack) return true;
+        return false;
+      };
+      const evictFar = () => {
+        for (const [p, canvas] of rendered) {
+          if (nearVisible(p, EVICT)) continue;
+          canvas.remove();
+          rendered.delete(p);
+          restoreSlot(p);
+        }
+      };
+      const pump = () => {
+        if (rendering || disposed) return;
+        let next = 0;
+        while (queue.length) {
+          const p = queue.shift();
+          if (rendered.has(p) || !pending.has(p)) continue;
+          if (visible.has(p)) { next = p; break; }
+          pending.delete(p); // 已滚离预载区：丢弃，路过时 observer 会重新入队
+        }
+        if (!next) return;
+        rendering = true;
+        renderPage(next)
+          .catch((error) => console.warn("[dsh-kit] pdf 页渲染失败", next, error))
+          .finally(() => {
+            pending.delete(next);
+            rendering = false;
+            if (!disposed) pump();
+          });
+      };
+      const renderPage = async (p) => {
+        const slot = slots[p];
+        if (disposed || !slot || !slot.isConnected || rendered.has(p)) return;
+        const page = await doc.getPage(p);
+        if (disposed || rendered.has(p)) return;
+        const vb = page.getViewport({ scale: 1 });
+        const dpr = window.devicePixelRatio || 1;
+        const w = slotWidth();
+        const viewport = page.getViewport({ scale: (w / vb.width) * dpr });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
+        canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+        // 混合页尺寸文档：渲染时把占位比例改成实际值，防渲染完成瞬间跳动
+        slot.style.aspectRatio = `${vb.width} / ${vb.height}`;
+        slot.textContent = "";
+        slot.appendChild(canvas);
+        rendered.set(p, canvas);
+        topsDirty = true;
+        // intent:"print"——续绘走微任务而非 rAF，宿主窗口被遮挡时不冻结（见 ensurePdfBox 注释）
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "#ffffff", intent: "print" }).promise;
+      };
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (disposed) return;
+          for (const en of entries) {
+            const p = Number(en.target.dataset.page);
+            if (en.isIntersecting) visible.add(p);
+            else visible.delete(p);
+          }
+          for (const p of visible) {
+            if (!rendered.has(p) && !pending.has(p)) { pending.add(p); queue.push(p); }
+          }
+          evictFar();
+          pump();
+        },
+        { root: scroller, rootMargin: "1500px 0px" }
+      );
+      for (let i = 1; i <= total; i++) io.observe(slots[i]);
+
+      const recomputeTops = () => {
+        const sRect = scroller.getBoundingClientRect();
+        const st = scroller.scrollTop;
+        pageTops = [0];
+        for (let i = 1; i <= total; i++) pageTops[i] = slots[i].getBoundingClientRect().top - sRect.top + st;
+        topsDirty = false;
+      };
+      const syncCurrent = () => {
+        if (topsDirty || !pageTops) recomputeTops();
+        const center = scroller.scrollTop + scroller.clientHeight * 0.5;
+        let lo = 1;
+        let hi = total;
+        let ans = 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (pageTops[mid] <= center) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        currentPage = ans;
+        if (document.activeElement !== jump) jump.value = String(ans);
+      };
+      const onScroll = () => {
+        if (scrollRaf) return;
+        scrollRaf = requestAnimationFrame(() => {
+          scrollRaf = 0;
+          if (!disposed) syncCurrent();
+        });
+      };
+      scroller.addEventListener("scroll", onScroll, { passive: true });
+
+      const jumpTo = (n) => {
+        const target = Math.min(total, Math.max(1, n));
+        if (topsDirty || !pageTops) recomputeTops();
+        scroller.scrollTop = Math.max(0, pageTops[target] - 12);
+        syncCurrent();
+      };
+      jump.addEventListener("focus", () => jump.select());
+      jump.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { jumpTo(parseInt(jump.value, 10) || 1); jump.blur(); }
+        else if (e.key === "Escape") { jump.value = String(currentPage); jump.blur(); }
+      });
+      jump.addEventListener("blur", () => { jump.value = String(currentPage); });
+
+      // 面板可拖宽：宽度变化后按新宽度重摆——已渲染页全部释放重渲染，简单可靠
+      const ro = new ResizeObserver(() => {
+        if (disposed) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (disposed || Math.abs(slotWidth() - lastW) < 4) return;
+          for (const [p, canvas] of [...rendered]) { canvas.remove(); rendered.delete(p); restoreSlot(p); }
+          applySizes();
+          syncCurrent();
+          for (const p of visible) {
+            if (!pending.has(p)) { pending.add(p); queue.push(p); }
+          }
+          pump();
+        }, 200);
+      });
+      ro.observe(scrollEl);
+
+      const teardown = () => {
+        disposed = true;
+        clearTimeout(resizeTimer);
+        if (scrollRaf) cancelAnimationFrame(scrollRaf);
+        io.disconnect();
+        ro.disconnect();
+        scroller.removeEventListener("scroll", onScroll);
+        // 只在本查看器 DOM 还挂着时清空——effect 清理可能已 innerHTML=""，
+        // 而新一次 mount 已建好内容，此时再清会误伤新查看器
+        if (indicator.isConnected) scrollEl.textContent = "";
+      };
+      syncCurrent();
+      return teardown;
     }
     function extOf(p) {
       const m = /\.([a-z0-9]+)$/i.exec(String(p ?? ""));
@@ -2299,9 +2523,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // 需要源码时进编辑即是源码（无独立「切源码」按钮）。
       const [cmReady, setCmReady] = react.useState(false);
       const [mdHtml, setMdHtml] = react.useState(null);
-      // PDF 渲染态：错误信息 / 页数上限提示 / 渲染完成（canvas 由 effect 直接挂 pdfHostRef）
+      // PDF 渲染态：错误信息 / 渲染完成（占位与 canvas 由 mountPdfViewer 直接管）
       const [pdfError, setPdfError] = react.useState(null);
-      const [pdfCapped, setPdfCapped] = react.useState(false);
       const [pdfDone, setPdfDone] = react.useState(false);
       const mdHostRef = react.useRef(null);
       const pdfHostRef = react.useRef(null);
@@ -2490,43 +2713,17 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         host.addEventListener("click", onClick);
         return () => host.removeEventListener("click", onClick);
       }, [mdActive, mdHtml]);
-      // ── PDF 渲染：pdf.js 在 iframe 沙箱（原生 Promise realm）里逐页画 canvas
-      // （库懒加载；顺序渲染，页数上限防大文档卡死）；canvas 跨文档挂进宿主容器
+      // ── PDF 渲染：pdf.js 在 iframe 沙箱（原生 Promise realm）里画 canvas
+      // （库懒加载）。查看器本体懒加载：全量占位 + 进视口渲染 + 滚远释放位图，
+      // 无页数上限；canvas 建在主文档（跨文档采纳会丢位图），沙箱 pdf.js 只执笔
       react.useEffect(() => {
         if (!isPdf || state.phase !== "ready") return undefined;
         const host = pdfHostRef.current;
         if (!host) return undefined;
         let alive = true;
         let doc = null;
-        const PAGE_CAP = 50;
-        const render = async (win, d) => {
-          const cap = Math.min(d.numPages, PAGE_CAP);
-          for (let i = 1; i <= cap; i++) {
-            const page = await d.getPage(i);
-            if (!alive) return;
-            const base = page.getViewport({ scale: 1 });
-            // 适配面板宽度；canvas 按 devicePixelRatio 放大保证清晰，CSS 尺寸还原。
-            // canvas 必须建在主文档（跨文档采纳会丢位图），沙箱 pdf.js 只执笔作画
-            const width = Math.max(280, (host.clientWidth || 480) - 20);
-            const dpr = window.devicePixelRatio || 1;
-            const viewport = page.getViewport({ scale: (width / base.width) * dpr });
-            const canvas = document.createElement("canvas");
-            canvas.className = "dshk-pdf-page";
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
-            canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
-            host.appendChild(canvas);
-            // intent:"print"——渲染续行走微任务而非 rAF：display 意图的分块续绘
-            // 依赖 requestAnimationFrame，宿主窗口被遮挡时 rAF 冻结，看起来像卡死
-            // （几十秒不动）；print 意图不受可见性影响，实测 12~78ms/页。
-            await page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "#ffffff", intent: "print" }).promise;
-          }
-          if (alive && d.numPages > PAGE_CAP) setPdfCapped(true);
-          if (alive) setPdfDone(true);
-        };
+        let disposeUi = null;
         setPdfError(null);
-        setPdfCapped(false);
         setPdfDone(false);
         const origin = location.origin;
         ensurePdfBox()
@@ -2539,18 +2736,24 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 cMapPacked: true,
                 standardFontDataUrl: `${origin}/dsh-kit/vendor/standard_fonts/`,
               })
-              .promise.then((d) => ({ win, d }));
+              .promise.then((d) => d);
           })
-          .then((r) => {
-            if (!alive || !r) return undefined;
-            doc = r.d;
-            return render(r.win, r.d);
+          .then((d) => {
+            if (!alive || !d) return undefined;
+            doc = d;
+            return mountPdfViewer(host, d, () => !alive);
+          })
+          .then((dispose) => {
+            if (!dispose) return;
+            disposeUi = dispose;
+            if (alive) setPdfDone(true);
           })
           .catch((error) => {
             if (alive) setPdfError(String(error?.message ?? error));
           });
         return () => {
           alive = false;
+          if (disposeUi) disposeUi();
           host.innerHTML = "";
           if (doc) doc.destroy();
         };
@@ -2721,10 +2924,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 ? jsxRuntime.jsx("div", { className: "dshk-note", title: pdfError, children: `${t("contentFail")}：${pdfError}` })
                 : null,
               jsxRuntime.jsx("div", { className: "dshk-pdf-scroll", ref: pdfHostRef }),
-              !pdfError && !pdfCapped && !pdfDone
+              !pdfError && !pdfDone
                 ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
                 : null,
-              pdfCapped ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("pdfPageCap") }) : null,
             ],
           });
         } else if (b.binary) {
