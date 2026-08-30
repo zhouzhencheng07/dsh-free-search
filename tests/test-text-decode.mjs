@@ -66,4 +66,8 @@ check('textExtOf 无扩展名 → 全文', textExtOf('README') === 'readme')
 r = decodePreviewText(noBomLe, '.gitignore')
 check('点文件无 BOM UTF-16LE 恢复', r.binary === false && r.content === 'port = 8000\r\n')
 
+// 6) 强制二进制扩展名：纯 ASCII 的极简 PDF 无 NUL，按常规流程会误判成文本
+r = decodePreviewText(Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n'), 'a.pdf')
+check('pdf 纯 ASCII 也强制二进制', r.binary === true && r.content === null)
+
 process.exit(failed === 0 ? 0 : 1)

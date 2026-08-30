@@ -11,7 +11,8 @@
 //   文件树：打开时临时注册进单槽 sidebar.workspaces——把侧边栏浏览区整体换成
 //     文件树，关闭时 dispose 注销、原生工作区列表自动回归。根目录 = 当前会话工作
 //     目录，数据走宿主半边 /dsh-kit/tree。点击文件 → 右侧停靠面板预览内容（默认
-//     开满宽度、对话左移让位、左缘可拖宽），数据走宿主半边 /dsh-kit/read。
+//     开满宽度、对话左移让位、左缘可拖宽），数据走宿主半边 /dsh-kit/read；
+//     PDF 走 /dsh-kit/raw 原始字节端点（Range/206），iframe 内嵌浏览器自带查看器。
 //     面板让位用 body.dshk-pane-open + --dshk-pane-w，自绘不依赖原生 details 列。
 // xterm 不打进 bundle，由宿主半边伺服 /dsh-kit/vendor/* 静态资源（官方预编译
 // UMD），首次打开终端面板时按需加载。
@@ -262,6 +263,7 @@ window.__ModuleLoader__.load({
       gitTip: "git 变更",
       contentLoading: "加载中…",
       contentBinary: "二进制文件，无法预览",
+      pdfNewTab: "在新标签页打开",
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
@@ -445,6 +447,7 @@ window.__ModuleLoader__.load({
       editConflict: "File changed on disk since it was loaded. Reload the latest version?",
       contentLoading: "Loading…",
       contentBinary: "Binary file, preview unavailable",
+      pdfNewTab: "Open in new tab",
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
       contentEmpty: "(empty file)",
@@ -666,6 +669,9 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 .dshk-pane[data-dragging]{transition:none}
 .dshk-pane-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 10px 12px}
 .dshk-pane-pre{margin:0;padding:4px 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;tab-size:4;-webkit-overflow-scrolling:touch;user-select:text}
+/* PDF 预览：iframe 占满面板身（面板自身不滚动，浏览器查看器自带翻页/缩放/搜索） */
+.dshk-pdfwrap{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.dshk-pdf-frame{flex:1 1 auto;min-height:0;width:100%;border:0;background:#fff}
 /* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
 .dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
 .dshk-pane-handle:hover::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;background:var(--dsw-alias-interactive-bg-hover);border-radius:2px}
@@ -2214,8 +2220,11 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
       // 基线，即便从 SCM 进入也默认原文），头部 ⇄ 随时互切；
-      // 同一面板会话内换文件保留用户选中的模式
-      const [mode, setMode] = react.useState(source === "scm" && untracked !== true ? "diff" : "text");
+      // 同一面板会话内换文件保留用户选中的模式。
+      // PDF 是二进制，git diff 只有 "Binary files differ" 一句话——无 diff 视图，
+      // 入口默认与 ⇄ 都按原文处理（renderDiffView 入口另有 isPdf 守卫兜底）。
+      const isPdf = /\.pdf$/i.test(path);
+      const [mode, setMode] = react.useState(source === "scm" && untracked !== true && !isPdf ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -2227,7 +2236,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       react.useEffect(() => {
         if (sourceRef.current === source) return;
         sourceRef.current = source;
-        setMode(source === "scm" && untracked !== true ? "diff" : "text");
+        setMode(source === "scm" && untracked !== true && !isPdf ? "diff" : "text");
       }, [source]);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
@@ -2268,7 +2277,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // diff 数据（仅 diff 视图激活时）：进入时拉一次，可见期间低频静默跟随
       // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询
       react.useEffect(() => {
-        if (mode !== "diff" || !cwd) return undefined;
+        if (mode !== "diff" || isPdf || !cwd) return undefined;
         setDiff({ phase: "loading" });
         if (diffFetchRef.current) diffFetchRef.current();
         const tick = () => {
@@ -2539,8 +2548,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         });
 
       const startEdit = () => {
-        // 截断预览的文件不允许编辑（保存会丢掉 512KB 之后的内容）
-        if (!state.body || state.body.binary || state.body.content === null || state.body.truncated) return;
+        // 截断预览的文件不允许编辑（保存会丢掉 512KB 之后的内容）；PDF 一律不可编辑
+        if (isPdf || !state.body || state.body.binary || state.body.content === null || state.body.truncated) return;
         setDraft(state.body.content);
         setEditing(true);
       };
@@ -2581,7 +2590,18 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         body = jsxRuntime.jsx("div", { className: "dshk-note", title: state.error, children: `${t("contentFail")}：${state.error}` });
       } else {
         const b = state.body;
-        if (b.binary) {
+        if (isPdf) {
+          // PDF：浏览器自带查看器（iframe 内嵌 raw 端点，翻页/缩放/搜索都现成）。
+          // 不看 b.binary——纯 ASCII 的极简 PDF 会被 /read 解码成文本，仍走查看器
+          body = jsxRuntime.jsx("div", {
+            className: "dshk-pane-body dshk-pdfwrap",
+            children: jsxRuntime.jsx("iframe", {
+              className: "dshk-pdf-frame",
+              src: `/dsh-kit/raw?path=${encodeURIComponent(path)}`,
+              title: base,
+            }),
+          });
+        } else if (b.binary) {
           body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentBinary") });
         } else if (b.content === null || b.content === "") {
           body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentEmpty") });
@@ -2616,8 +2636,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               jsxRuntime.jsx("span", { className: "dshk-title", children: base }),
               jsxRuntime.jsx("span", { className: "dshk-dir", title: path, children: displayPath }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
-              // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）
-              !editing
+              // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）；
+              // PDF 无 diff 视图，不显示
+              !editing && !isPdf
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
@@ -2626,8 +2647,19 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     children: "⇄",
                   })
                 : null,
-              // ✎ 编辑不再限文件树来源；截断/二进制不可编辑的判定不变
-              state.phase === "ready" && state.body && !state.body.binary && !state.body.truncated && !editing
+              // PDF 新标签页兜底：手机端个别浏览器不支持 iframe 内嵌 PDF
+              isPdf && state.phase === "ready"
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-btn",
+                    title: t("pdfNewTab"),
+                    onClick: () => window.open(`/dsh-kit/raw?path=${encodeURIComponent(path)}`, "_blank", "noopener"),
+                    children: "↗",
+                  })
+                : null,
+              // ✎ 编辑不再限文件树来源；截断/二进制不可编辑的判定不变；
+              // PDF 即使解码成文本也禁编辑（文本方式保存 PDF 会损坏文件）
+              state.phase === "ready" && state.body && !isPdf && !state.body.binary && !state.body.truncated && !editing
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
@@ -2647,7 +2679,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           }),
           editing
             ? renderEditor()
-            : mode === "diff"
+            : mode === "diff" && !isPdf
               ? jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() })
               : body,
         ],

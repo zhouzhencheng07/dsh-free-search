@@ -65,16 +65,21 @@ function pickUtf16(le, be) {
   return bs >= 0.5 ? be : null
 }
 
+/** 强制二进制的扩展名：有专用预览通道（/dsh-kit/raw + 浏览器查看器），
+ *  不做文本解码——纯 ASCII 的极简 PDF 无 NUL 字节，按常规流程会误判成文本 */
+const FORCED_BINARY_EXTS = new Set(['pdf'])
+
 /**
  * 把文件字节解码为可预览文本。
  * 返回 { binary, content }：binary=true 时 content=null。
- * 规则：①UTF-8/UTF-16 系 BOM 命中 → 按对应编码解码（含 BOM 剥离）；
+ * 规则：⓪强制二进制扩展名直接判定；①UTF-8/UTF-16 系 BOM 命中 → 按对应编码解码（含 BOM 剥离）；
  * ②无 BOM 且首 4KB 无 NUL → UTF-8；③无 BOM 含 NUL 但扩展名属文本类 →
  *   尝试 UTF-16LE 恢复，解码结果无替换符且控制字符占比 <5% 才认定文本；
  * ④其余 → 二进制。
  */
 export function decodePreviewText(buf, name) {
   if (!Buffer.isBuffer(buf)) return { binary: true, content: null }
+  if (FORCED_BINARY_EXTS.has(textExtOf(name))) return { binary: true, content: null }
   const head = buf.subarray(0, 4096)
   if (head.length >= 2 && head[0] === 0xff && head[1] === 0xfe) {
     // UTF-16LE（含 BOM）；`00 00` 尾随的 UTF-32 罕见，不专门处理

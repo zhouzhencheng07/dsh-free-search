@@ -22,9 +22,10 @@
 //   2) 静态 /dsh-kit/vendor/* —— xterm 官方预编译 UMD，按需加载；
 //   3) GET /dsh-kit/tree?path=… —— 单层目录列表（含文件），只读；
 //   4) GET /dsh-kit/read?path=… —— 单文件文本内容，只读；
-//   5) POST /dsh-kit/write —— 编辑保存（cwd 子树校验 + mtime CAS）；
-//   6) POST /dsh-kit/fs/op —— 文件树新建/重命名/删除（删除优先移入回收站）；
-//   7) GET /dsh-kit/git/status|diff、POST /dsh-kit/git/init|op —— 源代码管理。
+//   5) GET /dsh-kit/raw?path=… —— 原始字节透传（扩展名白名单 + Range/206，PDF 预览用）；
+//   6) POST /dsh-kit/write —— 编辑保存（cwd 子树校验 + mtime CAS）；
+//   7) POST /dsh-kit/fs/op —— 文件树新建/重命名/删除（删除优先移入回收站）；
+//   8) GET /dsh-kit/git/status|diff、POST /dsh-kit/git/init|op —— 源代码管理。
 //
 // 终端的工作目录由浏览器端传入（当前会话的 cwd），宿主侧校验后才启动 shell。
 //
@@ -53,6 +54,7 @@ import { applySkillPool, findProjectRoot } from './skill-pool.js'
 import { applyWebSearch } from './web-search.js'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
 import { decodePreviewText } from './text-decode.js'
+import { rawContentType, parseRangeHeader } from './raw-file.js'
 
 /** 手机访问网关对外端口（0.0.0.0）的默认值，可在设置里改（phonePort，1-65535） */
 const PHONE_PORT = 3090
@@ -521,6 +523,81 @@ export function apply(ctx) {
             const decoded = decodePreviewText(body, file.path)
             json(200, { path: file.path, size: file.size, mtimeMs: file.mtimeMs, truncated: false, binary: decoded.binary, content: decoded.content })
           })
+        },
+      })
+
+      // ── 原始字节端点：GET /dsh-kit/raw?path=<绝对文件> ──
+      // 二进制透传（PDF 预览用）：扩展名白名单给 content-type，完整流式返回
+      // 不截断，支持 Range/206（浏览器 PDF 查看器渐进渲染需要）。安全链与
+      // /read 相同；手机网关是全路径反代，新路径无需单独登记。
+      const disposeRaw = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/raw',
+        handler: (req, res) => {
+          const fail = (code, msg) => {
+            res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(msg)
+          }
+          if (req.method !== 'GET') {
+            fail(405, 'method not allowed')
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            fail(403, 'cross-origin denied')
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const file = validateFile(url.searchParams.get('path') ?? '')
+          if (!file.ok) {
+            fail(400, file.message)
+            return
+          }
+          const type = rawContentType(file.path)
+          if (type === null) {
+            fail(415, `不支持的类型：${path.extname(file.path) || '(无扩展名)'}`)
+            return
+          }
+          const headers = {
+            'content-type': type,
+            'cache-control': 'no-cache',
+            'accept-ranges': 'bytes',
+            'x-content-type-options': 'nosniff',
+            // inline + 编码文件名：浏览器 PDF 查看器标题与另存名取这里，中文不乱码
+            'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(path.basename(file.path))}`,
+          }
+          const range = parseRangeHeader(req.headers.range, file.size)
+          if (range === null) {
+            res.writeHead(416, { ...headers, 'content-range': `bytes */${file.size}` })
+            res.end()
+            return
+          }
+          const partial = range !== undefined
+          let stream
+          try {
+            stream = fs.createReadStream(file.path, partial ? { start: range.start, end: range.end } : {})
+          } catch (error) {
+            fail(404, `读取文件失败：${error?.message ?? error}`)
+            return
+          }
+          stream.on('error', (error) => {
+            // 头已发出（流中途失败）只能掐断连接；否则还来得及回 404
+            if (res.headersSent) {
+              res.destroy()
+              return
+            }
+            fail(404, `读取文件失败：${error?.message ?? error}`)
+          })
+          if (partial) {
+            res.writeHead(206, {
+              ...headers,
+              'content-range': `bytes ${range.start}-${range.end}/${file.size}`,
+              'content-length': String(range.end - range.start + 1),
+            })
+          } else {
+            res.writeHead(200, { ...headers, 'content-length': String(file.size) })
+          }
+          stream.pipe(res)
         },
       })
 
@@ -1548,6 +1625,7 @@ export function apply(ctx) {
         disposeVendor()
         disposeTree()
         disposeRead()
+        disposeRaw()
         disposeWrite()
         disposeFsOp()
         disposeGitStatus()
