@@ -127,6 +127,44 @@ const pdfHost = callLog.find((c) => c[0] === "jsx" && c[2] && c[2].className ===
 check("FileContentPane PDF ready 渲染无异常", !!out && typeof out === "object");
 check("PDF 渲染出 pdf.js 宿主容器", !!pdfHost);
 
+// 6.2) xlsx ready 分支：表格宿主容器产出（SheetJS 解析在沙箱 effect 里，桩不覆盖）
+stateSeq = 0;
+stateStore.clear();
+stateStore.set(0, {
+  phase: "ready",
+  body: { path: "C:/x/t.xlsx", size: 10, mtimeMs: 1, truncated: false, binary: true, content: null },
+});
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/t.xlsx", cwd: "C:/x", onClose: () => {} });
+const sheetHost = callLog.find(
+  (c) =>
+    (c[0] === "jsx" || c[0] === "jsxs") &&
+    c[2] &&
+    typeof c[2].className === "string" &&
+    c[2].className.includes("dshk-sheetwrap"),
+);
+check("FileContentPane xlsx ready 渲染无异常", !!out && typeof out === "object");
+check("xlsx 渲染出表格宿主容器", !!sheetHost);
+
+// 6.3) docx ready 分支：文档宿主容器产出（mammoth 转换在沙箱 effect 里，桩不覆盖）
+stateSeq = 0;
+stateStore.clear();
+stateStore.set(0, {
+  phase: "ready",
+  body: { path: "C:/x/t.docx", size: 10, mtimeMs: 1, truncated: false, binary: true, content: null },
+});
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/t.docx", cwd: "C:/x", onClose: () => {} });
+const docHost = callLog.find(
+  (c) =>
+    (c[0] === "jsx" || c[0] === "jsxs") &&
+    c[2] &&
+    typeof c[2].className === "string" &&
+    c[2].className.includes("dshk-docwrap"),
+);
+check("FileContentPane docx ready 渲染无异常", !!out && typeof out === "object");
+check("docx 渲染出文档宿主容器", !!docHost);
+
 // 7) 入口按钮 / 浮层宿主顶部渲染（conversation.input.left + shell.overlay 槽位）
 callLog = [];
 out = comps.TerminalEntry({});

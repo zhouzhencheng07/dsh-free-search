@@ -65,9 +65,10 @@ function pickUtf16(le, be) {
   return bs >= 0.5 ? be : null
 }
 
-/** 强制二进制的扩展名：有专用预览通道（/dsh-kit/raw + 浏览器查看器），
- *  不做文本解码——纯 ASCII 的极简 PDF 无 NUL 字节，按常规流程会误判成文本 */
-const FORCED_BINARY_EXTS = new Set(['pdf'])
+/** 强制二进制的扩展名：有专用预览通道（/dsh-kit/raw + 浏览器端解析库），
+ *  不做文本解码——纯 ASCII 的极简 PDF 无 NUL 字节，按常规流程会误判成文本；
+ *  xlsx/docx 系 zip 容器首部即 PK\x03\x04 本就判二进制，列入只为防御一致 */
+const FORCED_BINARY_EXTS = new Set(['pdf', 'xlsx', 'xlsm', 'xls', 'docx'])
 
 /**
  * 把文件字节解码为可预览文本。

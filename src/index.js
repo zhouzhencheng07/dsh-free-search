@@ -293,6 +293,9 @@ const VENDOR_FILES = new Map([
   // pdf.js 预览（主文件懒加载；worker/cmaps/standard_fonts 由库按需再取）
   ['/dsh-kit/vendor/pdf.min.js', 'pdf.min.js'],
   ['/dsh-kit/vendor/pdf.worker.min.js', 'pdf.worker.min.js'],
+  // Excel/Word 预览解析库（xlsx/docx 懒加载，进沙箱 iframe 解析）
+  ['/dsh-kit/vendor/xlsx.full.min.js', 'xlsx.full.min.js'],
+  ['/dsh-kit/vendor/mammoth.browser.min.js', 'mammoth.browser.min.js'],
 ])
 // pdf.js 按需取用的资源子目录（CJK cmaps / 标准字体回退），单文件白名单覆盖不了
 const VENDOR_SUBDIRS = new Map([

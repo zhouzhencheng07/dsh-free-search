@@ -5,7 +5,13 @@
 // 单独成模块：宿主侧 index.js 消费，tests/test-raw-file.mjs 单测。
 
 /** 可原始预览的类型：扩展名 → content-type */
-const RAW_TYPES = new Map([['pdf', 'application/pdf']])
+const RAW_TYPES = new Map([
+  ['pdf', 'application/pdf'],
+  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['xlsm', 'application/vnd.ms-excel.sheet.macroEnabled.12'],
+  ['xls', 'application/vnd.ms-excel'],
+  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+])
 
 /** 取小写扩展名：`a.PDF` → pdf；无点/点文件 → '' */
 export function rawExtOf(name) {

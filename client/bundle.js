@@ -266,6 +266,8 @@ window.__ModuleLoader__.load({
       contentBinary: "二进制文件，无法预览",
       pdfNewTab: "在新标签页打开",
       pdfJump: "跳转到指定页",
+      sheetRowCap: "表格较大，仅预览前 500 行 × 64 列",
+      previewTooLarge: "文件超过 20MB，不预览",
       contentTruncated: "文件较大，仅显示前 512 KB",
       contentFail: "读取失败",
       contentEmpty: "（空文件）",
@@ -451,6 +453,8 @@ window.__ModuleLoader__.load({
       contentBinary: "Binary file, preview unavailable",
       pdfNewTab: "Open in new tab",
       pdfJump: "Jump to page",
+      sheetRowCap: "Large sheet: showing first 500 rows × 64 columns",
+      previewTooLarge: "File exceeds 20MB, preview skipped",
       contentTruncated: "File is large, only first 512 KB shown",
       contentFail: "Failed to read",
       contentEmpty: "(empty file)",
@@ -682,6 +686,20 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 /* 页码指示器挂预览面板标题栏（固定 UI 区，不遮内容），占位/canvas 全由 mountPdfViewer 管 */
 .dshk-pdf-indicator{flex:none;display:flex;align-items:center;gap:2px;padding:2px 10px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshk-pdf-jump{width:3.2em;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:center;outline:none}
+/* Excel 预览：工作表标签 + 只读表格（SheetJS sheet_to_html 产物经 DOMPurify 消毒） */
+.dshk-sheetwrap{padding:6px 0 16px;display:flex;flex-direction:column;gap:8px}
+.dshk-sheet-tabs{display:flex;gap:4px;flex-wrap:wrap}
+.dshk-sheet-tab{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;padding:2px 10px;font-size:12px;cursor:pointer;max-width:14em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshk-sheet-tab-on,.dshk-sheet-tab-on:hover{background:var(--dsw-alias-button-tool-bar-fill);color:var(--dsw-alias-label-primary);border-color:transparent}
+.dshk-sheet-scroll{width:100%}
+.dshk-sheet-scroll table{border-collapse:collapse;font-size:12px}
+.dshk-sheet-scroll td{border:1px solid var(--dsw-alias-border-l1);padding:2px 8px;white-space:nowrap;max-width:26em;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
+/* docx 预览：mammoth 语义 HTML 复用 .dshk-md 排版，补表格/图片规则 */
+.dshk-docwrap{padding:8px 0 16px}
+.dshk-doc{max-width:72em;margin:0 auto}
+.dshk-doc table,.dshk-md table{border-collapse:collapse}
+.dshk-doc td,.dshk-doc th,.dshk-md td,.dshk-md th{border:1px solid var(--dsw-alias-border-l1);padding:3px 8px}
+.dshk-doc img{max-width:100%}
 /* 拖拽手柄：面板左缘 6px 竖条，拖动更新 --dshk-pane-w */
 .dshk-pane-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:791;touch-action:none}
 .dshk-pane-handle:hover::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;background:var(--dsw-alias-interactive-bg-hover);border-radius:2px}
@@ -927,52 +945,107 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         ? Promise.resolve()
         : loadScript("/dsh-kit/vendor/codemirror.bundle.js");
     }
-    /** pdf.js 渲染沙箱（vendored 3.11 legacy UMD）。不用浏览器内置查看器：Edge 对
-     *  http:// 明文源的 PDF 一律灰屏（https/file 正常，实测 152），DSH 本地服务恰是
-     *  http://127.0.0.1。也不能直接在宿主页面跑：DSH 前端把 window.Promise 换成了
-     *  自己的实现（外观伪装 native），pdf.js 3.x 渲染管线在它上面会卡死——第 1 页
-     *  渲染后所有后续 page.render() 永久 pending（同浏览器同库在同源空白页 34ms
-     *  渲染成功，已二分定位）。srcdoc iframe 是全新 realm、原生 Promise，库/worker/
-     *  canvas 全在里面跑，渲染好的 canvas 跨文档 append 自动采纳，位图不丢。 */
-    let pdfBoxPromise = null;
-    function ensurePdfBox() {
-      if (pdfBoxPromise !== null) return pdfBoxPromise;
-      pdfBoxPromise = new Promise((resolve, reject) => {
+    /** 解析沙箱（srcdoc iframe 新 realm，原生 Promise）。不能在宿主页面直接跑解
+     *  析库：DSH 前端把 window.Promise 换成了自己的实现（外观伪装 native），pdf.js
+     *  3.x 渲染管线在它上面会卡死——第 1 页渲染后所有后续 page.render() 永久
+     *  pending（同浏览器同库在同源空白页 34ms 渲染成功，已二分定位）；mammoth 的
+     *  转换同样是真 Promise 链。srcdoc iframe 是全新 realm、原生 Promise；不带
+     *  sandbox 属性保持同源，主文档可直接调用沙箱函数、互传字节/字符串（pdf 的
+     *  canvas 反着来：在主文档创建、沙箱执笔——跨文档采纳会丢位图）。 */
+    const boxPromises = new Map(); // key → Promise<win>，失败即剔除可重试
+    function ensureBox(key, scripts, setup) {
+      const cached = boxPromises.get(key);
+      if (cached) return cached;
+      const p = new Promise((resolve, reject) => {
         const ifr = document.createElement("iframe");
         ifr.style.display = "none";
         ifr.srcdoc = "<!doctype html><html><head></head><body></body></html>";
+        const fail = (error) => {
+          boxPromises.delete(key);
+          reject(error);
+        };
         ifr.onload = () => {
-          try {
-            const win = ifr.contentWindow;
-            const origin = location.origin;
-            const s = win.document.createElement("script");
-            s.src = origin + "/dsh-kit/vendor/pdf.min.js";
-            s.onload = () => {
+          const win = ifr.contentWindow;
+          const origin = location.origin;
+          const loadAt = (i) => {
+            if (i >= scripts.length) {
               try {
-                win.pdfjsLib.GlobalWorkerOptions.workerSrc = origin + "/dsh-kit/vendor/pdf.worker.min.js";
+                if (setup) setup(win);
                 resolve(win);
               } catch (error) {
-                pdfBoxPromise = null;
-                reject(error);
+                fail(error);
               }
-            };
-            s.onerror = () => {
-              pdfBoxPromise = null;
-              reject(new Error("pdf.min.js 加载失败"));
-            };
-            win.document.head.appendChild(s);
-          } catch (error) {
-            pdfBoxPromise = null;
-            reject(error);
-          }
+              return;
+            }
+            try {
+              const s = win.document.createElement("script");
+              s.src = origin + scripts[i];
+              s.onload = () => loadAt(i + 1);
+              s.onerror = () => fail(new Error(scripts[i] + " 加载失败"));
+              win.document.head.appendChild(s);
+            } catch (error) {
+              fail(error);
+            }
+          };
+          loadAt(0);
         };
-        ifr.onerror = () => {
-          pdfBoxPromise = null;
-          reject(new Error("pdf 沙箱 iframe 创建失败"));
-        };
+        ifr.onerror = () => fail(new Error("沙箱 iframe 创建失败"));
         document.body.appendChild(ifr);
       });
-      return pdfBoxPromise;
+      boxPromises.set(key, p);
+      return p;
+    }
+    function ensurePdfBox() {
+      return ensureBox("pdf", ["/dsh-kit/vendor/pdf.min.js"], (win) => {
+        win.pdfjsLib.GlobalWorkerOptions.workerSrc = location.origin + "/dsh-kit/vendor/pdf.worker.min.js";
+      });
+    }
+    /** SheetJS 解析：每表裁剪到 500 行 × 64 列（合并单元格收进界内防表结构破损），
+     *  sheet_to_html 出表格 HTML，主文档侧再过 DOMPurify。 */
+    function ensureSheetBox() {
+      return ensureBox("sheet", ["/dsh-kit/vendor/xlsx.full.min.js"], (win) => {
+        win.__dshkSheetParse = (bytes) => {
+          const X = win.XLSX;
+          const wb = X.read(bytes, { type: "array" });
+          const ROW_CAP = 500;
+          const COL_CAP = 64;
+          return wb.SheetNames.map((name) => {
+            const ws = wb.Sheets[name];
+            const range = X.utils.decode_range(ws["!ref"] ?? "A1");
+            const totalRows = range.e.r - range.s.r + 1;
+            const totalCols = range.e.c - range.s.c + 1;
+            const truncated = totalRows > ROW_CAP || totalCols > COL_CAP;
+            range.e.r = Math.min(range.e.r, range.s.r + ROW_CAP - 1);
+            range.e.c = Math.min(range.e.c, range.s.c + COL_CAP - 1);
+            const merges = (ws["!merges"] ?? [])
+              .map((m) => ({
+                s: { r: Math.max(m.s.r, range.s.r), c: Math.max(m.s.c, range.s.c) },
+                e: { r: Math.min(m.e.r, range.e.r), c: Math.min(m.e.c, range.e.c) },
+              }))
+              .filter((m) => m.e.r >= m.s.r && m.e.c >= m.s.c);
+            const clipped = Object.assign({}, ws, { "!ref": X.utils.encode_range(range), "!merges": merges });
+            return {
+              name,
+              html: X.utils.sheet_to_html(clipped, { header: "", footer: "" }),
+              truncated,
+              totalRows,
+              totalCols,
+            };
+          });
+        };
+      });
+    }
+    /** mammoth 解析：docx → 语义 HTML（标题/列表/表格/粗斜体/内联 base64 图片）。
+     *  jszip 用 instanceof ArrayBuffer 验型——跨 realm 会失败，须在沙箱内重建
+     *  原生 ArrayBuffer 再喂给 mammoth（SheetJS 只做索引访问所以不受此限）。 */
+    function ensureDocBox() {
+      return ensureBox("doc", ["/dsh-kit/vendor/mammoth.browser.min.js"], (win) => {
+        win.__dshkDocxParse = (bytes) => {
+          const ab = new win.ArrayBuffer(bytes.length);
+          new win.Uint8Array(ab).set(bytes);
+          return win.mammoth.convertToHtml({ arrayBuffer: ab }).then((r) => r.value);
+        };
+      });
     }
     /** PDF 懒加载查看器：先按第 1 页纵横比铺全量占位（滚动条即真实页数长度），
      *  占位进入预载区（IntersectionObserver，root=滚动容器）才渲染 canvas，
@@ -2498,10 +2571,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
       // 基线，即便从 SCM 进入也默认原文），头部 ⇄ 随时互切；
       // 同一面板会话内换文件保留用户选中的模式。
-      // PDF 是二进制，git diff 只有 "Binary files differ" 一句话——无 diff 视图，
-      // 入口默认与 ⇄ 都按原文处理（renderDiffView 入口另有 isPdf 守卫兜底）。
+      // 二进制专用预览通道（pdf/xlsx/docx）：git diff 只有 "Binary files differ"
+      // 一句话——无 diff 视图，⇄ 与 ✎ 都禁用，SCM 入口不默认 diff
       const isPdf = /\.pdf$/i.test(path);
-      const [mode, setMode] = react.useState(source === "scm" && untracked !== true && !isPdf ? "diff" : "text");
+      const isSheet = /\.(xlsx|xlsm|xls)$/i.test(path);
+      const isDoc = /\.docx$/i.test(path);
+      const binaryPreview = isPdf || isSheet || isDoc;
+      const [mode, setMode] = react.useState(source === "scm" && untracked !== true && !binaryPreview ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -2513,7 +2589,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       react.useEffect(() => {
         if (sourceRef.current === source) return;
         sourceRef.current = source;
-        setMode(source === "scm" && untracked !== true && !isPdf ? "diff" : "text");
+        setMode(source === "scm" && untracked !== true && !binaryPreview ? "diff" : "text");
       }, [source]);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
@@ -2528,6 +2604,16 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // PDF 渲染态：错误信息 / 渲染完成（占位与 canvas 由 mountPdfViewer 直接管）
       const [pdfError, setPdfError] = react.useState(null);
       const [pdfDone, setPdfDone] = react.useState(false);
+      // Excel 渲染态：{sheets:[{name,html,truncated,totalRows,totalCols}]} / 活动表 /
+      // 错误 / 解析完成（sheetSafeRef 缓存各表消毒后的 HTML，切表不重消毒）
+      const [sheetData, setSheetData] = react.useState(null);
+      const [sheetIdx, setSheetIdx] = react.useState(0);
+      const [sheetError, setSheetError] = react.useState(null);
+      const [sheetDone, setSheetDone] = react.useState(false);
+      const sheetSafeRef = react.useRef(new Map());
+      // docx 渲染态：消毒后的语义 HTML / 错误
+      const [docHtml, setDocHtml] = react.useState(null);
+      const [docError, setDocError] = react.useState(null);
       const mdHostRef = react.useRef(null);
       const pdfHostRef = react.useRef(null);
       // 标题栏页码指示器槽位（React 只给挂载点，内容归 mountPdfViewer 命令式管理）
@@ -2560,7 +2646,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       // diff 数据（仅 diff 视图激活时）：进入时拉一次，可见期间低频静默跟随
       // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询
       react.useEffect(() => {
-        if (mode !== "diff" || isPdf || !cwd) return undefined;
+        if (mode !== "diff" || binaryPreview || !cwd) return undefined;
         setDiff({ phase: "loading" });
         if (diffFetchRef.current) diffFetchRef.current();
         const tick = () => {
@@ -2761,6 +2847,72 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           if (doc) doc.destroy();
         };
       }, [isPdf, state.phase, path, reloadNonce]);
+      // ── Excel 渲染：fetch raw 字节 → SheetJS 沙箱解析 → 各表懒消毒渲染
+      react.useEffect(() => {
+        if (!isSheet || state.phase !== "ready") return undefined;
+        let alive = true;
+        setSheetData(null);
+        setSheetIdx(0);
+        setSheetError(null);
+        setSheetDone(false);
+        sheetSafeRef.current = new Map();
+        if ((state.body?.size ?? 0) > 20 * 1024 * 1024) {
+          setSheetError(t("previewTooLarge"));
+          return undefined;
+        }
+        const origin = location.origin;
+        Promise.all([
+          fetch(`${origin}/dsh-kit/raw?path=${encodeURIComponent(path)}`).then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.arrayBuffer();
+          }),
+          ensureSheetBox(),
+          ensureMdLibs(),
+        ])
+          .then(([buf, win]) => win.__dshkSheetParse(new Uint8Array(buf)))
+          .then((sheets) => {
+            if (!alive) return;
+            setSheetData({ sheets });
+            setSheetDone(true);
+          })
+          .catch((error) => {
+            if (alive) setSheetError(String(error?.message ?? error));
+          });
+        return () => {
+          alive = false;
+        };
+      }, [isSheet, state.phase, path, reloadNonce]);
+      // ── docx 渲染：fetch raw 字节 → mammoth 沙箱转语义 HTML → DOMPurify 消毒
+      react.useEffect(() => {
+        if (!isDoc || state.phase !== "ready") return undefined;
+        let alive = true;
+        setDocHtml(null);
+        setDocError(null);
+        if ((state.body?.size ?? 0) > 20 * 1024 * 1024) {
+          setDocError(t("previewTooLarge"));
+          return undefined;
+        }
+        const origin = location.origin;
+        Promise.all([
+          fetch(`${origin}/dsh-kit/raw?path=${encodeURIComponent(path)}`).then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.arrayBuffer();
+          }),
+          ensureDocBox(),
+          ensureMdLibs(),
+        ])
+          .then(([buf, win]) => win.__dshkDocxParse(new Uint8Array(buf)))
+          .then((html) => {
+            if (!alive) return;
+            setDocHtml(window.DOMPurify.sanitize(html, { ADD_DATA_URI_TAGS: ["img"] }));
+          })
+          .catch((error) => {
+            if (alive) setDocError(String(error?.message ?? error));
+          });
+        return () => {
+          alive = false;
+        };
+      }, [isDoc, state.phase, path, reloadNonce]);
       // 只读视图：文本类文件统一交给 CM（只读实例）；md 渲染态不挂
       react.useEffect(() => {
         const host = readHostRef.current;
@@ -2876,7 +3028,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
       const startEdit = () => {
         // 截断预览的文件不允许编辑（保存会丢掉 512KB 之后的内容）；PDF 一律不可编辑
-        if (isPdf || !state.body || state.body.binary || state.body.content === null || state.body.truncated) return;
+        if (binaryPreview || !state.body || state.body.binary || state.body.content === null || state.body.truncated) return;
         setDraft(state.body.content);
         setEditing(true);
       };
@@ -2932,6 +3084,63 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 : null,
             ],
           });
+        } else if (isSheet) {
+          const sheets = sheetData ? sheetData.sheets : null;
+          const activeIdx = sheets ? Math.min(sheetIdx, sheets.length - 1) : 0;
+          const active = sheets && sheets.length > 0 ? sheets[activeIdx] : null;
+          if (active && !sheetSafeRef.current.has(activeIdx)) {
+            sheetSafeRef.current.set(activeIdx, window.DOMPurify.sanitize(active.html));
+          }
+          const activeHtml = active ? sheetSafeRef.current.get(activeIdx) : null;
+          body = jsxRuntime.jsxs("div", {
+            className: "dshk-pane-body dshk-sheetwrap",
+            children: [
+              sheetError
+                ? jsxRuntime.jsx("div", { className: "dshk-note", title: sheetError, children: `${t("contentFail")}：${sheetError}` })
+                : null,
+              sheets
+                ? jsxRuntime.jsx(
+                    "div",
+                    {
+                      className: "dshk-sheet-tabs",
+                      children: sheets.map((s, i) =>
+                        jsxRuntime.jsx("button", {
+                          type: "button",
+                          className: "dshk-sheet-tab" + (i === activeIdx ? " dshk-sheet-tab-on" : ""),
+                          title: s.name,
+                          onClick: () => setSheetIdx(i),
+                          children: s.name,
+                        }),
+                      ),
+                    },
+                  )
+                : null,
+              activeHtml
+                ? jsxRuntime.jsx("div", { className: "dshk-sheet-scroll", dangerouslySetInnerHTML: { __html: activeHtml } })
+                : null,
+              active && active.truncated
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("sheetRowCap") })
+                : null,
+              !sheetError && !sheetDone
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
+                : null,
+            ],
+          });
+        } else if (isDoc) {
+          body = jsxRuntime.jsxs("div", {
+            className: "dshk-pane-body dshk-docwrap",
+            children: [
+              docError
+                ? jsxRuntime.jsx("div", { className: "dshk-note", title: docError, children: `${t("contentFail")}：${docError}` })
+                : null,
+              docHtml !== null
+                ? jsxRuntime.jsx("div", { className: "dshk-md dshk-doc", dangerouslySetInnerHTML: { __html: docHtml } })
+                : null,
+              !docError && docHtml === null
+                ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") })
+                : null,
+            ],
+          });
         } else if (b.binary) {
           body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentBinary") });
         } else if (b.content === null || b.content === "") {
@@ -2974,7 +3183,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 : null,
               // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）；
               // PDF 无 diff 视图，不显示
-              !editing && !isPdf
+              !editing && !binaryPreview
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
@@ -2995,7 +3204,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 : null,
               // ✎ 编辑不再限文件树来源；截断/二进制不可编辑的判定不变；
               // PDF 即使解码成文本也禁编辑（文本方式保存 PDF 会损坏文件）
-              state.phase === "ready" && state.body && !isPdf && !state.body.binary && !state.body.truncated && !editing
+              state.phase === "ready" && state.body && !binaryPreview && !state.body.binary && !state.body.truncated && !editing
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
@@ -3015,7 +3224,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           }),
           editing
             ? renderEditor()
-            : mode === "diff" && !isPdf
+            : mode === "diff" && !binaryPreview
               ? jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() })
               : body,
         ],

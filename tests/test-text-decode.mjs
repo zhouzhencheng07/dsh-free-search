@@ -70,4 +70,13 @@ check('点文件无 BOM UTF-16LE 恢复', r.binary === false && r.content === 'p
 r = decodePreviewText(Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n'), 'a.pdf')
 check('pdf 纯 ASCII 也强制二进制', r.binary === true && r.content === null)
 
+// 7) Office 容器格式：zip 头本就含 NUL 会判二进制，列在这里防误删白名单的回归
+const zipAscii = Buffer.from('PK\x03\x04 plain ascii body without NUL bytes')
+r = decodePreviewText(zipAscii, 'a.xlsx')
+check('xlsx 强制二进制', r.binary === true && r.content === null)
+r = decodePreviewText(zipAscii, 'a.docx')
+check('docx 强制二进制', r.binary === true && r.content === null)
+r = decodePreviewText(Buffer.from('plain ascii legacy'), 'a.xls')
+check('xls 强制二进制', r.binary === true)
+
 process.exit(failed === 0 ? 0 : 1)
