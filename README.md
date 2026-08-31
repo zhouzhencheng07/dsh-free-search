@@ -165,19 +165,18 @@ v0.2.0 并入的宿主侧能力（该仓库停留在 v0.2.0，不再单独演进
 ## 安装
 
 ```bash
+# 安装最新 release 版本（推荐）
+dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit#semver:*"
+# 或安装最新仓库提交（跟踪 main 分支）
 dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
-本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层(而不是仅仅装成
-一个不生效的普通依赖)。安装后重启 `dsh web`,输入框工具行出现文件树 / 源代码管理 /
-后台任务 / 终端四个开关,AI 的 `web_search` 同时切到免费多源搜索。
-
-### 本地开发安装
-
-```bash
-# 本地开发安装:把路径换成你自己的本地检出目录
-dsh plugin --profile web add "file:/path/to/dsh-kit"
-```
+> `#semver:*` 后缀让 pnpm 从仓库 tags 中选取匹配语义化版本的最高 release tag，
+> 适合稳定使用；不加后缀则跟随 main 分支的最新提交。
+>
+> 本包声明了 `dsh.bundle.patch`，因此会被激活为 profile 的 bundle 层（而不是仅仅装成
+> 一个不生效的普通依赖）。安装后重启 `dsh web`，输入框工具行出现文件树 / 源代码管理 /
+> 后台任务 / 终端四个开关，AI 的 `web_search` 同时切到免费多源搜索。
 
 ## 工作原理
 
