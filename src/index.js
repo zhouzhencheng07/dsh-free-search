@@ -45,7 +45,7 @@
 // 重连或换 shell，直到用户关闭面板（连接关闭即杀进程）。
 
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -87,24 +87,53 @@ function loadDep(spec) {
   return null
 }
 
+/**
+ * 从运行中 DSH 的 monorepo 根直接 import 本地 workspace 包（dsh-settings /
+ * schemastery），不依赖 profile node_modules 里的 junction。
+ *
+ * dsh-settings 的 peerDependencies 全是 pnpm `workspace:` 协议，只能在 monorepo
+ * 内解析，无法作为 file: 依赖拷出。junction 指向 monorepo 原路径虽能工作，但
+ * junction 在 node_modules 里无法随仓库提交、reinstall 会丢。故改为从
+ * process.argv[1]（dsh bin，位于 monorepo 内）向上定位 pnpm-workspace.yaml 根，
+ * 直接 import 根下 lib 入口；settings 的 workspace 依赖在 monorepo 自身
+ * node_modules 内解析，完整可用。
+ */
+async function loadMonorepoDep(relEntry) {
+  const anchor = process.argv[1]
+  if (!anchor) return null
+  let dir = path.dirname(anchor)
+  let root = null
+  for (let i = 0; i < 8; i++) {
+    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
+      root = dir
+      break
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  if (!root) return null
+  const entry = path.join(root, relEntry)
+  if (!fs.existsSync(entry)) return null
+  try {
+    return await import(pathToFileURL(entry).href)
+  } catch {
+    return null
+  }
+}
+
 const pty = loadDep('node-pty')
 const WebSocketServer = loadDep('ws')?.WebSocketServer ?? null
 if (!pty || !WebSocketServer) {
   console.warn('dsh-kit: node-pty/ws 不可用，终端能力不可用')
 }
 
-// 插件设置命名空间依赖：junction 直装下静态 import @deepseek-ai/*
-// 会在 dev 环境启动即 ERR_MODULE_NOT_FOUND（parent-walk 够不到 fallback
-// node_modules），与 node-pty/ws 同走 loadDep 运行时解析。dsh-settings 是纯
-// ESM，require() 依赖 Node ≥22.12 的 require(esm)；schemastery 自带 cjs 导出。
-const dshSettings = loadDep('@deepseek-ai/dsh-settings')
-const schemasteryMod = loadDep('@deepseek-ai/schemastery')
-const installSettingsSection = dshSettings?.installSettingsSection ?? null
-const settingsNamespace = dshSettings?.settingsNamespace ?? null
-const z = schemasteryMod?.default ?? schemasteryMod ?? null
-if (!installSettingsSection || !settingsNamespace || !z || typeof z.object !== 'function') {
-  console.warn('dsh-kit: @deepseek-ai/dsh-settings 或 @deepseek-ai/schemastery 不可用，插件设置命名空间未注册')
-}
+// 插件设置命名空间依赖（@deepseek-ai/dsh-settings / @deepseek-ai/schemastery）
+// 在 apply() 内用 await import() 加载，不再走模块顶层的同步 require()：
+// dsh-settings 是纯 ESM，而 DSH 主程序在启动期正并发 import() 同一个模块，
+// 同步 require(esm) 会命中 Node 的 "not yet fully loaded" 竞争检测而失败。
+// import() 返回 Promise，会等待该 ESM 模块（进程内单例）加载完成后 resolve，
+// 天然避开竞争——正是 require(esm) 报错信息所建议的做法。
 
 /** 尺寸参数收敛到安全区间 */
 function clampDim(value, min, max, fallback) {
@@ -308,7 +337,7 @@ const VENDOR_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
 ])
 
-export function apply(ctx) {
+export async function apply(ctx) {
   // ── 插件设置命名空间 ──
   // 浏览器半边设置卡（client/bundle.js 的 dsh-kit 卡片，settings.plugin.item）
   // 的数据通道：terminalEnabled/fileTreeEnabled/skillsPageEnabled 三个功能开关
@@ -325,6 +354,24 @@ export function apply(ctx) {
   // readSettings 提升到 apply 作用域：webServer 注入回调（块外）的手机访问段
   // 也要读开关（远程域名、端口、页面可见性）。网关启用位已改状态文件直管，
   // 不再走 settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
+  // 异步加载设置命名空间依赖：dsh-settings 是纯 ESM，DSH 主程序启动期正并发
+  // import() 它，模块顶层同步 require(esm) 会触发 "not yet fully loaded" 竞争
+  // 而失败；import() 会等待该进程内单例加载完成后 resolve，天然避开竞争。
+  // schemastery 自带 cjs 导出，import() 同样适用（Node 支持 import CJS）。
+  // node_modules 里没有（junction 未建 / reinstall 丢失）时回退 loadMonorepoDep：
+  // 从 process.argv[1] 定位 monorepo 根，直接 import 本地 workspace 包的 lib 入口，
+  // 不依赖 node_modules junction（junction 无法随仓库提交、reinstall 会丢）。
+  const dshSettings = (await import('@deepseek-ai/dsh-settings').catch(() => null))
+    ?? await loadMonorepoDep('packages/settings/settings/lib/index.js')
+  const schemasteryMod = (await import('@deepseek-ai/schemastery').catch(() => null))
+    ?? await loadMonorepoDep('vendor/schemastery/lib/index.mjs')
+  const installSettingsSection = dshSettings?.installSettingsSection ?? null
+  const settingsNamespace = dshSettings?.settingsNamespace ?? null
+  const z = schemasteryMod?.default ?? schemasteryMod ?? null
+  if (!installSettingsSection || !settingsNamespace || !z || typeof z.object !== 'function') {
+    console.warn('dsh-kit: @deepseek-ai/dsh-settings 或 @deepseek-ai/schemastery 不可用，插件设置命名空间未注册')
+  }
+
   let readSettings = () => ({})
   // 手机网关的设置联动钩子（端口变更热重启等），由 webServer 注入段回填
   let onSettingsChanged = () => {}

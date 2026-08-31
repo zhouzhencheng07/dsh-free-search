@@ -574,7 +574,19 @@ window.__ModuleLoader__.load({
       jobsOutputEmpty: "(no output yet)",
       jobsOutputTransient: "Failed to read output: {error}",
     };
-    const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
+    /** 语言判定：优先跟随 DSH 的 locale（<html lang>，可在 设置→通用→语言 切换，
+     *  DSH 的 locale 服务把它同步到 document.documentElement.lang），无 DSH locale
+     *  时回退浏览器 navigator.language。这样 dsh-kit 文案与 DSH 界面语言保持一致。 */
+    function resolveZh() {
+      try {
+        if (typeof document !== "undefined" && document.documentElement && /^zh/i.test(document.documentElement.lang || "")) return true;
+      } catch (_e) { /* ignore */ }
+      try {
+        if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return true;
+      } catch (_e) { /* ignore */ }
+      return false;
+    }
+    const lang = resolveZh() ? zh : en;
     const t = (key) => lang[key] ?? key;
     /** 带占位符的文案变体：tf("phoneStatusOn", { port: 3090 }) */
     const tf = (key, vars) => {
@@ -3919,7 +3931,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const seconds = total % 60;
       const minutes = Math.floor(total / 60) % 60;
       const hours = Math.floor(total / 3600);
-      const zhLang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "");
+      const zhLang = resolveZh();
       if (hours > 0) return zhLang ? `${hours}小时${minutes}分` : `${hours}h ${minutes}m`;
       if (minutes > 0) return zhLang ? `${minutes}分${seconds}秒` : `${minutes}m ${seconds}s`;
       return zhLang ? `${seconds}秒` : `${seconds}s`;
