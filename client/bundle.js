@@ -574,17 +574,15 @@ window.__ModuleLoader__.load({
       jobsOutputEmpty: "(no output yet)",
       jobsOutputTransient: "Failed to read output: {error}",
     };
-    /** 语言判定：优先跟随 DSH 的 locale（<html lang>，可在 设置→通用→语言 切换，
-     *  DSH 的 locale 服务把它同步到 document.documentElement.lang），无 DSH locale
-     *  时回退浏览器 navigator.language。这样 dsh-kit 文案与 DSH 界面语言保持一致。 */
+    /** 语言判定：只认 DSH 的 locale 权威 —— <html lang> 由 dsh-client-locale 的
+     *  syncDocumentLanguage 在启动与每次切换时同步（设置→通用→语言），页面内
+     *  恒有值（服务端标记初始为 en）。不设 navigator.language 回退：中文系统
+     *  浏览器语言恒为 zh-CN，回退会把 DSH 已切到英文的界面锁回中文（实测回归的
+     *  根源）；且 DSH 自身无浏览器语言匹配时的兜底语义就是英文（FALLBACK_LOCALE），
+     *  插件保持一致即可。非 zh 一律按英文渲染。 */
     function resolveZh() {
-      try {
-        if (typeof document !== "undefined" && document.documentElement && /^zh/i.test(document.documentElement.lang || "")) return true;
-      } catch (_e) { /* ignore */ }
-      try {
-        if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return true;
-      } catch (_e) { /* ignore */ }
-      return false;
+      if (typeof document === "undefined" || !document.documentElement) return false;
+      return /^zh/i.test(document.documentElement.lang || "");
     }
     // 每次现读现判，不在模块加载时钉死：DSH 的 locale 服务异步把语言同步到
     // <html lang>（syncDocumentLanguage），时机晚于本 bundle 顶层执行，一次性求值

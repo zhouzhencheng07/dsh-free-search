@@ -156,18 +156,44 @@ async function loadMonorepoDep(relEntry) {
   }
 }
 
+/**
+ * 异步多锚点加载设置命名空间依赖（@deepseek-ai/dsh-settings 纯 ESM /
+ * @deepseek-ai/schemastery 自带 cjs）。按可靠度依次尝试：
+ *   1) 裸 import(spec)——依赖在插件解析路径可达的安装形态直接命中；
+ *   2) 运行中 dsh 本体锚点——junction/真实拷贝安装下插件位置 parent-walk 够不到
+ *      fallback node_modules，但 dsh-settings/schemastery 都在 dsh 主程序自身的
+ *      依赖树里：createRequire(process.argv[1]).resolve 定位实体文件路径，
+ *      再 import(pathToFileURL)。resolve 走 CJS 条件，exports 只有 default 的
+ *      纯 ESM 包同样可解析；import 统一处理 ESM/CJS，且等待进程内单例加载完成，
+ *      天然避开 require(esm) 的 "not yet fully loaded" 启动期竞争；
+ *   3) DSH monorepo 源码开发形态（运行中的 dsh 在 monorepo 里）——按 workspace
+ *      相对路径直 import 本地包 lib 入口（见 loadMonorepoDep）。
+ * 都失败返回 null（设置命名空间不注册，插件其余功能保持可用性优先）。
+ */
+async function loadSettingsDep(spec, monorepoEntry) {
+  try {
+    return await import(spec)
+  } catch {
+    // 落到下一锚点
+  }
+  const anchor = process.argv[1]
+  if (anchor) {
+    try {
+      const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
+      const resolved = createRequire(abs).resolve(spec)
+      if (resolved) return await import(pathToFileURL(resolved).href)
+    } catch {
+      // 落到下一锚点
+    }
+  }
+  return monorepoEntry ? loadMonorepoDep(monorepoEntry) : null
+}
+
 const pty = loadDep('node-pty')
 const WebSocketServer = loadDep('ws')?.WebSocketServer ?? null
 if (!pty || !WebSocketServer) {
   console.warn('dsh-kit: node-pty/ws 不可用，终端能力不可用')
 }
-
-// 插件设置命名空间依赖（@deepseek-ai/dsh-settings / @deepseek-ai/schemastery）
-// 在 apply() 内用 await import() 加载，不再走模块顶层的同步 require()：
-// dsh-settings 是纯 ESM，而 DSH 主程序在启动期正并发 import() 同一个模块，
-// 同步 require(esm) 会命中 Node 的 "not yet fully loaded" 竞争检测而失败。
-// import() 返回 Promise，会等待该 ESM 模块（进程内单例）加载完成后 resolve，
-// 天然避开竞争——正是 require(esm) 报错信息所建议的做法。
 
 /** 尺寸参数收敛到安全区间 */
 function clampDim(value, min, max, fallback) {
@@ -392,13 +418,10 @@ export async function apply(ctx) {
   // import() 它，模块顶层同步 require(esm) 会触发 "not yet fully loaded" 竞争
   // 而失败；import() 会等待该进程内单例加载完成后 resolve，天然避开竞争。
   // schemastery 自带 cjs 导出，import() 同样适用（Node 支持 import CJS）。
-  // node_modules 里没有（junction 未建 / reinstall 丢失）时回退 loadMonorepoDep：
-  // 从 process.argv[1] 定位 monorepo 根，直接 import 本地 workspace 包的 lib 入口，
-  // 不依赖 node_modules junction（junction 无法随仓库提交、reinstall 会丢）。
-  const dshSettings = (await import('@deepseek-ai/dsh-settings').catch(() => null))
-    ?? await loadMonorepoDep('packages/settings/settings/lib/index.js')
-  const schemasteryMod = (await import('@deepseek-ai/schemastery').catch(() => null))
-    ?? await loadMonorepoDep('vendor/schemastery/lib/index.mjs')
+  // 多锚点解析见 loadSettingsDep：裸 import 失败后先落运行中 dsh 本体锚点
+  //（junction/真实拷贝安装都有），最后才落 monorepo 源码开发形态的 workspace 入口。
+  const dshSettings = await loadSettingsDep('@deepseek-ai/dsh-settings', 'packages/settings/settings/lib/index.js')
+  const schemasteryMod = await loadSettingsDep('@deepseek-ai/schemastery', 'vendor/schemastery/lib/index.mjs')
   const installSettingsSection = dshSettings?.installSettingsSection ?? null
   const settingsNamespace = dshSettings?.settingsNamespace ?? null
   const z = schemasteryMod?.default ?? schemasteryMod ?? null
