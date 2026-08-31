@@ -586,14 +586,40 @@ window.__ModuleLoader__.load({
       } catch (_e) { /* ignore */ }
       return false;
     }
-    const lang = resolveZh() ? zh : en;
-    const t = (key) => lang[key] ?? key;
+    // 每次现读现判，不在模块加载时钉死：DSH 的 locale 服务异步把语言同步到
+    // <html lang>（syncDocumentLanguage），时机晚于本 bundle 顶层执行，一次性求值
+    // 会拿到旧值而把界面锁死在英文。
+    const lang = () => (resolveZh() ? zh : en);
+    const t = (key) => lang()[key] ?? key;
     /** 带占位符的文案变体：tf("phoneStatusOn", { port: 3090 }) */
     const tf = (key, vars) => {
-      let s = lang[key] ?? key;
+      let s = lang()[key] ?? key;
       for (const [name, value] of Object.entries(vars ?? {})) s = s.split(`{${name}}`).join(String(value));
       return s;
     };
+
+    // 语言切换响应：外部 store + <html lang> 的 MutationObserver。DSH 异步改写
+    // <html lang> 后 bump version，组件经 useSyncExternalStore 订阅 version，
+    // 变化即 re-render，届时 t/tf 已读到新语言。与上方 cfg 快照订阅同一模式。
+    const localeStore = { version: 0, listeners: new Set() };
+    const subscribeLocale = (fn) => {
+      localeStore.listeners.add(fn);
+      return () => localeStore.listeners.delete(fn);
+    };
+    const getLocaleVersion = () => localeStore.version;
+    if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
+      let lastLang = document.documentElement.lang || "";
+      new MutationObserver(() => {
+        const cur = document.documentElement.lang || "";
+        if (cur !== lastLang) {
+          lastLang = cur;
+          localeStore.version++;
+          for (const l of localeStore.listeners) {
+            try { l(); } catch (_e) { /* ignore */ }
+          }
+        }
+      }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
+    }
 
     // ─────────── 外观跟随 ───────────
     /** DSH 主题 presenter 以 body[data-ds-dark-theme] 有无表达明暗 */
@@ -4177,6 +4203,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // stacking context 影响）；文件树的 sidebar.workspaces 动态注册、让位 body 类、
     // 快捷键监听全部挂在这个常驻根组件里。
     function KitSurfaces(props) {
+      react.useSyncExternalStore(subscribeLocale, getLocaleVersion); // 跟随 DSH 语言切换重绘
       const cwd = useCurrentCwd(props);
       const ui = useKitUi();
       const snap = react.useSyncExternalStore(subscribeCfg, getCfgSnapshot);
@@ -4791,6 +4818,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     }
 
     function KitConfigCard({ scope }) {
+      react.useSyncExternalStore(subscribeLocale, getLocaleVersion); // 跟随 DSH 语言切换重绘
       const [snapshot, setSnapshot] = react.useState(() => scope.getSnapshot());
       react.useEffect(() => scope.subscribe(() => setSnapshot(scope.getSnapshot())), [scope]);
       const [drafts, setDrafts] = react.useState({});
