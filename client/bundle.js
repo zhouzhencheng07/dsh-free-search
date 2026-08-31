@@ -574,14 +574,50 @@ window.__ModuleLoader__.load({
       jobsOutputEmpty: "(no output yet)",
       jobsOutputTransient: "Failed to read output: {error}",
     };
-    const lang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "") ? zh : en;
-    const t = (key) => lang[key] ?? key;
+    /** 语言判定：只认 DSH 的 locale 权威 —— <html lang> 由 dsh-client-locale 的
+     *  syncDocumentLanguage 在启动与每次切换时同步（设置→通用→语言），页面内
+     *  恒有值（服务端标记初始为 en）。不设 navigator.language 回退：中文系统
+     *  浏览器语言恒为 zh-CN，回退会把 DSH 已切到英文的界面锁回中文（实测回归的
+     *  根源）；且 DSH 自身无浏览器语言匹配时的兜底语义就是英文（FALLBACK_LOCALE），
+     *  插件保持一致即可。非 zh 一律按英文渲染。 */
+    function resolveZh() {
+      if (typeof document === "undefined" || !document.documentElement) return false;
+      return /^zh/i.test(document.documentElement.lang || "");
+    }
+    // 每次现读现判，不在模块加载时钉死：DSH 的 locale 服务异步把语言同步到
+    // <html lang>（syncDocumentLanguage），时机晚于本 bundle 顶层执行，一次性求值
+    // 会拿到旧值而把界面锁死在英文。
+    const lang = () => (resolveZh() ? zh : en);
+    const t = (key) => lang()[key] ?? key;
     /** 带占位符的文案变体：tf("phoneStatusOn", { port: 3090 }) */
     const tf = (key, vars) => {
-      let s = lang[key] ?? key;
+      let s = lang()[key] ?? key;
       for (const [name, value] of Object.entries(vars ?? {})) s = s.split(`{${name}}`).join(String(value));
       return s;
     };
+
+    // 语言切换响应：外部 store + <html lang> 的 MutationObserver。DSH 异步改写
+    // <html lang> 后 bump version，组件经 useSyncExternalStore 订阅 version，
+    // 变化即 re-render，届时 t/tf 已读到新语言。与上方 cfg 快照订阅同一模式。
+    const localeStore = { version: 0, listeners: new Set() };
+    const subscribeLocale = (fn) => {
+      localeStore.listeners.add(fn);
+      return () => localeStore.listeners.delete(fn);
+    };
+    const getLocaleVersion = () => localeStore.version;
+    if (typeof document !== "undefined" && typeof MutationObserver !== "undefined") {
+      let lastLang = document.documentElement.lang || "";
+      new MutationObserver(() => {
+        const cur = document.documentElement.lang || "";
+        if (cur !== lastLang) {
+          lastLang = cur;
+          localeStore.version++;
+          for (const l of localeStore.listeners) {
+            try { l(); } catch (_e) { /* ignore */ }
+          }
+        }
+      }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
+    }
 
     // ─────────── 外观跟随 ───────────
     /** DSH 主题 presenter 以 body[data-ds-dark-theme] 有无表达明暗 */
@@ -3919,7 +3955,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const seconds = total % 60;
       const minutes = Math.floor(total / 60) % 60;
       const hours = Math.floor(total / 3600);
-      const zhLang = typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "");
+      const zhLang = resolveZh();
       if (hours > 0) return zhLang ? `${hours}小时${minutes}分` : `${hours}h ${minutes}m`;
       if (minutes > 0) return zhLang ? `${minutes}分${seconds}秒` : `${minutes}m ${seconds}s`;
       return zhLang ? `${seconds}秒` : `${seconds}s`;
@@ -4165,6 +4201,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // stacking context 影响）；文件树的 sidebar.workspaces 动态注册、让位 body 类、
     // 快捷键监听全部挂在这个常驻根组件里。
     function KitSurfaces(props) {
+      react.useSyncExternalStore(subscribeLocale, getLocaleVersion); // 跟随 DSH 语言切换重绘
       const cwd = useCurrentCwd(props);
       const ui = useKitUi();
       const snap = react.useSyncExternalStore(subscribeCfg, getCfgSnapshot);
@@ -4779,6 +4816,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     }
 
     function KitConfigCard({ scope }) {
+      react.useSyncExternalStore(subscribeLocale, getLocaleVersion); // 跟随 DSH 语言切换重绘
       const [snapshot, setSnapshot] = react.useState(() => scope.getSnapshot());
       react.useEffect(() => scope.subscribe(() => setSnapshot(scope.getSnapshot())), [scope]);
       const [drafts, setDrafts] = react.useState({});

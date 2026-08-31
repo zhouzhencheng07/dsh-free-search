@@ -45,7 +45,7 @@
 // 重连或换 shell，直到用户关闭面板（连接关闭即杀进程）。
 
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -65,45 +65,134 @@ export const name = 'dsh-kit'
 const require = createRequire(import.meta.url)
 
 /**
- * 多锚点加载依赖：包以 `dsh plugin add <目录>` 安装时是软链，真实路径在
- * 工作区，parent-walk 够不到 harness 的 fallback node_modules；此时退而从
- * 运行中的 dsh 本体解析（process.argv[1] = dsh bin，其 node_modules 与
- * fallback 同源）。两种安装形态（软链 / tarball、git 真实拷贝）都覆盖。
+ * 定位运行中 DSH 的 monorepo 根（含 pnpm-workspace.yaml 的目录）。从
+ * process.argv[1]（dsh 启动脚本；tsx 开发模式下可能是相对路径，先 path.resolve
+ * 成绝对路径，否则 pnpm-workspace.yaml 检查落空）向上走。非 DSH 环境返回 null。
+ */
+function findMonorepoRoot() {
+  const anchor = process.argv[1]
+  if (!anchor) return null
+  const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
+  let dir = path.dirname(abs)
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * 多锚点加载 dsh-kit 的运行时依赖（node-pty / ws，均为 DSH 自身依赖，不在
+ * dsh-kit 的 package.json 里）。按可靠度依次尝试：
+ *   1) 本模块 import.meta.url —— 真实安装形态（registry tarball 带依赖）命中这里；
+ *   2) DSH 本体锚点（process.argv[1]，绝对路径化）—— 软链装进 profile 后真实路径
+ *      落在源仓库、够不到 fallback node_modules，改用 dsh 启动脚本所在处的
+ *      node_modules（ws 挂在这里）；
+ *   3) DSH monorepo 的 .pnpm store —— node-pty 等原生/patched 依赖挂在某个
+ *      workspace 包（如 subprocess-local）的 node_modules，profile 与 dsh bin
+ *      都够不到；直接从 pnpm store 按 spec 定位实体加载。
+ * 都失败返回 null（终端能力不可用，插件其余功能正常）。
  */
 function loadDep(spec) {
   try {
     return require(spec)
   } catch {
-    // 落到运行中 dsh 本体的锚点
+    // 落到后续锚点
+  }
+  const anchor = process.argv[1]
+  if (anchor) {
+    const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
+    try {
+      return createRequire(abs)(spec)
+    } catch {
+      // 落到 monorepo store
+    }
+  }
+  const root = findMonorepoRoot()
+  if (root) {
+    const pnpm = path.join(root, 'node_modules', '.pnpm')
+    if (fs.existsSync(pnpm)) {
+      let entries = []
+      try {
+        entries = fs.readdirSync(pnpm)
+      } catch {
+        /* ignore */
+      }
+      for (const e of entries) {
+        if (!(e === spec + '@' || e.startsWith(spec + '@'))) continue
+        const pkgJson = path.join(pnpm, e, 'node_modules', spec, 'package.json')
+        if (!fs.existsSync(pkgJson)) continue
+        try {
+          return createRequire(pkgJson)(spec)
+        } catch {
+          // 试下一个候选版本
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * 从 DSH monorepo 根直接 import 本地 workspace 包（dsh-settings / schemastery），
+ * 不依赖 profile node_modules 里的 junction。
+ *
+ * dsh-settings 的 peerDependencies 全是 pnpm `workspace:` 协议，只能在 monorepo
+ * 内解析，无法作为 file: 依赖拷出。故从 monorepo 根（见 findMonorepoRoot）直接
+ * import 根下 lib 入口；settings 的 workspace 依赖在 monorepo 自身 node_modules
+ * 内解析，完整可用。
+ */
+async function loadMonorepoDep(relEntry) {
+  const root = findMonorepoRoot()
+  if (!root) return null
+  const entry = path.join(root, relEntry)
+  if (!fs.existsSync(entry)) return null
+  try {
+    return await import(pathToFileURL(entry).href)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 异步多锚点加载设置命名空间依赖（@deepseek-ai/dsh-settings 纯 ESM /
+ * @deepseek-ai/schemastery 自带 cjs）。按可靠度依次尝试：
+ *   1) 裸 import(spec)——依赖在插件解析路径可达的安装形态直接命中；
+ *   2) 运行中 dsh 本体锚点——junction/真实拷贝安装下插件位置 parent-walk 够不到
+ *      fallback node_modules，但 dsh-settings/schemastery 都在 dsh 主程序自身的
+ *      依赖树里：createRequire(process.argv[1]).resolve 定位实体文件路径，
+ *      再 import(pathToFileURL)。resolve 走 CJS 条件，exports 只有 default 的
+ *      纯 ESM 包同样可解析；import 统一处理 ESM/CJS，且等待进程内单例加载完成，
+ *      天然避开 require(esm) 的 "not yet fully loaded" 启动期竞争；
+ *   3) DSH monorepo 源码开发形态（运行中的 dsh 在 monorepo 里）——按 workspace
+ *      相对路径直 import 本地包 lib 入口（见 loadMonorepoDep）。
+ * 都失败返回 null（设置命名空间不注册，插件其余功能保持可用性优先）。
+ */
+async function loadSettingsDep(spec, monorepoEntry) {
+  try {
+    return await import(spec)
+  } catch {
+    // 落到下一锚点
   }
   const anchor = process.argv[1]
   if (anchor) {
     try {
-      return createRequire(anchor)(spec)
+      const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
+      const resolved = createRequire(abs).resolve(spec)
+      if (resolved) return await import(pathToFileURL(resolved).href)
     } catch {
-      // 两个锚点都没有则按缺失处理
+      // 落到下一锚点
     }
   }
-  return null
+  return monorepoEntry ? loadMonorepoDep(monorepoEntry) : null
 }
 
 const pty = loadDep('node-pty')
 const WebSocketServer = loadDep('ws')?.WebSocketServer ?? null
 if (!pty || !WebSocketServer) {
   console.warn('dsh-kit: node-pty/ws 不可用，终端能力不可用')
-}
-
-// 插件设置命名空间依赖：junction 直装下静态 import @deepseek-ai/*
-// 会在 dev 环境启动即 ERR_MODULE_NOT_FOUND（parent-walk 够不到 fallback
-// node_modules），与 node-pty/ws 同走 loadDep 运行时解析。dsh-settings 是纯
-// ESM，require() 依赖 Node ≥22.12 的 require(esm)；schemastery 自带 cjs 导出。
-const dshSettings = loadDep('@deepseek-ai/dsh-settings')
-const schemasteryMod = loadDep('@deepseek-ai/schemastery')
-const installSettingsSection = dshSettings?.installSettingsSection ?? null
-const settingsNamespace = dshSettings?.settingsNamespace ?? null
-const z = schemasteryMod?.default ?? schemasteryMod ?? null
-if (!installSettingsSection || !settingsNamespace || !z || typeof z.object !== 'function') {
-  console.warn('dsh-kit: @deepseek-ai/dsh-settings 或 @deepseek-ai/schemastery 不可用，插件设置命名空间未注册')
 }
 
 /** 尺寸参数收敛到安全区间 */
@@ -308,7 +397,7 @@ const VENDOR_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
 ])
 
-export function apply(ctx) {
+export async function apply(ctx) {
   // ── 插件设置命名空间 ──
   // 浏览器半边设置卡（client/bundle.js 的 dsh-kit 卡片，settings.plugin.item）
   // 的数据通道：terminalEnabled/fileTreeEnabled/skillsPageEnabled 三个功能开关
@@ -325,6 +414,21 @@ export function apply(ctx) {
   // readSettings 提升到 apply 作用域：webServer 注入回调（块外）的手机访问段
   // 也要读开关（远程域名、端口、页面可见性）。网关启用位已改状态文件直管，
   // 不再走 settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
+  // 异步加载设置命名空间依赖：dsh-settings 是纯 ESM，DSH 主程序启动期正并发
+  // import() 它，模块顶层同步 require(esm) 会触发 "not yet fully loaded" 竞争
+  // 而失败；import() 会等待该进程内单例加载完成后 resolve，天然避开竞争。
+  // schemastery 自带 cjs 导出，import() 同样适用（Node 支持 import CJS）。
+  // 多锚点解析见 loadSettingsDep：裸 import 失败后先落运行中 dsh 本体锚点
+  //（junction/真实拷贝安装都有），最后才落 monorepo 源码开发形态的 workspace 入口。
+  const dshSettings = await loadSettingsDep('@deepseek-ai/dsh-settings', 'packages/settings/settings/lib/index.js')
+  const schemasteryMod = await loadSettingsDep('@deepseek-ai/schemastery', 'vendor/schemastery/lib/index.mjs')
+  const installSettingsSection = dshSettings?.installSettingsSection ?? null
+  const settingsNamespace = dshSettings?.settingsNamespace ?? null
+  const z = schemasteryMod?.default ?? schemasteryMod ?? null
+  if (!installSettingsSection || !settingsNamespace || !z || typeof z.object !== 'function') {
+    console.warn('dsh-kit: @deepseek-ai/dsh-settings 或 @deepseek-ai/schemastery 不可用，插件设置命名空间未注册')
+  }
+
   let readSettings = () => ({})
   /** phoneSettingsReady：setSource 首次触发时置 true，下游 webServer 注入段由此判断
    *  是立即评估网关启用位还是等 onSettingsReady 回调。解决时序差——readSettings 在
