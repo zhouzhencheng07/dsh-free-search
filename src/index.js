@@ -326,7 +326,12 @@ export function apply(ctx) {
   // 也要读开关（远程域名、端口、页面可见性）。网关启用位已改状态文件直管，
   // 不再走 settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
   let readSettings = () => ({})
+  /** phoneSettingsReady：setSource 首次触发时置 true，下游 webServer 注入段由此判断
+   *  是立即评估网关启用位还是等 onSettingsReady 回调。解决时序差——readSettings 在
+   *  settings 注册前是空函数，phoneKeepGatewayOn() 恒 false */
+  let phoneSettingsReady = false
   // 手机网关的设置联动钩子（端口变更热重启等），由 webServer 注入段回填
+  let onSettingsReady = () => {}
   let onSettingsChanged = () => {}
   if (installSettingsSection && settingsNamespace && z && typeof z.object === 'function') {
     const Config = z.object({
@@ -350,7 +355,15 @@ export function apply(ctx) {
       scShortcut: z.string().default('Ctrl+Alt+.'),
     })
     installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
-      setSource: (current) => { readSettings = current },
+      setSource: (current) => {
+        readSettings = current
+        phoneSettingsReady = true
+        // settings 首次就绪时触发网关启用位检查（此时 readSettings 才读到真实值）；
+        // 注意：onSettingsReady 在 webServer 注入回填前是空函数——如果注入回调还未
+        // 执行，onSettingsReady 尚未关联到 bootEvalGateway，此处调用无效果。
+        // 注入回调已存在时触发首次评估（解决时序差）
+        onSettingsReady()
+      },
       onChange: () => { onSettingsChanged() },
     })
     applyWebSearch(ctx, {
@@ -1428,13 +1441,20 @@ export function apply(ctx) {
       let phoneGw = null
       let phoneGwError = null
       const bootGwState = loadGatewayState(stateFile, warnLog)
-      // 默认每次 DSH 启动网关都是关的；「重启后保留开启」开着才恢复上次启用位。
-      // 落定值回写状态文件：未恢复时清掉残留的 enabled:true，避免之后勾上
-      // 「保留开启」时被陈旧启用位误恢复。
-      let phoneGwWanted = phoneKeepGatewayOn() && bootGwState.enabled === true
-      if (bootGwState.enabled !== phoneGwWanted) {
-        saveGatewayState(stateFile, { token: bootGwState.token, enabled: phoneGwWanted }, warnLog)
+      // 启动评估（phoneGwWanted）和首次 syncPhoneGateway 由 onSettingsReady 执行：
+      // readSettings 在 setSource 回调前是空函数，phoneKeepGatewayOn() 恒 false。
+      // 若 setSource 已经触发（phoneSettingsReady===true）则在注入段末尾立即评估；
+      // 否则等 onSettingsReady 回调。
+      let phoneGwWanted = false
+      /** 由首次 onSettingsReady 或注入段末尾（phoneSettingsReady 已为 true 时）调用 */
+      const bootEvalGateway = () => {
+        phoneGwWanted = phoneKeepGatewayOn() && bootGwState.enabled === true
+        if (bootGwState.enabled !== phoneGwWanted) {
+          saveGatewayState(stateFile, { token: bootGwState.token, enabled: phoneGwWanted }, warnLog)
+        }
+        syncPhoneGateway()
       }
+      onSettingsReady = () => { bootEvalGateway() }
       /** 现役实例监听的端口；null = 无实例。用于识别端口配置变更 */
       let gwPort = null
       /** 按当前启用位同步网关启停 */
@@ -1476,7 +1496,11 @@ export function apply(ctx) {
           phoneGw = null
         }
       }
-      syncPhoneGateway()
+      // 若 setSource 已触发（phoneSettingsReady===true），本轮注入段末尾立即评估；
+      // 否则等 onSettingsReady（setSource 首次调用）。二选一防止首次启动双重调用。
+      if (phoneSettingsReady) {
+        bootEvalGateway()
+      }
       // 设置变更联动：端口改了就热重启（其余键的写入也走这里，sync 幂等无副作用）
       onSettingsChanged = () => {
         syncPhoneGateway()
