@@ -65,53 +65,87 @@ export const name = 'dsh-kit'
 const require = createRequire(import.meta.url)
 
 /**
- * 多锚点加载依赖：包以 `dsh plugin add <目录>` 安装时是软链，真实路径在
- * 工作区，parent-walk 够不到 harness 的 fallback node_modules；此时退而从
- * 运行中的 dsh 本体解析（process.argv[1] = dsh bin，其 node_modules 与
- * fallback 同源）。两种安装形态（软链 / tarball、git 真实拷贝）都覆盖。
+ * 定位运行中 DSH 的 monorepo 根（含 pnpm-workspace.yaml 的目录）。从
+ * process.argv[1]（dsh 启动脚本；tsx 开发模式下可能是相对路径，先 path.resolve
+ * 成绝对路径，否则 pnpm-workspace.yaml 检查落空）向上走。非 DSH 环境返回 null。
+ */
+function findMonorepoRoot() {
+  const anchor = process.argv[1]
+  if (!anchor) return null
+  const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
+  let dir = path.dirname(abs)
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * 多锚点加载 dsh-kit 的运行时依赖（node-pty / ws，均为 DSH 自身依赖，不在
+ * dsh-kit 的 package.json 里）。按可靠度依次尝试：
+ *   1) 本模块 import.meta.url —— 真实安装形态（registry tarball 带依赖）命中这里；
+ *   2) DSH 本体锚点（process.argv[1]，绝对路径化）—— 软链装进 profile 后真实路径
+ *      落在源仓库、够不到 fallback node_modules，改用 dsh 启动脚本所在处的
+ *      node_modules（ws 挂在这里）；
+ *   3) DSH monorepo 的 .pnpm store —— node-pty 等原生/patched 依赖挂在某个
+ *      workspace 包（如 subprocess-local）的 node_modules，profile 与 dsh bin
+ *      都够不到；直接从 pnpm store 按 spec 定位实体加载。
+ * 都失败返回 null（终端能力不可用，插件其余功能正常）。
  */
 function loadDep(spec) {
   try {
     return require(spec)
   } catch {
-    // 落到运行中 dsh 本体的锚点
+    // 落到后续锚点
   }
   const anchor = process.argv[1]
   if (anchor) {
+    const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
     try {
-      return createRequire(anchor)(spec)
+      return createRequire(abs)(spec)
     } catch {
-      // 两个锚点都没有则按缺失处理
+      // 落到 monorepo store
+    }
+  }
+  const root = findMonorepoRoot()
+  if (root) {
+    const pnpm = path.join(root, 'node_modules', '.pnpm')
+    if (fs.existsSync(pnpm)) {
+      let entries = []
+      try {
+        entries = fs.readdirSync(pnpm)
+      } catch {
+        /* ignore */
+      }
+      for (const e of entries) {
+        if (!(e === spec + '@' || e.startsWith(spec + '@'))) continue
+        const pkgJson = path.join(pnpm, e, 'node_modules', spec, 'package.json')
+        if (!fs.existsSync(pkgJson)) continue
+        try {
+          return createRequire(pkgJson)(spec)
+        } catch {
+          // 试下一个候选版本
+        }
+      }
     }
   }
   return null
 }
 
 /**
- * 从运行中 DSH 的 monorepo 根直接 import 本地 workspace 包（dsh-settings /
- * schemastery），不依赖 profile node_modules 里的 junction。
+ * 从 DSH monorepo 根直接 import 本地 workspace 包（dsh-settings / schemastery），
+ * 不依赖 profile node_modules 里的 junction。
  *
  * dsh-settings 的 peerDependencies 全是 pnpm `workspace:` 协议，只能在 monorepo
- * 内解析，无法作为 file: 依赖拷出。junction 指向 monorepo 原路径虽能工作，但
- * junction 在 node_modules 里无法随仓库提交、reinstall 会丢。故改为从
- * process.argv[1]（dsh bin，位于 monorepo 内）向上定位 pnpm-workspace.yaml 根，
- * 直接 import 根下 lib 入口；settings 的 workspace 依赖在 monorepo 自身
- * node_modules 内解析，完整可用。
+ * 内解析，无法作为 file: 依赖拷出。故从 monorepo 根（见 findMonorepoRoot）直接
+ * import 根下 lib 入口；settings 的 workspace 依赖在 monorepo 自身 node_modules
+ * 内解析，完整可用。
  */
 async function loadMonorepoDep(relEntry) {
-  const anchor = process.argv[1]
-  if (!anchor) return null
-  let dir = path.dirname(anchor)
-  let root = null
-  for (let i = 0; i < 8; i++) {
-    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
-      root = dir
-      break
-    }
-    const parent = path.dirname(dir)
-    if (parent === dir) break
-    dir = parent
-  }
+  const root = findMonorepoRoot()
   if (!root) return null
   const entry = path.join(root, relEntry)
   if (!fs.existsSync(entry)) return null
