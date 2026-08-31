@@ -219,22 +219,23 @@ The dsh-kit card under the official Settings → plugin configuration page
 
 ## Install
 
+Install the latest release (recommended, picks the highest release tag from repository tags):
+
 ```bash
-# Install the latest release (recommended)
 dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit#semver:*"
-# Or install the latest commit (tracking the main branch)
+```
+
+Or install the latest commit (tracking the main branch):
+
+```bash
 dsh plugin --profile web add "github:zhouzhencheng07/dsh-kit"
 ```
 
-> The `#semver:*` suffix tells pnpm to pick the highest matching release tag from
-> the repository tags — the stable choice. Without the suffix, the dependency
-> tracks the latest commit on the main branch.
->
-> The package declares `dsh.bundle.patch`, so it is activated as a profile bundle
-> layer (not just an inert dependency). Restart `dsh web` after installing; four
-> toggles — Files / Source Control / Background Jobs / Terminal — appear on the
-> composer tool row, and the agent's `web_search` switches to the free
-> multi-source chain.
+The package declares `dsh.bundle.patch`, so it is activated as a profile bundle
+layer (not just an inert dependency). Restart `dsh web` after installing; four
+toggles — Files / Source Control / Background Jobs / Terminal — appear on the
+composer tool row, and the agent's `web_search` switches to the free
+multi-source chain.
 
 ## How it works
 
