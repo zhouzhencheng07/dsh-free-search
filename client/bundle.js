@@ -2762,8 +2762,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     }
 
     // ─────────── 树行 ⋯ 菜单（收敛操作：新建/复制相对/重命名/删除）───────────
-    // fixed 定位浮层（树 body 滚动裁切不影响的全局层），按钮下方右对齐弹出；
-    // Esc 或点菜单外关闭（FileTreePanel 的 capture listener 负责后者）。
+    // fixed 定位浮层（树 body 滚动裁切不影响的全局层），按钮下方左缘对齐、
+    // 向右展开（与官方对话三点菜单方向一致），右侧空间不足时回退左移。
     function TreeRowMenu({ entry, rect, actions, onClose }) {
       react.useEffect(() => {
         const onKey = (e) => {
@@ -2781,9 +2781,11 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       if (actions.onRename) items.push({ key: "rn", label: t("treeRename"), run: () => actions.onRename(entry) });
       if (actions.onDelete) items.push({ key: "dl", label: t("treeDelete"), run: () => actions.onDelete(entry) });
       const height = items.length * 32 + 8;
+      const MENU_W = 160; // min-width 152 + padding 8
+      const viewportW = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 1200;
       const viewportH = typeof window !== "undefined" && window.innerHeight ? window.innerHeight : 800;
       const style = {
-        left: Math.max(8, rect.right - 152),
+        left: Math.min(Math.max(8, rect.left), Math.max(8, viewportW - MENU_W)),
         top: Math.min(Math.max(8, rect.bottom + 6), Math.max(8, viewportH - height - 8)),
       };
       return jsxRuntime.jsx("div", {
