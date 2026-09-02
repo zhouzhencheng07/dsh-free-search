@@ -215,20 +215,27 @@ window.__ModuleLoader__.load({
     /** 对话文件路径解析：绝对直接用；相对按 cwd 拼接（与官方 resolveWorkspacePath
      *  同语义）；反斜杠归一避免混用分隔符触发宿主校验问题。 */
     function resolveChatOpenPath(cwd, title) {
+      // POSIX 写法的盘符绝对路径（/D:/… 或 \D:\…）先归一为盘符开头：这类路径
+      // 官方 resolveWorkspacePath 同样按绝对处理，直接拼 cwd 会产出 D:\D:\…
+      // 双盘符假路径（agent 回复里惯用 /D:/… 引用 Windows 绝对文件）。
+      let t = title;
+      if (/^\/[A-Za-z]:/.test(t)) t = t.slice(1);
+      else if (/^\\[A-Za-z]:/.test(t)) t = t.slice(1);
       const raw =
-        /^[A-Za-z]:[\\/]/.test(title) || title.startsWith("\\\\")
-          ? title
-          : title.startsWith("/")
-            ? `${cwd}\\${title.slice(1)}`
-            : `${cwd}\\${title}`;
+        /^[A-Za-z]:[\\/]/.test(t) || t.startsWith("\\\\")
+          ? t
+          : t.startsWith("/")
+            ? `${cwd}\\${t.slice(1)}`
+            : `${cwd}\\${t}`;
       const parts = raw.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
       const out = [];
       for (const s of parts) {
         if (s === "..") out.pop();
         else out.push(s);
       }
+      // out 已含盘符元素（D:）或 UNC 的首段；盘符形不能再补 `D:\` 前缀，
+      // 否则产出 D:\D:\… 双盘符（绝对盘符 title 曾因此读不到文件）
       if (raw.startsWith("\\\\")) return `\\\\${out.join("\\")}`;
-      if (/^[A-Za-z]:/.test(raw)) return `${raw.slice(0, 2)}\\${out.join("\\")}`;
       return out.join("\\");
     }
 
@@ -243,20 +250,26 @@ window.__ModuleLoader__.load({
       if (btn.closest('.dshk-pane,.dshk-dock,[class*="dshk-"]')) return;
       // 仅官方对话滚动区内的文件按钮（markdown 提及与产物 chips 都在其中）
       if (!btn.closest('[class*="_scroll"]')) return;
-      if (!hook.cwd) return; // 无会话工作区：放行官方（官方能解析 basename）
       const title = (btn.getAttribute("title") || "").trim();
       if (!isChatOpenPathish(title)) return;
+      // 无会话工作区时：仅盘符绝对/UNC（含 /D:… 归一的盘符形态）可脱离 cwd
+      // 预览；相对路径解析无依，放行官方
+      if (!hook.cwd) {
+        const t2 = title.startsWith("\\\\") ? title : title.replace(/^[\\/](?=[A-Za-z]:)/, "");
+        if (!/^[A-Za-z]:[\\/]/.test(t2) && !t2.startsWith("\\\\")) return;
+      }
       ev.preventDefault();
       ev.stopPropagation();
       hook.openPreview(resolveChatOpenPath(hook.cwd, title));
     }
 
-    // ─────────── 对话 @ 引用（文件树 → 输入框草稿）───────────
+    // ─────────── 对话 @ 引用（文件树 → 输入框）───────────
     // 官方 ui-conversation 注册 `conversation` 服务（ConversationController），
     // 其 .input = InputHub，`hub.shell(当前会话 id)` 返回 SessionInputShell
-    // （公开 actions.setDraft 草稿写入）——文件树「@到对话」用其把官方 @ 语法
-    // 文本追加进当前会话草稿，与手打 @ 完全等价（提交后按官方 file-reference
-    // 语法解析）。使用点现取（懒解析），不依赖槽位注入面。
+    // （公开 actions.setDraft 草稿写入 + 官方 @ 面板同款插入体
+    // insertReference(ref, span) 引用芯片直插）——文件树「@到对话」优先直插
+    // 真实引用 chip（不弹官方 @ 面板），失败兜底追加 @ 语法文本，均与手打
+    // @ 等价（提交后按官方 file-reference 语法解析）。使用点现取（懒解析）。
     /** 取当前会话的输入 shell；任一步未就绪返回 null */
     function currentComposerShell() {
       if (!slotsCtx) return null;
@@ -2485,7 +2498,12 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         const norm = (rest === "" ? entry.name : rest.replace(/^[\\/]+/, "")).replace(/\\/g, "/");
         return entry.dir ? `${norm.replace(/\/+$/, "")}/` : norm;
       };
-      // ── 对话 @ 引用：把官方 @ 语法文本追加进当前会话输入框草稿 ──
+      // ── 对话 @ 引用：把选中条目作为官方引用直接插入当前会话输入框 ──
+      // 优先走官方引用芯片直插（shell.insertReference，官方 @ 面板 pick 的
+      // 同款槽位事件监听体，公开实例方法）：phase 须为 plain/claimed、
+      // span.draftRev 须等于当前 rev（CAS），成功即产生真实引用 chip（提交
+      // 时按官方 codec 序列化为 @语法文本），不经过官方 @ 面板；失败兜底为
+      // @ 语法文本追加草稿末尾（与手打一致，此时面板可见属官方行为）。
       const mentionEntry = (entry) => {
         const shell = currentComposerShell();
         if (!shell || typeof shell.actions?.setDraft !== "function") {
@@ -2502,6 +2520,34 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           flashToast(t("treeAtUnavailable"));
           return;
         }
+        // 目录的开放引号形态（@"dir/）补上闭合引号，作为独立引用提交
+        const chipMention = mention.includes('"') && !mention.endsWith('"') ? `${mention}"` : mention;
+        const chipRef = {
+          source: "reference",
+          ref: chipMention,
+          label: entry.dir ? `${(entry.name || "").replace(/\/+$/, "")}/` : entry.name || relPath.split("/").pop() || relPath,
+          appearance: entry.dir ? "folder" : "file",
+          clipboardText: mention,
+        };
+        if (typeof shell.insertReference === "function") {
+          const phase = shell.core && shell.core.state ? shell.core.state.phase : null;
+          const detectText = typeof shell.projection?.detectText === "string" ? shell.projection.detectText : "";
+          const rev = typeof shell.rev === "number" ? shell.rev : -1;
+          if ((phase === "plain" || phase === "claimed") && rev >= 0) {
+            const span = { start: detectText.length, end: detectText.length, draftRev: rev };
+            let applied = false;
+            try {
+              applied = shell.insertReference(chipRef, span) === true;
+            } catch {
+              applied = false;
+            }
+            if (applied) {
+              flashToast(t("treeAtAdded"));
+              return;
+            }
+          }
+        }
+        // 兜底：官方 @ 语法文本追加草稿末尾
         const state = typeof shell.state?.getSnapshot === "function" ? shell.state.getSnapshot() : null;
         const draft = state && typeof state.draft === "string" ? state.draft : "";
         shell.actions.setDraft(draft === "" ? mention : `${draft} ${mention}`);
