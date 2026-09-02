@@ -48,7 +48,7 @@ const windowStub = {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -76,8 +76,10 @@ callLog = [];
 out = comps.TreeNode({ entry: { name: "src", path: "C:/x/src", dir: true }, depth: 0, expanded: {}, onToggle: () => {}, onOpenFile: () => {} });
 check("TreeNode 目录渲染无异常", !!out && typeof out === "object");
 
-// 4b) TreeNode 带 actions：行悬停出现复制绝对/相对路径按钮，点击回调携带 relative 标志
+// 4b) TreeNode 带 actions：行悬停常驻 @、复制绝对路径与 ⋯（常用+菜单组合）；
+//     复制相对路径收敛进 ⋯ 菜单（TreeRowMenu 渲染），回调携带 relative 标志
 let copiedRel = null;
+let mentioned = null;
 callLog = [];
 out = comps.TreeNode({
   entry: { name: "b.js", path: "D:/w/b.js", dir: false },
@@ -85,20 +87,31 @@ out = comps.TreeNode({
   expanded: {},
   onToggle: () => {},
   onOpenFile: () => {},
-  actions: { onCopyPath: (_entry, rel) => { copiedRel = rel; } },
+  actions: { onCopyPath: (_entry, rel) => { copiedRel = rel; }, onMention: (entry) => { mentioned = entry; } },
 });
 const findBtnByTitle = (...titles) => {
   const hit = callLog.find(([, , p]) => p && typeof p === "object" && titles.includes(p.title));
   return hit ? hit[2] : null;
 };
 const absBtn = findBtnByTitle("复制绝对路径", "Copy absolute path");
-const relBtn = findBtnByTitle("复制相对路径", "Copy relative path");
-check("TreeNode 复制路径按钮渲染(绝对+相对)", !!absBtn && !!relBtn);
+const atBtn = findBtnByTitle("@ 到对话", "Insert @ mention");
+check("TreeNode 常驻按钮渲染(@+复制绝对)", !!absBtn && !!atBtn);
 const fakeEvent = { stopPropagation() {} };
 absBtn.onClick(fakeEvent);
 check("复制绝对路径回调 relative=false", copiedRel === false);
-relBtn.onClick(fakeEvent);
-check("复制相对路径回调 relative=true", copiedRel === true);
+atBtn.onClick(fakeEvent);
+check("@ 到对话回调携带条目", mentioned && mentioned.path === "D:/w/b.js");
+// 4c) TreeRowMenu：文件行菜单项含复制相对路径/重命名/删除；目录行另有新建两项
+callLog = [];
+out = comps.TreeRowMenu({ entry: { name: "b.js", path: "D:/w/b.js", dir: false }, rect: { top: 0, bottom: 20, left: 0, right: 100 }, actions: { onCopyPath: (_e, rel) => { copiedRel = rel; }, onRename: () => {}, onDelete: () => {} }, onClose: () => {} });
+const menuLabels = callLog.filter(([, , p]) => p && typeof p === "object" && typeof p.children === "string").map(([, , p]) => p.children);
+const hasAny = (cands) => cands.some((c) => menuLabels.includes(c));
+check("TreeRowMenu 文件行菜单(复制相对/重命名/删除)", hasAny(["复制相对路径", "Copy relative path"]) && hasAny(["重命名", "Rename"]) && hasAny(["删除", "Delete"]));
+callLog = [];
+out = comps.TreeRowMenu({ entry: { name: "src", path: "D:/w/src", dir: true }, rect: { top: 0, bottom: 20, left: 0, right: 100 }, actions: { onCreate: () => {}, onCopyPath: () => {}, onRename: () => {}, onDelete: () => {} }, onClose: () => {} });
+const dirLabels = callLog.filter(([, , p]) => p && typeof p === "object" && typeof p.children === "string").map(([, , p]) => p.children);
+const dirHasAny = (cands) => cands.some((c) => dirLabels.includes(c));
+check("TreeRowMenu 目录行菜单(新建文件/夹+复制相对/重命名/删除)", dirHasAny(["新建文件", "New File"]) && dirHasAny(["新建文件夹", "New Folder"]) && dirHasAny(["复制相对路径", "Copy relative path"]) && dirHasAny(["删除", "Delete"]));
 
 // 5) FileTreePanel：cwd 有/无
 callLog = [];

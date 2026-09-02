@@ -251,6 +251,46 @@ window.__ModuleLoader__.load({
       hook.openPreview(resolveChatOpenPath(hook.cwd, title));
     }
 
+    // ─────────── 对话 @ 引用（文件树 → 输入框草稿）───────────
+    // 官方 ui-conversation 注册 `conversation` 服务（ConversationController），
+    // 其 .input = InputHub，`hub.shell(当前会话 id)` 返回 SessionInputShell
+    // （公开 actions.setDraft 草稿写入）——文件树「@到对话」用其把官方 @ 语法
+    // 文本追加进当前会话草稿，与手打 @ 完全等价（提交后按官方 file-reference
+    // 语法解析）。使用点现取（懒解析），不依赖槽位注入面。
+    /** 取当前会话的输入 shell；任一步未就绪返回 null */
+    function currentComposerShell() {
+      if (!slotsCtx) return null;
+      let conv;
+      try {
+        conv = slotsCtx.get("conversation");
+      } catch {
+        return null;
+      }
+      const hub = conv && conv.input;
+      if (!hub || typeof hub.shell !== "function") return null;
+      let sessions;
+      try {
+        sessions = slotsCtx.get("sessions");
+      } catch {
+        return null;
+      }
+      const current = sessions?.list?.getSnapshot?.()?.current;
+      if (!current) return null;
+      try {
+        return hub.shell(current) ?? null;
+      } catch {
+        return null;
+      }
+    }
+
+    /** 官方 @ 引用文本（对齐 dsh-client-ui-reference 的 formatFileMention）：
+     *  路径无空白 → @rel/path；有空白 → @"rel/a b.txt"；目录保留开放引号 @"dir/ */
+    function chatMentionText(relPath) {
+      if (/[\u0000-\u001f\u007f-\u009f"]/u.test(relPath)) return null;
+      if (relPath.endsWith("/")) return /\s/u.test(relPath) ? `@"${relPath}` : `@${relPath}`;
+      return /\s/u.test(relPath) ? `@"${relPath}"` : `@${relPath}`;
+    }
+
     // ─────────── 文案 ───────────
     const zh = {
       label: "终端",
@@ -281,6 +321,10 @@ window.__ModuleLoader__.load({
       treeCopyAbs: "复制绝对路径",
       treeCopyRel: "复制相对路径",
       treeCopied: "已复制路径",
+      treeAt: "@ 到对话",
+      treeAtAdded: "已加入输入框，可继续编辑",
+      treeAtUnavailable: "输入框未就绪（无会话或不可用）",
+      treeMenu: "更多操作",
       promptFileName: "新文件名：",
       promptFolderName: "新文件夹名：",
       confirmDelete: "删除「{name}」？内容将移入回收站。",
@@ -473,6 +517,10 @@ window.__ModuleLoader__.load({
       treeCopyAbs: "Copy absolute path",
       treeCopyRel: "Copy relative path",
       treeCopied: "Path copied",
+      treeAt: "Insert @ mention",
+      treeAtAdded: "Added to the input; keep editing",
+      treeAtUnavailable: "Composer is not ready (no active session)",
+      treeMenu: "More actions",
       promptFileName: "New file name:",
       promptFolderName: "New folder name:",
       confirmDelete: "Delete \"{name}\"? It will be moved to the Recycle Bin.",
@@ -997,6 +1045,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 .dshk-row:hover .dshk-rowact,.dshk-chg-row:hover .dshk-rowact{display:inline-flex}
 .dshk-rowact button{appearance:none;width:20px;height:20px;font-size:11px;line-height:1;border:0;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;padding:0}
 .dshk-rowact button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 行 ⋯ 菜单：fixed 全局浮层（不受树 body 滚动裁切影响），主题令牌跟随 */
+.dshk-menu{position:fixed;min-width:152px;padding:4px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:var(--dsw-elevation-panel,0 4px 16px rgba(0,0,0,.18));z-index:1200;font-size:13px}
+.dshk-menu button{display:flex;width:100%;align-items:center;gap:8px;border:0;background:none;color:var(--dsw-alias-label-primary);padding:6px 10px;border-radius:6px;cursor:pointer;text-align:left;white-space:nowrap}
+.dshk-menu button:hover{background:var(--dsw-alias-interactive-bg-hover)}
 /* 全文件着色 diff：完整内容内联渲染，删除红/新增绿/上下文正常 */
 .dshk-inline{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-all;padding:4px 0;user-select:text;color:var(--dsw-alias-label-secondary)}
 .dshk-il-add{color:#0dbc79;background:rgba(13,188,121,.08)}
@@ -2222,7 +2274,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         title,
         onClick: (e) => {
           e.stopPropagation();
-          onClick();
+          onClick(e); // 事件转发：⋯ 菜单需要 currentTarget 定位锚点
         },
         children,
       });
@@ -2239,20 +2291,17 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const info = entry.dir ? expanded[entry.path] : undefined;
       const acts = actions ?? {};
       const renaming = !!acts.onRenameSubmit && acts.renamingPath === entry.path;
+      // 行按钮「常用 + 更多」：常驻 hover 只留 @到对话、复制绝对路径与 ⋯ 菜单；
+      // 新建/复制相对/重命名/删除收敛进 ⋯（用户定稿：留 @ 和绝对路径）
       const rowActions = [];
-      if (entry.dir && acts.onCreate) {
-        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFile"), onClick: () => acts.onCreate(entry.path, false), children: jsxRuntime.jsx(FilePlusIcon, {}) }, "nf"));
-        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeNewFolder"), onClick: () => acts.onCreate(entry.path, true), children: jsxRuntime.jsx(FolderPlusIcon, {}) }, "nd"));
+      if (acts.onMention) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeAt"), onClick: () => acts.onMention(entry), children: "@" }, "at"));
       }
       if (acts.onCopyPath) {
         rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeCopyAbs"), onClick: () => acts.onCopyPath(entry, false), children: jsxRuntime.jsx(CopyAbsIcon, {}) }, "ca"));
-        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeCopyRel"), onClick: () => acts.onCopyPath(entry, true), children: jsxRuntime.jsx(CopyRelIcon, {}) }, "cr"));
       }
-      if (acts.onRename && !renaming) {
-        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeRename"), onClick: () => acts.onRename(entry), children: "✎" }, "rn"));
-      }
-      if (acts.onDelete && !renaming) {
-        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeDelete"), onClick: () => acts.onDelete(entry), children: jsxRuntime.jsx(TrashIcon, {}) }, "dl"));
+      if (acts.onMenu) {
+        rowActions.push(jsxRuntime.jsx(RowActionBtn, { title: t("treeMenu"), onClick: (e) => acts.onMenu(entry, e.currentTarget), children: "⋯" }, "mm"));
       }
       // 改名输入框：聚焦时只选中最后一个 "." 之前的主名（保留扩展名）；
       // 目录与点开头的隐藏文件（如 .gitignore）没有扩展名概念，选全名
@@ -2333,6 +2382,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const abortsRef = react.useRef(new Set());
       // 正在行内改名的条目路径；null = 无
       const [renamingPath, setRenamingPath] = react.useState(null);
+      // ⋯ 菜单：{entry, rect}；null = 关闭
+      const [menuFor, setMenuFor] = react.useState(null);
 
       const loadDir = (dirPath) => {
         const controller = new AbortController();
@@ -2425,6 +2476,36 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           }
           return next;
         });
+      };
+      // ── 相对路径（@ 引用用，/ 分隔、目录尾 /）：越界/无法表示回落 null ──
+      const relativePathOf = (entry) => {
+        if (!cwd || !entry.path.startsWith(cwd)) return null;
+        const rest = entry.path.slice(cwd.length);
+        if (rest !== "" && !/^[\\/]/.test(rest)) return null;
+        const norm = (rest === "" ? entry.name : rest.replace(/^[\\/]+/, "")).replace(/\\/g, "/");
+        return entry.dir ? `${norm.replace(/\/+$/, "")}/` : norm;
+      };
+      // ── 对话 @ 引用：把官方 @ 语法文本追加进当前会话输入框草稿 ──
+      const mentionEntry = (entry) => {
+        const shell = currentComposerShell();
+        if (!shell || typeof shell.actions?.setDraft !== "function") {
+          flashToast(t("treeAtUnavailable"));
+          return;
+        }
+        const relPath = relativePathOf(entry);
+        if (relPath === null) {
+          flashToast(t("treeAtUnavailable"));
+          return;
+        }
+        const mention = chatMentionText(relPath);
+        if (mention === null) {
+          flashToast(t("treeAtUnavailable"));
+          return;
+        }
+        const state = typeof shell.state?.getSnapshot === "function" ? shell.state.getSnapshot() : null;
+        const draft = state && typeof state.draft === "string" ? state.draft : "";
+        shell.actions.setDraft(draft === "" ? mention : `${draft} ${mention}`);
+        flashToast(t("treeAtAdded"));
       };
       /** 预览中的文件被改名/删除后关闭预览（含其子路径） */
       const closeStalePreview = (prefix) => {
@@ -2524,10 +2605,21 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         onDelete: deleteEntry,
         onRename: startRename,
         onCopyPath: copyEntryPath,
+        onMention: mentionEntry,
+        onMenu: (entry, anchor) => setMenuFor({ entry, rect: anchor.getBoundingClientRect() }),
         renamingPath,
         onRenameSubmit: submitRename,
         onRenameCancel: cancelRename,
       };
+      // ⋯ 菜单：点菜单外任意处关闭
+      react.useEffect(() => {
+        if (!menuFor) return undefined;
+        const onDoc = (e) => {
+          if (!(e.target instanceof Element) || !e.target.closest(".dshk-menu")) setMenuFor(null);
+        };
+        document.addEventListener("click", onDoc, true);
+        return () => document.removeEventListener("click", onDoc, true);
+      }, [menuFor]);
 
       const rootInfo = cwd ? expanded[cwd] : undefined;
 
@@ -2611,7 +2703,60 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                         ],
                       }),
           }),
+          menuFor
+            ? jsxRuntime.jsx(TreeRowMenu, {
+                entry: menuFor.entry,
+                rect: menuFor.rect,
+                actions: treeActions,
+                onClose: () => setMenuFor(null),
+              })
+            : null,
         ],
+      });
+    }
+
+    // ─────────── 树行 ⋯ 菜单（收敛操作：新建/复制相对/重命名/删除）───────────
+    // fixed 定位浮层（树 body 滚动裁切不影响的全局层），按钮下方右对齐弹出；
+    // Esc 或点菜单外关闭（FileTreePanel 的 capture listener 负责后者）。
+    function TreeRowMenu({ entry, rect, actions, onClose }) {
+      react.useEffect(() => {
+        const onKey = (e) => {
+          if (e.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+      }, [onClose]);
+      const items = [];
+      if (entry.dir && actions.onCreate) {
+        items.push({ key: "nf", label: t("treeNewFile"), run: () => actions.onCreate(entry.path, false) });
+        items.push({ key: "nd", label: t("treeNewFolder"), run: () => actions.onCreate(entry.path, true) });
+      }
+      if (actions.onCopyPath) items.push({ key: "cr", label: t("treeCopyRel"), run: () => actions.onCopyPath(entry, true) });
+      if (actions.onRename) items.push({ key: "rn", label: t("treeRename"), run: () => actions.onRename(entry) });
+      if (actions.onDelete) items.push({ key: "dl", label: t("treeDelete"), run: () => actions.onDelete(entry) });
+      const height = items.length * 32 + 8;
+      const viewportH = typeof window !== "undefined" && window.innerHeight ? window.innerHeight : 800;
+      const style = {
+        left: Math.max(8, rect.right - 152),
+        top: Math.min(Math.max(8, rect.bottom + 6), Math.max(8, viewportH - height - 8)),
+      };
+      return jsxRuntime.jsx("div", {
+        className: "dshk-menu",
+        style,
+        children: items.map((item) =>
+          jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              onClick: () => {
+                onClose();
+                item.run();
+              },
+              children: item.label,
+            },
+            item.key,
+          ),
+        ),
       });
     }
 
