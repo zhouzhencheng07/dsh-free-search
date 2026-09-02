@@ -692,7 +692,10 @@ window.__ModuleLoader__.load({
 .dshk-term-note button{pointer-events:auto}
 /* 让位布局：终端打开时把对话列顶起，内容不被遮挡（终端宽度即对话列宽） */
 body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})}
-[class*="_centerCol"]{transition:padding-bottom .18s ease,margin-right .18s var(--ds-ease-in-out)}
+/* 面板开合只保留 dock 的 padding-bottom 过渡：margin-right 如果也带过渡动画，
+   每帧都会触发官方对话宽度 ResizeObserver 重发布 + 长消息流重排（卡顿），
+   让位改为瞬时完成一次，视觉缓冲交给面板自身的 width 过渡 */
+[class*="_centerCol"]{transition:padding-bottom .18s ease}
 @media (prefers-reduced-motion:reduce){[class*="_centerCol"]{transition:none}}
 /* 文件树：作为 sidebar.workspaces 单槽 occupant 填满侧边栏浏览区（非浮层）。
    行/箭头对齐原生工作区树（Radius 8、padding 0 8、gap 6、hover 用 interactive-bg-hover） */
@@ -754,6 +757,11 @@ body.dshk-open [class*="_centerCol"]{padding-bottom:var(--dshk-dock-h,${DOCK_H})
 /* 让位布局：面板打开时中列（对话）右侧让出 --dshk-pane-w，对话随之左移 */
 body.dshk-pane-open [class*="_centerCol"]{margin-right:var(--dshk-pane-w,560px)}
 @media (prefers-reduced-motion:reduce){body.dshk-pane-open [class*="_centerCol"]{transition:none}}
+/* 官方轮次导航横条（TurnNavigator，v0.1.2-alpha.5 起）：面板打开压缩对话列后，
+   官方按容器宽度（@container width<=900px）把它隐藏——这里恢复显示；横条随对话
+   列左移后自然落在面板左侧，hover 预览与点击跳转保持可用。语义后缀选择器同
+   _centerCol 先例，不命中 dshk-* 自身类 */
+body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!important}
 /* 技能管理页（settings.section）：三分组卡片；技能行单行布局，操作不换行、描述先收缩 */
 .dshk-sk{font-size:13px;color:var(--dsw-alias-label-primary);user-select:text}
 .dshk-sk-head{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
