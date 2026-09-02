@@ -1,9 +1,9 @@
 // dsh-kit 手机访问网关 —— 唯一对外监听口（默认 0.0.0.0:3090），把已授权的
 // 手机浏览器请求透传给本机回环上的 dsh web 主端口。
 //
-// 为什么必须有这个进程：dsh web 有意只绑 127.0.0.1 且无鉴权（CLI 显式拒绝
+// 为什么必须有这个进程：dsh web 有意只绑 127.0.0.1（CLI 显式拒绝
 // --host 0.0.0.0，见 @deepseek-ai/dsh-web-app/lib/startup.js），而插件路由只能
-// 在主 webserver 上叠加、拦不住别人的路由——「验链接」这件事没地方放，只能前置。
+// 叠加在主 webserver 上、拦不住别人的路由——「验链接」这件事没地方放，只能前置。
 //
 // 授权模型（ZCode Remote Control 同款：授权内嵌在链接里）：
 //   二维码 URL 携带一次性下发的高熵令牌 ?k=<token>；
@@ -15,7 +15,15 @@
 // Cookie。这会让 dsh 的 browser-trust fence 把请求当回环同源放行（含特权 RPC——
 // 上游把它们钉死 loopback）。安全上自洽：令牌即认证层，持有链接者本就能借 agent
 // 对话执行任意命令，特权钉死对该威胁模型无增量；而直连回环的本机访问不受影响，
-// dsh 本体零改动。上游若出正式鉴权方案，可整体退役本网关。
+// dsh 本体零改动。
+//
+// dsh web ≥ v0.1.2-alpha.5 起带浏览器会话鉴权：回环直连请求也必须携带
+// client-connection 签名 cookie，否则 index 一律 401（手机端会看到
+// "dsh web authentication required; reopen the URL printed by dsh web"）。
+// 网关自铸该会话 cookie（与 dsh web 共享 credentials 的
+// client-connection/browser-session 记录密钥，算法见 dshSessionCookie）
+// 随每次反代上送，手机浏览器无需感知；密钥未就绪时网关其余功能照常，
+// 仅手机访问 401。
 //
 // WebSocket：会话事件流 / 终端 / 客户端 HMR 全靠 WS 升级，upgrade 事件做同样的
 // 鉴权后手动隧道（101 头回写 + 双向 pipe），流式响应一律不缓冲。
@@ -53,6 +61,28 @@ export function injectHeadScript(html, script) {
 /** 生成一个高熵令牌（192-bit，URL 安全） */
 export function newToken() {
   return crypto.randomBytes(24).toString('base64url')
+}
+
+/** base64url 编码（与 dsh client-connection 的 encodeBase64Url 一致） */
+function encodeBase64Url(buf) {
+  return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+/**
+ * 铸造 dsh web 浏览器会话 cookie。算法对齐 @deepseek-ai/dsh-client-connection：
+ * 名 = `dsh-auth-<b64url(sha256(authority))>`，值 = `v1.<b64url(payload)>.<b64url(hmac(secret, body))>`，
+ * payload = {version:1, authority, issuedAt, expiresAt}。跨度取 1 天：dsh 校验要求
+ * 跨度 ≤ 其 cookieMaxAgeDays 配置（默认 30），而网关每请求现铸（issuedAt≈now），
+ * 跨度只影响上限兼容——取 1 天对任何 ≥1 天的配置都成立。
+ * @param {Buffer} secret 32 字节 HMAC 原始密钥
+ * @param {string} authority 校验 authority（= 转发时重写后的 Host，即 127.0.0.1:<upstream>）
+ */
+export function dshSessionCookie({ secret, authority, issuedAt = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000 }) {
+  const name = 'dsh-auth-' + encodeBase64Url(crypto.createHash('sha256').update(authority).digest())
+  const payload = { version: 1, authority, issuedAt, expiresAt: issuedAt + maxAgeMs }
+  const body = encodeBase64Url(Buffer.from(JSON.stringify(payload), 'utf8'))
+  const value = `v1.${body}.${encodeBase64Url(crypto.createHmac('sha256', secret).update(body).digest())}`
+  return `${name}=${value}`
 }
 
 /** 定长无关的恒时字符串比较 */
@@ -132,9 +162,12 @@ export function lanAddresses() {
  * @param {number} opts.port 对外端口（默认 3090）
  * @param {number} opts.upstreamPort dsh web 主端口（回环）
  * @param {string} [opts.stateFile] 令牌持久化路径
+ * @param {Buffer | (() => Buffer | null) | null} [opts.sessionSecret] dsh web 浏览器
+ *   会话密钥（32 字节原始密钥）；可传取值函数以便读好后自动生效。null/未就绪时
+ *   不注入会话 cookie（手机访问显示 401，网关其余功能不受影响）。
  * @param {(msg: string) => void} [opts.log]
  */
-export function startPhoneGateway({ port, upstreamPort, stateFile = defaultStateFile(), log = () => {} }) {
+export function startPhoneGateway({ port, upstreamPort, stateFile = defaultStateFile(), log = () => {}, sessionSecret = null }) {
   if (!Number.isInteger(port) || port < 0 || !Number.isInteger(upstreamPort) || upstreamPort <= 0) {
     throw new Error('startPhoneGateway: port 必须是非负整数（0=系统自选），upstreamPort 必须是正整数')
   }
@@ -156,9 +189,17 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
     res.end('Not Found')
   }
 
+  /** 自铸的 dsh web 会话 cookie 头值；密钥未就绪时返回 null */
+  const sessionCookieHeader = () => {
+    if (sessionSecret === null) return null
+    const secret = typeof sessionSecret === 'function' ? sessionSecret() : sessionSecret
+    if (secret === null) return null
+    return dshSessionCookie({ secret, authority: `127.0.0.1:${upstreamPort}` })
+  }
+
   /**
    * 组装转发头：Host 改写为回环上游、剥 Origin（fence 视作回环同源）、
-   * 剥本网关 Cookie（不把网关令牌漏给上游）、滤逐跳头。
+   * 剥本网关 Cookie（不把网关令牌漏给上游）、注入 dsh web 会话 Cookie、滤逐跳头。
    */
   function proxyHeaders(src, upgrade) {
     const headers = { ...src }
@@ -166,15 +207,18 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
     delete headers.origin
     // 统一要未压缩响应：HTML 注入需要原文；远程层由 VPS caddy 重新压缩给手机
     delete headers['accept-encoding']
-    // 从 Cookie 里摘掉网关令牌，其余原样透传
+    // 合并 Cookie：上游原值 + 自铸的 dsh web 会话 cookie（新版 dsh web 鉴权必需），
+    // 再摘掉网关令牌，其余原样透传
     const cookies = parseCookies(headers.cookie)
-    if (PHONE_COOKIE in cookies) {
-      const rest = Object.entries(cookies)
-        .filter(([name]) => name !== PHONE_COOKIE)
-        .map(([name, value]) => `${name}=${value}`)
-      if (rest.length > 0) headers.cookie = rest.join('; ')
-      else delete headers.cookie
+    const session = sessionCookieHeader()
+    if (session !== null) {
+      const eq = session.indexOf('=')
+      if (eq > 0) cookies[session.slice(0, eq)] = session.slice(eq + 1)
     }
+    delete cookies[PHONE_COOKIE]
+    const pairs = Object.entries(cookies)
+    if (pairs.length > 0) headers.cookie = pairs.map(([name, value]) => `${name}=${value}`).join('; ')
+    else delete headers.cookie
     delete headers['proxy-authorization']
     delete headers['proxy-connection']
     if (upgrade) {

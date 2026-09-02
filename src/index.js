@@ -501,7 +501,7 @@ export async function apply(ctx) {
   })
 
   // webServer 可能在本插件 apply 之后才挂载，用动态注入等它就绪
-  ctx.inject(['webServer'], (webCtx) => {
+  ctx.inject(['webServer', 'credentials'], (webCtx) => {
     webCtx.effect(() => {
       // ── vendor 静态资源 ──
       const disposeVendor = webCtx.webServer.register({
@@ -1543,6 +1543,36 @@ export async function apply(ctx) {
       /** 重启后保留开启：勾选时启动才恢复上次启用位；不勾=每次启动网关都是关的 */
       const phoneKeepGatewayOn = () => readSettings().phoneKeepGatewayOn === true
       const warnLog = (msg) => console.warn(`dsh-kit: ${msg}`)
+      // dsh web ≥ v0.1.2-alpha.5 的浏览器鉴权：网关反代须自带签名会话 cookie，
+      // 否则手机端访问 index 一律 401。密钥即 credentials 服务的
+      // client-connection/browser-session 记录（与 dsh web 共享），b64url 解码回
+      // 32 字节原始密钥。读不到时按降级处理：网关其余功能不受影响，仅手机访问 401。
+      let dshSessionSecret = null
+      const loadDshSessionSecret = () => {
+        try {
+          const creds = webCtx.credentials
+          if (!creds || typeof creds.readRecord !== 'function') return
+          creds.readRecord('client-connection/browser-session').then((record) => {
+            const payload = record?.payload
+            if (record?.kind !== 'grant' || !payload || payload.version !== 1 || typeof payload.secret !== 'string' || payload.secret === '') {
+              warnLog('浏览器会话密钥记录不可用，手机访问将显示 401（网关其余功能正常）')
+              return
+            }
+            const pad = '='.repeat((4 - (payload.secret.length % 4)) % 4)
+            const raw = Buffer.from(payload.secret.replaceAll('-', '+').replaceAll('_', '/') + pad, 'base64')
+            if (raw.length !== 32) {
+              warnLog(`浏览器会话密钥长度异常（${raw.length}B），手机访问将显示 401（网关其余功能正常）`)
+              return
+            }
+            dshSessionSecret = raw
+          }, (error) => {
+            warnLog(`读取浏览器会话密钥失败：${error?.message ?? error}，手机访问将显示 401（网关其余功能正常）`)
+          })
+        } catch (error) {
+          warnLog(`读取浏览器会话密钥失败：${error?.message ?? error}，手机访问将显示 401（网关其余功能正常）`)
+        }
+      }
+      loadDshSessionSecret()
       let phoneGw = null
       let phoneGwError = null
       const bootGwState = loadGatewayState(stateFile, warnLog)
@@ -1589,7 +1619,7 @@ export async function apply(ctx) {
           }
           try {
             gwPort = phonePort()
-            phoneGw = startPhoneGateway({ port: gwPort, upstreamPort: webCtx.webServer.port, log: warnLog })
+            phoneGw = startPhoneGateway({ port: gwPort, upstreamPort: webCtx.webServer.port, log: warnLog, sessionSecret: () => dshSessionSecret })
             phoneGwError = null
           } catch (error) {
             gwPort = null
