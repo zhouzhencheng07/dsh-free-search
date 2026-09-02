@@ -427,6 +427,7 @@ export async function apply(ctx) {
     terminalEnabled: z.boolean().default(true),
     fileTreeEnabled: z.boolean().default(true),
     sourceControlEnabled: z.boolean().default(true),
+    chatOpenFilePreview: z.boolean().default(false),
     skillsPageEnabled: z.boolean().default(true),
     searchEnabled: z.boolean().default(true),
     searchMaxResults: z.number().step(1).min(1).max(8).default(5),

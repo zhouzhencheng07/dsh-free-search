@@ -99,6 +99,7 @@ window.__ModuleLoader__.load({
       terminalEnabled: true,
       fileTreeEnabled: true,
       sourceControlEnabled: true,
+      chatOpenFilePreview: false,
       skillsPageEnabled: true,
       searchEnabled: true,
       searchMaxResults: 5,
@@ -162,6 +163,7 @@ window.__ModuleLoader__.load({
         terminalEnabled: v.terminalEnabled !== false,
         fileTreeEnabled: v.fileTreeEnabled !== false,
         sourceControlEnabled: v.sourceControlEnabled !== false,
+        chatOpenFilePreview: v.chatOpenFilePreview === true,
         skillsPageEnabled: v.skillsPageEnabled !== false,
         searchEnabled: v.searchEnabled !== false,
         phoneEnabled: v.phoneEnabled === true,
@@ -192,6 +194,62 @@ window.__ModuleLoader__.load({
     let inlineEditCapture = false; // 树行内改名输入激活：面板快捷键（含 Esc 分层关闭）让路
     const subscribeCfg = (listener) => (cfgScope ? cfgScope.subscribe(listener) : () => {});
     const getCfgSnapshot = () => (cfgScope ? cfgScope.getSnapshot() : null);
+
+    // ─────────── 对话文件点击接管（设置项，默认关闭）───────────
+    // 官方对话中「产物文件」chips 与 markdown 内联代码提及都渲染成
+    // button[title=<路径>]，点击默认走 session.openWorkspacePath RPC → 系统默认
+    // 程序打开；插件 /dsh-kit/read 支持任意绝对路径，开启 cfg.chatOpenFilePreview
+    // 后在这里拦截并把路径交给右侧预览面板。判定链任何一环不命中都放行官方。
+    let chatPreviewHook = null;
+
+    /** title 是否为可接管路径：盘符/UNC/根斜杠绝对路径，或含分隔符的相对路径 */
+    function isChatOpenPathish(title) {
+      return (
+        /^[A-Za-z]:[\\/]/.test(title) ||
+        title.startsWith("\\\\") ||
+        title.startsWith("/") ||
+        (/[\\/]/.test(title) && !/\s/.test(title))
+      );
+    }
+
+    /** 对话文件路径解析：绝对直接用；相对按 cwd 拼接（与官方 resolveWorkspacePath
+     *  同语义）；反斜杠归一避免混用分隔符触发宿主校验问题。 */
+    function resolveChatOpenPath(cwd, title) {
+      const raw =
+        /^[A-Za-z]:[\\/]/.test(title) || title.startsWith("\\\\")
+          ? title
+          : title.startsWith("/")
+            ? `${cwd}\\${title.slice(1)}`
+            : `${cwd}\\${title}`;
+      const parts = raw.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
+      const out = [];
+      for (const s of parts) {
+        if (s === "..") out.pop();
+        else out.push(s);
+      }
+      if (raw.startsWith("\\\\")) return `\\\\${out.join("\\")}`;
+      if (/^[A-Za-z]:/.test(raw)) return `${raw.slice(0, 2)}\\${out.join("\\")}`;
+      return out.join("\\");
+    }
+
+    /** document capture：开启配置后接管官方对话区文件打开按钮的点击 */
+    function onChatOpenFileClick(ev) {
+      if (!ev.isTrusted) return;
+      const hook = chatPreviewHook;
+      if (!hook || !hook.ready) return;
+      const btn = ev.target instanceof Element ? ev.target.closest("button[title]") : null;
+      if (!btn) return;
+      // 插件自身面板/入口的元素不拦（title 可能是路径的只有文件树行等）
+      if (btn.closest('.dshk-pane,.dshk-dock,[class*="dshk-"]')) return;
+      // 仅官方对话滚动区内的文件按钮（markdown 提及与产物 chips 都在其中）
+      if (!btn.closest('[class*="_scroll"]')) return;
+      if (!hook.cwd) return; // 无会话工作区：放行官方（官方能解析 basename）
+      const title = (btn.getAttribute("title") || "").trim();
+      if (!isChatOpenPathish(title)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      hook.openPreview(resolveChatOpenPath(hook.cwd, title));
+    }
 
     // ─────────── 文案 ───────────
     const zh = {
@@ -310,6 +368,8 @@ window.__ModuleLoader__.load({
       cfgTerminalEnabledHint: "关闭后隐藏入口按钮与快捷键",
       cfgFileTreeEnabled: "启用文件树",
       cfgFileTreeEnabledHint: "关闭后隐藏入口按钮与快捷键",
+      cfgChatOpenFilePreview: "对话文件用插件预览打开",
+      cfgChatOpenFilePreviewHint: "对话中的产物/提及文件点击后改用插件预览（默认由系统程序打开）",
       cfgSkillsPageEnabled: "启用技能页",
       cfgSkillsPageEnabledHint: "关闭后设置里不显示「技能」页",
       cfgSearchEnabled: "启用网页搜索",
@@ -500,6 +560,8 @@ window.__ModuleLoader__.load({
       cfgTerminalEnabledHint: "Hides the entry button and its shortcut",
       cfgFileTreeEnabled: "Enable file tree",
       cfgFileTreeEnabledHint: "Hides the entry button and its shortcut",
+      cfgChatOpenFilePreview: "Open chat files in plugin preview",
+      cfgChatOpenFilePreviewHint: "Chat produced/mentioned file links open in the plugin preview pane (system default app otherwise)",
       cfgSkillsPageEnabled: "Enable skills page",
       cfgSkillsPageEnabledHint: "Hides the Skills page in Settings",
       cfgSearchEnabled: "Enable web search",
@@ -4260,6 +4322,16 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const ui = useKitUi();
       const snap = react.useSyncExternalStore(subscribeCfg, getCfgSnapshot);
       const cfg = cfgFromSnapshot(snap);
+      // 对话文件点击接管状态：面板门控（预览可用）与当前会话 cwd 每次渲染同步，
+      // 供模块级 capture 拦截器读取。ready=false（默认）时拦截器完全不介入。
+      chatPreviewHook = {
+        ready: cfg.chatOpenFilePreview === true && (cfg.fileTreeEnabled || cfg.sourceControlEnabled),
+        cwd,
+        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, jobsOpen: false }),
+      };
+
+      // 卸载时清空模块级接管状态，避免拦截器持有失效闭包
+      react.useEffect(() => () => { chatPreviewHook = null; }, []);
 
       // 座位门控：按配置动态注册/注销输入框入口与技能页（设置卡本体不受门控，
       // 否则关掉就再也打不开）。快照未就绪按默认全开处理，首个 ready 快照到达后
@@ -4822,6 +4894,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       { key: "terminalEnabled", kind: "bool" },
       { key: "fileTreeEnabled", kind: "bool" },
       { key: "sourceControlEnabled", kind: "bool" },
+      { key: "chatOpenFilePreview", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
       { key: "searchEnabled", kind: "bool" },
       { key: "searchMaxResults", kind: "number" },
@@ -4840,6 +4913,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     const CFG_GROUPS = [
       { switchKey: "sidebarShortcutEnabled", fields: ["sidebarShortcut"] },
       { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
+      { switchKey: "chatOpenFilePreview", fields: [] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "jobsEnabled", fields: [] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
@@ -5238,6 +5312,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       }
       // 导航图标替换是点击驱动的轻量方案：打开设置/面板内切换都源于一次 click
       document.addEventListener("click", scheduleSkillIconSwap, true);
+      // 对话文件点击接管（默认关闭：设置卡 chatOpenFilePreview 开启才生效）
+      document.addEventListener("click", onChatOpenFileClick, true);
     }
 
     exports.inject = ["slots", "settingsScope"];
