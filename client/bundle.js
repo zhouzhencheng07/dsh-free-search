@@ -5152,7 +5152,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       slotsCtx = ctx;
       injectStyles();
       // 插件配置数据通道：官方 settings scope 绑定本插件命名空间（宿主半边
-      // installSettingsSection 已注册 dsh-kit）。绑定失败（老宿主缺 settingsScope）
+      // 已按 ctx.settings.installSection 注册 dsh-kit）。绑定失败（老宿主缺 settingsScope）
       // 时 cfgScope 保持 null，功能按内置默认全开、卡片不出现。
       if (ctx.settingsScope && typeof ctx.settingsScope.bind === "function") {
         cfgScope = ctx.settingsScope.bind({ namespace: "dsh-kit" });

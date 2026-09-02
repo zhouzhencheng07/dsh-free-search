@@ -139,10 +139,10 @@ function loadDep(spec) {
  * 从 DSH monorepo 根直接 import 本地 workspace 包（dsh-settings / schemastery），
  * 不依赖 profile node_modules 里的 junction。
  *
- * dsh-settings 的 peerDependencies 全是 pnpm `workspace:` 协议，只能在 monorepo
- * 内解析，无法作为 file: 依赖拷出。故从 monorepo 根（见 findMonorepoRoot）直接
- * import 根下 lib 入口；settings 的 workspace 依赖在 monorepo 自身 node_modules
- * 内解析，完整可用。
+ * dsh-settings/schemastery 的 peerDependencies 全是 pnpm `workspace:` 协议，只能在
+ * monorepo 内解析，无法作为 file: 依赖拷出。故从 monorepo 根（见 findMonorepoRoot）
+ * 直接 import 根下 lib 入口；其 workspace 依赖在 monorepo 自身 node_modules 内解析，
+ * 完整可用。
  */
 async function loadMonorepoDep(relEntry) {
   const root = findMonorepoRoot()
@@ -157,12 +157,12 @@ async function loadMonorepoDep(relEntry) {
 }
 
 /**
- * 异步多锚点加载设置命名空间依赖（@deepseek-ai/dsh-settings 纯 ESM /
- * @deepseek-ai/schemastery 自带 cjs）。按可靠度依次尝试：
+ * 异步多锚点加载设置命名空间依赖（@deepseek-ai/schemastery 自带 cjs）。按可靠度
+ * 依次尝试：
  *   1) 裸 import(spec)——依赖在插件解析路径可达的安装形态直接命中；
  *   2) 运行中 dsh 本体锚点——junction/真实拷贝安装下插件位置 parent-walk 够不到
- *      fallback node_modules，但 dsh-settings/schemastery 都在 dsh 主程序自身的
- *      依赖树里：createRequire(process.argv[1]).resolve 定位实体文件路径，
+ *      fallback node_modules，但 schemastery 在 dsh 主程序自身的依赖树里：
+ *      createRequire(process.argv[1]).resolve 定位实体文件路径，
  *      再 import(pathToFileURL)。resolve 走 CJS 条件，exports 只有 default 的
  *      纯 ESM 包同样可解析；import 统一处理 ESM/CJS，且等待进程内单例加载完成，
  *      天然避开 require(esm) 的 "not yet fully loaded" 启动期竞争；
@@ -403,8 +403,8 @@ export async function apply(ctx) {
   // 的数据通道：terminalEnabled/fileTreeEnabled/skillsPageEnabled 三个功能开关
   // + terminalShortcut/fileTreeShortcut 两个快捷键。宿主自身不消费这些值（门控
   // 全在浏览器端），但命名空间必须注册——否则浏览器端 settings.mutate 报
-  // "namespace not registered"。installSettingsSection 内部自等 settings 服务
-  // （ctx.inject），不能拿 ctx.get('settings') 判存在后跳过。
+  // "namespace not registered"。注册经 ctx.inject(['settings']) 等服务就绪，
+  // 不能拿 ctx.get('settings') 判存在后跳过。
   // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
   // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）；
   // searchMaxResults 是每次搜索的来源条数上限（1-8，默认 5），provider 每次
@@ -414,20 +414,35 @@ export async function apply(ctx) {
   // readSettings 提升到 apply 作用域：webServer 注入回调（块外）的手机访问段
   // 也要读开关（远程域名、端口、页面可见性）。网关启用位已改状态文件直管，
   // 不再走 settings。设置层不可用时保持空实现 → phone 关、search 直挂（可用性优先）。
-  // 异步加载设置命名空间依赖：dsh-settings 是纯 ESM，DSH 主程序启动期正并发
-  // import() 它，模块顶层同步 require(esm) 会触发 "not yet fully loaded" 竞争
-  // 而失败；import() 会等待该进程内单例加载完成后 resolve，天然避开竞争。
-  // schemastery 自带 cjs 导出，import() 同样适用（Node 支持 import CJS）。
+  // 设置注册 API（适配 DSH v0.1.2-alpha.5+）：命名空间注册是 ctx.settings 服务
+  // （dsh-settings-file 提供）上的 installSection(owner, ns, schema, entry, hooks)，
+  // ns 为裸字符串，注册是插件 fiber 上的 effect（dispose 自动注销）。旧版独立导出
+  // installSettingsSection 已随该版本消亡，不再兼容。
+  // schemastery 自带 cjs 导出，import() 同样适用（Node 支持 import CJS）；
   // 多锚点解析见 loadSettingsDep：裸 import 失败后先落运行中 dsh 本体锚点
   //（junction/真实拷贝安装都有），最后才落 monorepo 源码开发形态的 workspace 入口。
-  const dshSettings = await loadSettingsDep('@deepseek-ai/dsh-settings', 'packages/settings/settings/lib/index.js')
   const schemasteryMod = await loadSettingsDep('@deepseek-ai/schemastery', 'vendor/schemastery/lib/index.mjs')
-  const installSettingsSection = dshSettings?.installSettingsSection ?? null
-  const settingsNamespace = dshSettings?.settingsNamespace ?? null
   const z = schemasteryMod?.default ?? schemasteryMod ?? null
-  if (!installSettingsSection || !settingsNamespace || !z || typeof z.object !== 'function') {
-    console.warn('dsh-kit: @deepseek-ai/dsh-settings 或 @deepseek-ai/schemastery 不可用，插件设置命名空间未注册')
-  }
+  const Config = z && typeof z.object === 'function' ? z.object({
+    terminalEnabled: z.boolean().default(true),
+    fileTreeEnabled: z.boolean().default(true),
+    sourceControlEnabled: z.boolean().default(true),
+    skillsPageEnabled: z.boolean().default(true),
+    searchEnabled: z.boolean().default(true),
+    searchMaxResults: z.number().step(1).min(1).max(8).default(5),
+    // phoneEnabled = 「手机访问」页入口可见性（配置卡最下，纯显示开关）。
+    // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
+    phoneEnabled: z.boolean().default(false),
+    phoneRemoteDomain: z.string().default(''),
+    phonePort: z.number().step(1).min(1).max(65535).default(3090),
+    phoneKeepGatewayOn: z.boolean().default(false),
+    jobsEnabled: z.boolean().default(true),
+    sidebarShortcut: z.string().default('Ctrl+B'),
+    sidebarShortcutEnabled: z.boolean().default(true),
+    terminalShortcut: z.string().default('Ctrl+/'),
+    fileTreeShortcut: z.string().default('Ctrl+,'),
+    scShortcut: z.string().default('Ctrl+Alt+.'),
+  }) : null
 
   let readSettings = () => ({})
   /** phoneSettingsReady：setSource 首次触发时置 true，下游 webServer 注入段由此判断
@@ -437,38 +452,24 @@ export async function apply(ctx) {
   // 手机网关的设置联动钩子（端口变更热重启等），由 webServer 注入段回填
   let onSettingsReady = () => {}
   let onSettingsChanged = () => {}
-  if (installSettingsSection && settingsNamespace && z && typeof z.object === 'function') {
-    const Config = z.object({
-      terminalEnabled: z.boolean().default(true),
-      fileTreeEnabled: z.boolean().default(true),
-      sourceControlEnabled: z.boolean().default(true),
-      skillsPageEnabled: z.boolean().default(true),
-      searchEnabled: z.boolean().default(true),
-      searchMaxResults: z.number().step(1).min(1).max(8).default(5),
-      // phoneEnabled = 「手机访问」页入口可见性（配置卡最下，纯显示开关）。
-      // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
-      phoneEnabled: z.boolean().default(false),
-      phoneRemoteDomain: z.string().default(''),
-      phonePort: z.number().step(1).min(1).max(65535).default(3090),
-      phoneKeepGatewayOn: z.boolean().default(false),
-      jobsEnabled: z.boolean().default(true),
-      sidebarShortcut: z.string().default('Ctrl+B'),
-      sidebarShortcutEnabled: z.boolean().default(true),
-      terminalShortcut: z.string().default('Ctrl+/'),
-      fileTreeShortcut: z.string().default('Ctrl+,'),
-      scShortcut: z.string().default('Ctrl+Alt+.'),
-    })
-    installSettingsSection(ctx, settingsNamespace('dsh-kit'), Config, {}, {
-      setSource: (current) => {
-        readSettings = current
-        phoneSettingsReady = true
-        // settings 首次就绪时触发网关启用位检查（此时 readSettings 才读到真实值）；
-        // 注意：onSettingsReady 在 webServer 注入回填前是空函数——如果注入回调还未
-        // 执行，onSettingsReady 尚未关联到 bootEvalGateway，此处调用无效果。
-        // 注入回调已存在时触发首次评估（解决时序差）
-        onSettingsReady()
-      },
-      onChange: () => { onSettingsChanged() },
+  /** setSource/onChange 钩子：settings 首次就绪时触发网关启用位检查（此时 readSettings
+   *  才读到真实值）；注意 onSettingsReady 在 webServer 注入回填前是空函数——如果注入
+   *  回调还未执行，调用无效果；注入回调已存在时触发首次评估（解决时序差） */
+  const settingsHooks = {
+    setSource: (current) => {
+      readSettings = current
+      phoneSettingsReady = true
+      onSettingsReady()
+    },
+    onChange: () => { onSettingsChanged() },
+  }
+  if (Config) {
+    ctx.inject(['settings'], (settingsCtx) => {
+      try {
+        settingsCtx.settings.installSection(ctx, 'dsh-kit', Config, {}, settingsHooks)
+      } catch (error) {
+        console.warn(`dsh-kit: 设置命名空间注册失败：${error?.message ?? error}`)
+      }
     })
     applyWebSearch(ctx, {
       getEnabled: () => readSettings().searchEnabled !== false,
