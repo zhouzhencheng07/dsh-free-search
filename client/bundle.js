@@ -339,7 +339,7 @@ window.__ModuleLoader__.load({
       phoneScanHint: "用手机浏览器扫码，或复制地址到手机打开；首次打开后该设备长期有效。",
       phoneCopy: "复制链接",
       phoneCopied: "已复制",
-      phoneRemoteHidden: "远程链接含访问令牌，不直接展示——点「复制」获取后自行打开。",
+      phoneRemoteCaution: "远程链接含访问令牌，二维码谨防被他人扫码。",
       phonePortInvalid: "端口需为 1-65535 的整数",
       phoneRotate: "刷新链接",
       phoneRotateHint: "作废当前链接并生成新链接，已授权设备将全部失效。",
@@ -550,7 +550,7 @@ window.__ModuleLoader__.load({
       phoneScanHint: "Scan with your phone browser, or copy the address over; a device stays authorized once opened.",
       phoneCopy: "Copy link",
       phoneCopied: "Copied",
-      phoneRemoteHidden: "The remote link contains the access token and is hidden — use Copy and open it yourself.",
+      phoneRemoteCaution: "The remote link carries an access token; keep the QR code from being scanned by others.",
       phonePortInvalid: "Port must be an integer from 1-65535",
       phoneRotate: "New link",
       phoneRotateHint: "Invalidate the current link and issue a new one; all authorized devices are signed out.",
@@ -3754,8 +3754,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
       const links = linkData && Array.isArray(linkData.links) ? linkData.links : [];
       const activeUrl = links[activeIdx] ? links[activeIdx].url : "";
-      // 链接地址（含令牌）一律不直接展示：远程不出二维码，局域网保留二维码；
-      // 只给复制按钮（悬停 title 可查看完整链接）
+      // 链接统一出二维码（LAN/远程同等待遇）；远程链接公网可达，页面提示谨防
+      // 他人扫码（见 phoneRemoteCaution）。悬停复制按钮 title 可查看完整链接。
       const activeIsRemote = !!(links[activeIdx] && links[activeIdx].label === "remote");
       react.useEffect(() => {
         if (!qrReady || activeUrl === "" || !canvasRef.current) return;
@@ -3880,9 +3880,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           ),
                         })
                       : null,
-                    activeIsRemote
-                      ? null
-                      : jsxRuntime.jsx("div", { className: "dshk-phone-qrwrap", children: jsxRuntime.jsx("canvas", { ref: canvasRef, "aria-label": "QR code" }) }),
+                    jsxRuntime.jsx("div", { className: "dshk-phone-qrwrap", children: jsxRuntime.jsx("canvas", { ref: canvasRef, "aria-label": "QR code" }) }),
                     jsxRuntime.jsxs("div", {
                       className: "dshk-phone-urlrow",
                       children: [
@@ -3907,7 +3905,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           : null,
                       ],
                     }),
-                    jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t(activeIsRemote ? "phoneRemoteHidden" : "phoneScanHint") }),
+                    jsxRuntime.jsx("p", { className: "dshk-phone-hint", children: t(activeIsRemote ? "phoneRemoteCaution" : "phoneScanHint") }),
                   ],
                 },
               )
