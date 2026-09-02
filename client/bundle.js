@@ -2783,7 +2783,34 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // 让位布局：挂 body.dshk-pane-open 类 + 根节点设 --dshk-pane-w，
     // 样式规则把中列（对话）margin-right 顶开面板宽度——对话左移，内容不被遮挡。
     // 默认宽度即最大（左移到底），左缘拖拽手柄可收窄/放宽。
-    function FileContentPane({ path, source, untracked, cwd, onClose }) {
+    /** 把 md 里的相对/站内链接解析为可打开的绝对路径；解析不出返回 null。
+     *  fromPath 为当前预览文件绝对路径（正反斜杠皆可），cwd 为工作区根
+     *  （合成站内 / 开头链接用），href 已剥过 query/hash。 */
+    function resolveMdLink(fromPath, cwd, href) {
+      const raw = (() => {
+      try {
+        return decodeURIComponent(href.split(/[?#]/, 1)[0]);
+      } catch {
+        return href.split(/[?#]/, 1)[0];
+      }
+    })();
+      if (raw === "") return null;
+      const norm = (p) => {
+        const parts = p.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
+        const out = [];
+        for (const s of parts) {
+          if (s === "..") out.pop();
+          else out.push(s);
+        }
+        return out.join("\\");
+      };
+      if (raw.startsWith("/")) {
+        return cwd && cwd.trim() !== "" ? norm(`${cwd}\\${raw.slice(1)}`) : null;
+      }
+      const dir = fromPath.split(/[\\/]+/).slice(0, -1).join("\\");
+      return norm(`${dir}\\${raw}`);
+    }
+    function FileContentPane({ path, source, untracked, cwd, onClose, onOpenFile }) {
       const [state, setState] = react.useState({ phase: "loading" });
       const [dragging, setDragging] = react.useState(false);
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
@@ -3004,23 +3031,44 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           wrap.appendChild(bar);
           wrap.appendChild(pre);
         });
+        // 外链补 target=_blank（在插件面板内点击不丢会话）；站内/相对链接走下方拦截
+        host.querySelectorAll("a[href]").forEach((a) => {
+          const href = a.getAttribute("href") ?? "";
+          if (/^(https?:|mailto:|tel:)/i.test(href) && !a.hasAttribute("target")) {
+            a.setAttribute("target", "_blank");
+            a.setAttribute("rel", "noopener");
+          }
+        });
         const onClick = (e) => {
-          const btn = e.target instanceof Element ? e.target.closest(".dshk-md-copy") : null;
-          if (!btn) return;
-          const wrap = btn.closest(".dshk-md-code");
-          const code = wrap ? wrap.querySelector("pre > code") : null;
-          if (!code) return;
-          writeClipboard(code.textContent ?? "").then((ok) => {
-            if (!ok) return;
-            btn.textContent = t("mdCopied");
-            setTimeout(() => {
-              btn.textContent = t("mdCopyCode");
-            }, 1600);
-          });
+          const target = e.target instanceof Element ? e.target : null;
+          const btn = target ? target.closest(".dshk-md-copy") : null;
+          if (btn) {
+            const wrap = btn.closest(".dshk-md-code");
+            const code = wrap ? wrap.querySelector("pre > code") : null;
+            if (!code) return;
+            writeClipboard(code.textContent ?? "").then((ok) => {
+              if (!ok) return;
+              btn.textContent = t("mdCopied");
+              setTimeout(() => {
+                btn.textContent = t("mdCopyCode");
+              }, 1600);
+            });
+            return;
+          }
+          // 相对/站内链接：默认行为会把整页导航到 dsh web 根下的对应 URL（如
+          // /README.md）→ 404「找不到此页」。拦下并转插件文件预览打开。
+          const a = target ? target.closest("a") : null;
+          if (!a || e.defaultPrevented) return;
+          const href = a.getAttribute("href") ?? "";
+          if (href === "" || href.startsWith("#")) return;
+          if (/^(https?:|mailto:|tel:)/i.test(href)) return;
+          e.preventDefault();
+          const opened = resolveMdLink(path, cwd, href);
+          if (opened !== null && typeof onOpenFile === "function") onOpenFile(opened, false);
         };
         host.addEventListener("click", onClick);
         return () => host.removeEventListener("click", onClick);
-      }, [mdActive, mdHtml]);
+      }, [mdActive, mdHtml, path, cwd, onOpenFile]);
       // ── PDF 渲染：pdf.js 在 iframe 沙箱（原生 Promise realm）里画 canvas
       // （库懒加载）。查看器本体懒加载：全量占位 + 进视口渲染 + 滚远释放位图，
       // 无页数上限；canvas 建在主文档（跨文档采纳会丢位图），沙箱 pdf.js 只执笔
@@ -4387,6 +4435,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                 untracked: ui.openUntracked === true,
                 cwd,
                 onClose: () => setKitUi({ openFile: null, openFrom: null, openUntracked: null }),
+                onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, jobsOpen: false }),
               })
             : null,
           cfg.jobsEnabled && ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
