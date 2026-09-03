@@ -84,10 +84,23 @@ in-page git workbench:
   view renders them as "all added" (green) instead of an empty note
 - Not a repository? One-click **Initialize Repository** (idempotent);
   non-ASCII filenames fully supported (`core.quotePath=false`)
-- Data flows through host endpoints `/dsh-kit/git/status`, `/dsh-kit/git/diff`,
-  `/dsh-kit/git/init` and `/dsh-kit/git/op`
-  (stage/unstage/discard/stageAll/commit; spawns the git CLI directly, no
-  library; all same-origin checked)
+- The title row's **branch-name button** opens a branch panel: local branches
+  (current highlighted, upstream ahead/behind/gone badges), click to switch,
+  ✕ to delete (unmerged branches ask again, then force-delete), create /
+  create & switch new branches
+- **↑ Push** in the title row: one-click push to the existing upstream; no
+  upstream yet? A **Set upstream & push** hint appears (`push -u origin
+  <branch>`); the ahead-count is shown live
+- **⧉ Commit graph** in the title row: git's own `--graph` ASCII history with
+  branch/tag decorations rendered monospace; click a commit for details
+  (author, date, message, changed files — files open in the preview panel);
+  merge commits are tagged
+- Data flows through host endpoints `/dsh-kit/git/status` (includes branch /
+  ahead-behind info), `/dsh-kit/git/diff`, `/dsh-kit/git/log|show|branch`
+  (graph / commit detail / branch list), `/dsh-kit/git/init` and
+  `/dsh-kit/git/op` (stage/unstage/discard/stageAll/commit/push/branchCreate/
+  branchSwitch/branchDelete; spawns the git CLI directly, no library; all
+  same-origin checked; branch names pass `check-ref-format`)
 
 ### Background jobs
 

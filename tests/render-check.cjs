@@ -48,7 +48,7 @@ const windowStub = {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -58,7 +58,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "SkillsManager", "TerminalDock", "TerminalPane"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -241,6 +241,29 @@ check("KitSurfaces 无hooks渲染无异常", !!out && typeof out === "object");
 callLog = [];
 out = comps.GitChangesPanel({ cwd: null, onOpenFile: () => {}, onClose: () => {} });
 check("GitChangesPanel noCwd 渲染无异常", !!out && typeof out === "object");
+// 图谱视图：无 cwd（不触发拉取/轮询）
+callLog = [];
+out = comps.GitGraphPanel({ cwd: null, onOpenFile: () => {} });
+check("GitGraphPanel noCwd 渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.GraphGlyph({ g: "|\\  " });
+check("GraphGlyph 连线前缀渲染无异常(竖线+斜线)", !!out && typeof out === "object");
+callLog = [];
+out = comps.GraphGlyph({ g: "* | " });
+check("GraphGlyph 圆点前缀渲染无异常(实心点+竖线)", !!out && typeof out === "object");
+// 分支浮层：空态 + 列表态（无 hooks 依赖，直接渲染）
+callLog = [];
+out = comps.GitBranchMenu({ rect: { left: 20, top: 40 }, branches: null, busy: false, name: "", onName: () => {}, onCreate: () => {}, onSwitch: () => {}, onDelete: () => {}, onClose: () => {} });
+check("GitBranchMenu 空态渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.GitBranchMenu({ rect: { left: 20, top: 40 }, branches: { branches: [
+  { name: "main", isHead: true, upstream: null, track: "", trackParsed: null },
+  { name: "dev", isHead: false, upstream: "origin/dev", track: "[ahead 1]", trackParsed: { ahead: 1, behind: 0, gone: false } },
+] }, busy: false, name: "x", created: "dev", onName: () => {}, onCreate: () => {}, onSwitch: () => {}, onDelete: () => {}, onClose: () => {} });
+check("GitBranchMenu 列表渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.GitActionsMenu({ rect: { left: 20, top: 40 }, items: [{ key: "push", label: "推送", disabled: false, run: () => {} }], onClose: () => {} });
+check("GitActionsMenu 渲染无异常", !!out && typeof out === "object");
 
 // 8) SkillsManager（技能管理页）：无 hooks（cwd=null）与有 cwd 两种
 callLog = [];

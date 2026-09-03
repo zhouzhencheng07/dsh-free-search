@@ -378,6 +378,41 @@ window.__ModuleLoader__.load({
       scCommitAll: "提交全部更改",
       cmtAllConfirm: "暂存区为空，将暂存并提交全部更改（含新文件）。继续？",
       committed: "已提交",
+      scBranch: "分支",
+      scBranchNew: "新分支名（Enter 新建）",
+      scBranchCreate: "新建",
+      scBranchCreateSwitch: "新建并切换",
+      scBranchSwitch: "切换分支",
+      scBranchDelete: "删除分支",
+      scBranchDeleteConfirm: "删除分支「{name}」？",
+      scBranchForceConfirm: "该分支未合并，强制删除？（分支上的提交可能丢失）",
+      scBranchCurrent: "当前",
+      scBranchEmpty: "（暂无分支）",
+      scBranchCreated: "已创建分支 {name}",
+      scBranchNewTag: "新建",
+      scBranchCreatedTag: "本次新建的分支",
+      scBranchSwitched: "已切换到 {name}",
+      scBranchDeleted: "已删除分支 {name}",
+      scBranchOpFail: "分支操作失败",
+      scBranchUpstream: "上游",
+      scDetached: "分离头",
+      scActions: "更多操作",
+      scPublish: "发布分支",
+      scPush: "推送到远程",
+      scPushAhead: "推送 {n} 个提交到远程",
+      scBehind: "落后 {n} 个提交",
+      scPushDone: "已推送",
+      scPushFail: "推送失败",
+      scPushNoUpstream: "当前分支没有上游，首次推送前需先设置",
+      scPushSetUpstream: "设置上游并推送",
+      scGraph: "提交图谱",
+      scGraphEmpty: "（尚无提交）",
+      scGraphFail: "图谱加载失败",
+      scCommitDetail: "提交详情",
+      scBack: "返回",
+      scMergedCommit: "合并提交",
+      scAuthored: "作者",
+      scFiles: "更改的文件",
       contentClose: "关闭预览",
       toDiff: "切换到 diff 视图",
       toText: "切换到原文视图",
@@ -573,6 +608,41 @@ window.__ModuleLoader__.load({
       scCommitAll: "Commit All",
       cmtAllConfirm: "Nothing staged. Stage ALL changes (including untracked) and commit?",
       committed: "Committed",
+      scBranch: "Branches",
+      scBranchNew: "New branch name (Enter to create)",
+      scBranchCreate: "Create",
+      scBranchCreateSwitch: "Create & switch",
+      scBranchSwitch: "Switch branch",
+      scBranchDelete: "Delete branch",
+      scBranchDeleteConfirm: "Delete branch \"{name}\"?",
+      scBranchForceConfirm: "This branch is not fully merged. Force delete? (commits on it may be lost)",
+      scBranchCurrent: "current",
+      scBranchEmpty: "(no branches)",
+      scBranchCreated: "Created branch {name}",
+      scBranchNewTag: "new",
+      scBranchCreatedTag: "Just created",
+      scBranchSwitched: "Switched to {name}",
+      scBranchDeleted: "Deleted branch {name}",
+      scBranchOpFail: "Branch operation failed",
+      scBranchUpstream: "upstream",
+      scDetached: "detached HEAD",
+      scActions: "More actions…",
+      scPublish: "Publish branch",
+      scPush: "Push to remote",
+      scPushAhead: "Push {n} commit(s) to remote",
+      scBehind: "{n} commit(s) behind",
+      scPushDone: "Pushed",
+      scPushFail: "Push failed",
+      scPushNoUpstream: "This branch has no upstream; set one before the first push",
+      scPushSetUpstream: "Set upstream & push",
+      scGraph: "Commit graph",
+      scGraphEmpty: "(no commits yet)",
+      scGraphFail: "Failed to load graph",
+      scCommitDetail: "Commit detail",
+      scBack: "Back",
+      scMergedCommit: "Merge commit",
+      scAuthored: "Author",
+      scFiles: "Changed files",
       contentClose: "Close preview",
       toDiff: "Switch to diff view",
       toText: "Switch to plain view",
@@ -1077,8 +1147,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 .dshk-rowact button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 /* 行 ⋯ 菜单：fixed 全局浮层（不受树 body 滚动裁切影响），主题令牌跟随 */
 .dshk-menu{position:fixed;min-width:152px;padding:4px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:var(--dsw-elevation-panel,0 4px 16px rgba(0,0,0,.18));z-index:1200;font-size:13px}
-.dshk-menu button{display:flex;width:100%;align-items:center;gap:8px;border:0;background:none;color:var(--dsw-alias-label-primary);padding:6px 10px;border-radius:6px;cursor:pointer;text-align:left;white-space:nowrap}
-.dshk-menu button:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-menu > button{display:flex;width:100%;align-items:center;gap:8px;border:0;background:none;color:var(--dsw-alias-label-primary);padding:6px 10px;border-radius:6px;cursor:pointer;text-align:left;white-space:nowrap}
+.dshk-menu > button:hover{background:var(--dsw-alias-interactive-bg-hover)}
 /* 全文件着色 diff：完整内容内联渲染，删除红/新增绿/上下文正常 */
 .dshk-inline{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-all;padding:4px 0;user-select:text;color:var(--dsw-alias-label-secondary)}
 .dshk-il-add{color:#0dbc79;background:rgba(13,188,121,.08)}
@@ -1100,6 +1170,75 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 .dshk-btn-save[disabled]{opacity:.6;cursor:default}
 .dshk-btn-cancel{appearance:none;background:none;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font:inherit;font-size:12px;line-height:1;padding:5px 10px;cursor:pointer}
 .dshk-btn-cancel:hover:not([disabled]){background:var(--dsw-alias-interactive-bg-hover)}
+/* 源代码管理：分支/推送/图谱（头部工具、分支浮层、提交图谱） */
+.dshk-headbtn{flex:none}
+.dshk-headbtn-on{color:var(--dsw-alias-brand-primary)}
+.dshk-branchbtn{display:inline-flex;align-items:center;gap:4px;max-width:150px;padding:2px 7px;border-color:var(--dsw-alias-border-l2)}
+.dshk-branchbtn .dshk-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshk-caret{font-size:9px;color:var(--dsw-alias-label-tertiary)}
+.dshk-pushhint{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dshk-pushhint span{flex:1;min-width:0}
+.dshk-branch{margin:2px 4px 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
+.dshk-branch-title{padding:5px 10px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px}
+.dshk-branch-row{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.dshk-branch-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-branch-cur{color:var(--dsw-alias-brand-primary)}
+.dshk-branch-ico{flex:none;font-size:8px;color:var(--dsw-alias-label-tertiary)}
+.dshk-branch-cur .dshk-branch-ico{color:var(--dsw-alias-brand-primary)}
+.dshk-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshk-branch-track{flex:none;font-family:ui-monospace,Consolas,monospace;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+.dshk-branch-gone{color:#e7757f}
+.dshk-branch-curtag{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+.dshk-branch-new{display:flex;gap:6px;padding:6px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dshk-branch-new .dshk-cmt-input{height:26px;font-size:11px}
+.dshk-branch-new .dshk-btn-save,.dshk-branch-new .dshk-btn-cancel{white-space:nowrap}
+.dshk-branch-del{appearance:none;flex:none;width:18px;height:18px;font-size:10px;line-height:1;border:0;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:4px;padding:0}
+.dshk-branch-newtag{flex:none;font-size:10px;color:var(--dsw-alias-brand-primary)}
+.dshk-branch-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 分支按钮的领先/落后计数（vs 式 main ↑1↓2） */
+.dshk-branch-ar{flex:none;font-family:ui-monospace,Consolas,monospace;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+/* 分支浮层（fixed 悬浮面板）：自带内部滚动，不参与 .dshk-tree 的 flex 挤压 */
+.dshk-branch-menu{width:236px;max-height:min(70vh,420px);display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box}
+.dshk-branch-menu .dshk-branch-title{flex:none;padding:6px 10px 4px;background:none;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshk-branch-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:2px 0}
+.dshk-branch-menu .dshk-branch-new{flex:none;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+/* ⋯ 菜单禁用项 */
+.dshk-menu > button[disabled]{opacity:.5;cursor:default}
+.dshk-menu > button[disabled]:hover{background:none}
+/* 提交图谱（等宽行，横向滚动） */
+.dshk-graph{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;overflow-x:auto;user-select:text;padding:2px 0}
+.dshk-grow{display:flex;align-items:center;white-space:pre;padding:0 8px;min-height:24px}
+.dshk-grow-click{cursor:pointer}
+.dshk-grow-click:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-graph-g{flex:none;color:var(--dsw-alias-label-tertiary);line-height:1.5}
+.dshk-gglyph{flex:none;width:14px;height:24px;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;color:var(--dsw-alias-label-tertiary)}
+.dshk-gdot{width:10px;height:10px;border-radius:50%;background:currentColor;box-shadow:0 0 0 1px color-mix(in srgb, currentColor 35%, transparent)}
+.dshk-godot{width:10px;height:10px;border-radius:50%;border:2px solid currentColor;box-sizing:border-box}
+.dshk-gvline{flex:none;width:2px;height:24px;background:currentColor;border-radius:1px;opacity:.8}
+.dshk-gslash{flex:none;width:2px;height:38px;background:currentColor;border-radius:1px;opacity:.8;transform:rotate(37deg);transform-origin:center}
+.dshk-gbslash{flex:none;width:2px;height:38px;background:currentColor;border-radius:1px;opacity:.8;transform:rotate(-37deg);transform-origin:center}
+.dshk-gref{flex:none;font-size:10px;line-height:1.4;margin-right:4px;padding:0 5px;border-radius:5px;border:1px solid currentColor;white-space:nowrap}
+.dshk-gref[data-k="head"]{color:#e2c08d}
+.dshk-gref[data-k="branch"]{color:#4daafc}
+.dshk-gref[data-k="tag"]{color:#b088e0}
+.dshk-gref[data-k="remote"]{color:#73c991}
+.dshk-ghash{flex:none;color:var(--dsw-alias-label-tertiary);width:62px;display:inline-block;margin-right:6px}
+.dshk-gsubj{color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis}
+.dshk-gdetail-head{display:flex;align-items:center;gap:8px;padding:6px 10px}
+.dshk-gdetail-title{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshk-gmeta{padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshk-gmeta-row{display:flex;gap:8px;align-items:baseline;font-size:12px}
+.dshk-gmeta-k{flex:none;color:var(--dsw-alias-label-tertiary);width:44px}
+.dshk-gmeta-date{flex:1;min-width:0;text-align:right;color:var(--dsw-alias-label-tertiary)}
+.dshk-gmeta-hash{font-size:11px;color:var(--dsw-alias-label-tertiary);word-break:break-all;margin-top:2px}
+.dshk-gmeta-subj{font-size:12px;color:var(--dsw-alias-label-primary);margin-top:2px}
+.dshk-gmeta-body{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word;margin-top:2px}
+.dshk-gmeta-merge{margin-top:2px;font-size:11px;color:#e2c08d}
+.dshk-gfiles-head{padding:5px 10px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dshk-gfile{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.dshk-gfile:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshk-gfile .dshk-name{flex:none}
+.dshk-gfile .dshk-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 `;
 
     /** 注入 xterm.css（link）与本插件样式（style），幂等 */
@@ -1964,7 +2103,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       });
     }
 
-    /** git 状态：available:false = 非 git 目录，前端隐藏徽标 */
+    /** git 状态：available:false = 非 git 目录，前端隐藏徽标；available 时含
+        branch/upstream/ahead/behind/detached/unborn（宿主 status -b 分支摘要） */
     function fetchGitStatus(cwd, signal) {
       return fetch(`/dsh-kit/git/status?cwd=${encodeURIComponent(cwd)}`, { signal }).then(async (res) => {
         const body = await res.json().catch(() => null);
@@ -1973,6 +2113,51 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
         return body;
       });
+    }
+    /** git 图谱：available:false = 非 git 目录/失败；lines 空数组 = 尚无提交 */
+    function fetchGitLog(cwd, n, signal) {
+      const url = `/dsh-kit/git/log?cwd=${encodeURIComponent(cwd)}&n=${Number(n) || 120}`;
+      return fetch(url, { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || typeof body.available !== "boolean") {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return body;
+      });
+    }
+    /** git 单个提交详情（图谱点开行用） */
+    function fetchGitShow(cwd, commit, signal) {
+      return fetch(`/dsh-kit/git/show?cwd=${encodeURIComponent(cwd)}&commit=${encodeURIComponent(commit)}`, { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || typeof body.available !== "boolean") {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return body;
+      });
+    }
+    /** git 本地分支列表（{current, branches:[{name,isHead,upstream,track,trackParsed}]}） */
+    function fetchGitBranch(cwd, signal) {
+      return fetch(`/dsh-kit/git/branch?cwd=${encodeURIComponent(cwd)}`, { signal }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body || typeof body.available !== "boolean") {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return body;
+      });
+    }
+    /** 图谱引用装饰解析（与宿主侧 src/git.js parseDecoration 保持同步，入参为 %D 原文） */
+    function parseDecoration(text) {
+      const out = [];
+      if (typeof text !== "string" || text === "") return out;
+      for (const item of text.split(",").map((x) => x.trim())) {
+        if (item === "") continue;
+        if (item === "HEAD") out.push({ kind: "head", name: "HEAD", pointsTo: null });
+        else if (item.startsWith("HEAD -> ")) out.push({ kind: "head", name: "HEAD", pointsTo: item.slice(8) });
+        else if (item.startsWith("tag: ")) out.push({ kind: "tag", name: item.slice(5) });
+        else if (item.startsWith("origin/")) out.push({ kind: "remote", name: item });
+        else out.push({ kind: "branch", name: item });
+      }
+      return out;
     }
 
     /** 在目录初始化仓库（源代码管理空态按钮用；已是仓库则幂等返回 created:false） */
@@ -2821,11 +3006,172 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       });
     }
 
+    // ─────────── 分支浮层（fixed 悬浮面板，vs 式 quick-pick）───────────
+    // 不参与 .dshk-tree 的 flex 布局——更改条目再多也不会挤压分支列表；面板自带
+    // 纵向滚动，超出视口高度时 clamp 至视口内。Esc / 点击面板外关闭；点回触发
+    // 按钮不关（按钮自身 onClick 负责切换），用 data-popkey 识别。
+    function GitBranchMenu({ rect, branches, busy, name, created, onName, onCreate, onSwitch, onDelete, onClose }) {
+      const hostRef = react.useRef(null);
+      react.useEffect(() => {
+        const onKey = (e) => { if (e.key === "Escape") onClose(); };
+        const onDown = (e) => {
+          if (e.target instanceof Element) {
+            const el = e.target.closest("[data-popkey]");
+            if (el && el.getAttribute("data-popkey") === "branch") return; // 触发按钮自己管切换
+          }
+          if (hostRef.current && e.target instanceof Element && !hostRef.current.contains(e.target)) onClose();
+        };
+        window.addEventListener("keydown", onKey, true);
+        window.addEventListener("pointerdown", onDown, true);
+        return () => {
+          window.removeEventListener("keydown", onKey, true);
+          window.removeEventListener("pointerdown", onDown, true);
+        };
+      }, [onClose]);
+      const MENU_W = 236;
+      const viewportW = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 1200;
+      const viewportH = typeof window !== "undefined" && window.innerHeight ? window.innerHeight : 800;
+      const style = {
+        left: Math.min(Math.max(8, rect.left), Math.max(8, viewportW - MENU_W)),
+        top: Math.min(Math.max(8, rect.top), Math.max(8, viewportH - 420)),
+      };
+      return jsxRuntime.jsxs("div", {
+        ref: hostRef,
+        className: "dshk-menu dshk-branch-menu",
+        style,
+        children: [
+          jsxRuntime.jsx("div", { className: "dshk-branch-title", children: t("scBranch") }),
+          jsxRuntime.jsx("div", { className: "dshk-branch-list", children:
+            Array.isArray(branches?.branches) && branches.branches.length > 0
+              ? branches.branches.map((b) =>
+                  jsxRuntime.jsxs(
+                    "div",
+                    {
+                      className: "dshk-branch-row" + (b.isHead ? " dshk-branch-cur" : ""),
+                      title: b.upstream
+                        ? `${b.upstream}${b.trackParsed && (b.trackParsed.ahead || b.trackParsed.behind) ? " [" + (b.trackParsed.ahead ? "ahead " + b.trackParsed.ahead : "") + (b.trackParsed.behind ? " behind " + b.trackParsed.behind : "") + "]" : ""}`
+                        : b.name,
+                      onClick: () => { if (!b.isHead && !busy) onSwitch(b.name); },
+                      children: [
+                        jsxRuntime.jsx("span", { className: "dshk-branch-ico", children: b.isHead ? "●" : "○" }),
+                        jsxRuntime.jsx("span", { className: "dshk-branch-name", children: b.name }),
+                        created && b.name === created
+                          ? jsxRuntime.jsx("span", { className: "dshk-branch-newtag", title: t("scBranchCreatedTag"), children: t("scBranchNewTag") })
+                          : null,
+                        trackBadgeFor(b),
+                        jsxRuntime.jsx("span", { className: "dshk-spring" }),
+                        b.isHead
+                          ? jsxRuntime.jsx("span", { className: "dshk-branch-curtag", children: t("scBranchCurrent") })
+                          : jsxRuntime.jsx("button", {
+                              type: "button",
+                              className: "dshk-branch-del",
+                              title: t("scBranchDelete"),
+                              disabled: busy,
+                              onClick: (e) => { e.stopPropagation(); onDelete(b.name); },
+                              children: "✕",
+                            }),
+                      ],
+                    },
+                    b.name,
+                  ),
+                )
+              : jsxRuntime.jsx("div", { className: "dshk-note", children: t("scBranchEmpty") }),
+          }),
+          jsxRuntime.jsxs("div", { className: "dshk-branch-new", children: [
+            jsxRuntime.jsx("input", {
+              autoFocus: true,
+              className: "dshk-cmt-input",
+              placeholder: t("scBranchNew"),
+              value: name,
+              onChange: (e) => onName(e.target.value),
+              onKeyDown: (e) => { if (e.key === "Enter") onCreate(false); },
+            }),
+            jsxRuntime.jsx("button", {
+              type: "button",
+              className: "dshk-btn-save",
+              disabled: name.trim() === "" || busy,
+              onClick: () => onCreate(false),
+              children: t("scBranchCreate"),
+            }),
+            jsxRuntime.jsx("button", {
+              type: "button",
+              className: "dshk-btn-cancel",
+              disabled: name.trim() === "" || busy,
+              onClick: () => onCreate(true),
+              children: t("scBranchCreateSwitch"),
+            }),
+          ] }),
+        ],
+      });
+    }
+    /** 分支行上游领先/落后/失效小标记（与面板内 trackBadge 同源，独立函数便于悬浮面板复用） */
+    function trackBadgeFor(b) {
+      const tp = b.trackParsed;
+      if (!tp) return null;
+      if (tp.gone === true) return jsxRuntime.jsx("span", { className: "dshk-branch-track dshk-branch-gone", title: b.track || b.upstream, children: "gone" });
+      if (tp.ahead === 0 && tp.behind === 0) return null;
+      return jsxRuntime.jsx("span", { className: "dshk-branch-track", title: b.track || b.upstream, children: `${tp.ahead ? "↑" + tp.ahead : ""}${tp.behind ? "↓" + tp.behind : ""}` });
+    }
+
+    // ─────────── ⋯ 操作菜单（vs 式：推送/发布分支收敛在标题行）───────────
+    // 事件面与 GitBranchMenu 相同：Esc / 外部点击关闭，触发按钮以 data-popkey="actions"
+    // 豁免（自身 toggle）。items: [{key, label, disabled?, run}]。
+    function GitActionsMenu({ rect, items, onClose }) {
+      const hostRef = react.useRef(null);
+      react.useEffect(() => {
+        const onKey = (e) => { if (e.key === "Escape") onClose(); };
+        const onDown = (e) => {
+          if (e.target instanceof Element) {
+            const el = e.target.closest("[data-popkey]");
+            if (el && el.getAttribute("data-popkey") === "actions") return;
+          }
+          if (hostRef.current && e.target instanceof Element && !hostRef.current.contains(e.target)) onClose();
+        };
+        window.addEventListener("keydown", onKey, true);
+        window.addEventListener("pointerdown", onDown, true);
+        return () => {
+          window.removeEventListener("keydown", onKey, true);
+          window.removeEventListener("pointerdown", onDown, true);
+        };
+      }, [onClose]);
+      const viewportW = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 1200;
+      const viewportH = typeof window !== "undefined" && window.innerHeight ? window.innerHeight : 800;
+      const style = {
+        left: Math.min(Math.max(8, rect.left), Math.max(8, viewportW - 200)),
+        top: Math.min(Math.max(8, rect.top), Math.max(8, viewportH - 140)),
+      };
+      return jsxRuntime.jsx("div", {
+        ref: hostRef,
+        className: "dshk-menu",
+        style,
+        children: items.map((item) =>
+          jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              disabled: item.disabled === true,
+              onClick: () => {
+                onClose();
+                item.run();
+              },
+              children: item.label,
+            },
+            item.key,
+          ),
+        ),
+      });
+    }
+
     // ─────────── 源代码管理视图（sidebar.workspaces 的 git 模式，对标 VSCode SCM）───────────
     // 文件树头部分支按钮进入；与文件树互斥占用同一单槽，**无 ✕**——原文件树入口
     // 按钮（及 Ctrl+E）就是切换开关：树 ⇄ 源代码管理 来回切。
-    // 布局对标 VSCode：标题行（分支图标+名称+条目数+⟳）→「暂存的更改」组 →「更改」组
-    // （未跟踪 U 归入更改组）；非 git 目录给「初始化仓库」按钮（POST /git/init，幂等）。
+    // 布局对标 VSCode：标题行（分支图标+分支按钮（名称+↑N↓M）+条目数+图谱/⋯/刷新）
+    // →「暂存的更改」组 →「更改」组（未跟踪 U 归入更改组）；分支浮层与 ⋯ 菜单是
+    // fixed 悬浮层（不参与面板布局，更改条目再多分支也完整显示；Esc/外部点击关闭，
+    // 分支列表自带滚动；新建分支输入打开即聚焦，仅新建不切换时浮层保留、新分支
+    // 打「新建」标记）。非 git 目录给「初始化仓库」按钮（POST /git/init，幂等）。
+    // 图谱视图（⧉ 切换）见 GitGraphPanel；⋯ 菜单 = 推送（有上游）/ 发布分支
+    // （无上游，push -u），失败且无上游时给「设置上游并推送」提示。
     function GitChangesPanel({ cwd, onOpenFile }) {
       const [data, setData] = react.useState(null); // null=加载中；{available, root?, entries?}
       const [initializing, setInitializing] = react.useState(false);
@@ -2856,6 +3202,142 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           window.removeEventListener("focus", tick);
         };
       }, [cwd]);
+
+      // 视图：changes（更改清单，默认）⇄ graph（提交图谱）；分支浮层内联展开
+      const [view, setView] = react.useState("changes");
+      const [branchOpen, setBranchOpen] = react.useState(false);
+      const [branches, setBranches] = react.useState(null); // null=未加载；{current, branches[]}
+      const [newBranch, setNewBranch] = react.useState("");
+      const [createdBranch, setCreatedBranch] = react.useState(null); // 刚新建的分支名（列表打「新建」标记）
+      const [branchBusy, setBranchBusy] = react.useState(false);
+      const [pushing, setPushing] = react.useState(false);
+      // ⋯ 操作菜单 / 分支浮层（fixed 悬浮）：anchor 为按钮矩形锚点 {left, top}
+      const [actionsOpen, setActionsOpen] = react.useState(false);
+      const [actionsAnchor, setActionsAnchor] = react.useState(null);
+      const [branchAnchor, setBranchAnchor] = react.useState(null);
+      const branchBtnRef = react.useRef(null);
+      const actionsBtnRef = react.useRef(null);
+      /** 按钮锚点：按钮左下 + 6px，视口内 clamp（浮层自带内部滚动，上限留高） */
+      const anchorOf = (ref) => {
+        const el = ref.current;
+        const vw = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 1200;
+        const vh = typeof window !== "undefined" && window.innerHeight ? window.innerHeight : 800;
+        if (!el) return { left: 8, top: 8 };
+        const r = el.getBoundingClientRect();
+        return {
+          left: Math.min(Math.max(8, r.left), Math.max(8, vw - 244)),
+          top: Math.min(Math.max(8, r.bottom + 6), Math.max(8, vh - 430)),
+        };
+      };
+      const openBranch = () => {
+        setActionsOpen(false);
+        setActionsAnchor(null);
+        setBranchAnchor(anchorOf(branchBtnRef));
+        setBranchOpen(true);
+      };
+      const closeBranch = () => {
+        setBranchOpen(false);
+        setBranchAnchor(null);
+        setCreatedBranch(null);
+      };
+      const toggleBranch = () => {
+        if (branchOpen) closeBranch();
+        else openBranch();
+      };
+      const openActions = () => {
+        setBranchOpen(false);
+        setBranchAnchor(null);
+        setActionsAnchor(anchorOf(actionsBtnRef));
+        setActionsOpen(true);
+      };
+      const closeActions = () => {
+        setActionsOpen(false);
+        setActionsAnchor(null);
+      };
+      const [pushHint, setPushHint] = react.useState(false); // 无上游时的「设置上游并推送」提示
+      // 图谱面板暴露的刷新句柄（图谱挂载后由 GitGraphPanel 回填），供头部 ⟳ 一并刷新
+      const graphRef = react.useRef(null);
+      const branchRef = react.useRef(null);
+      branchRef.current = () => {
+        if (!cwd) return;
+        const c = new AbortController();
+        fetchGitBranch(cwd, c.signal)
+          .then((b) => {
+            if (!c.signal.aborted && b.available === true) setBranches(b);
+          })
+          .catch(() => {});
+      };
+      // 分支浮层数据：打开时拉取（关闭后保留已加载数据，下次瞬开）
+      react.useEffect(() => {
+        if (branchOpen && branchRef.current) branchRef.current();
+      }, [branchOpen, cwd]);
+
+      /** 推送（upstream=true 时设置上游再推，即首次推送）：失败按无上游给提示 */
+      const doPush = async (withUpstream) => {
+        if (pushing || !cwd || !available) return false;
+        setPushing(true);
+        try {
+          const res = await fetch("/dsh-kit/git/op", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cwd, op: "push", upstream: withUpstream === true }),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok || !b.ok) throw new Error(b.error || `HTTP ${res.status}`);
+          flashToast(t("scPushDone"));
+          setPushHint(false);
+          if (fetchRef.current) fetchRef.current();
+          return true;
+        } catch (error) {
+          const message = String(error?.message ?? error);
+          flashToast(`${t("scPushFail")}：${message}`);
+          const hintable = /no upstream/i.test(message) || /no configured push destination/i.test(message) || /couldn't find remote ref/i.test(message);
+          setPushHint(hintable);
+          return false;
+        } finally {
+          setPushing(false);
+        }
+      };
+
+      /** 分支操作（新建/切换/删除）：成功后刷新状态 + 分支列表 */
+      const runBranchOp = async (payload, confirmText) => {
+        if (branchBusy || !cwd) return false;
+        if (confirmText !== undefined && confirmText !== null && !window.confirm(confirmText)) return false;
+        setBranchBusy(true);
+        try {
+          const res = await fetch("/dsh-kit/git/op", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cwd, ...payload }),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok || !b.ok) throw new Error(b.error || `HTTP ${res.status}`);
+          if (fetchRef.current) fetchRef.current();
+          if (branchRef.current) branchRef.current();
+          setNewBranch("");
+          return true;
+        } catch (error) {
+          flashToast(`${t("scBranchOpFail")}：${error?.message ?? error}`);
+          return false;
+        } finally {
+          setBranchBusy(false);
+        }
+      };
+
+      /** 新建分支（doSwitch=true 时一并切换）；成功后收起浮层（分支名已变） */
+      const createBranch = async (doSwitch) => {
+        const name = newBranch.trim();
+        if (name === "" || branchBusy) return;
+        const ok = await runBranchOp({ op: "branchCreate", name, switch: doSwitch === true });
+        if (ok) {
+          flashToast(t(doSwitch ? "scBranchSwitched" : "scBranchCreated").replace("{name}", name));
+          if (doSwitch) {
+            closeBranch(); // 已切换：收起浮层，头部分支按钮显示新名
+          } else {
+            setCreatedBranch(name); // 仅新建：浮层保留，列表刷新后新分支打「新建」标记
+          }
+        }
+      };
 
       /** 写操作（暂存/取消暂存/放弃/提交）：可选二次确认，成功后静默刷新状态 */
       const runOp = async (payload, confirmText) => {
@@ -2961,6 +3443,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
       };
 
+      const ahead = available && typeof data?.ahead === "number" ? data.ahead : 0;
+      const behind = available && typeof data?.behind === "number" ? data.behind : 0;
+
       return jsxRuntime.jsxs("div", {
         className: "dshk-tree",
         children: [
@@ -2968,20 +3453,130 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             className: "dshk-head",
             children: [
               jsxRuntime.jsx(BranchIcon, {}),
-              jsxRuntime.jsx("span", { className: "dshk-dir", title: root ?? "", children: t("scTitle") }),
+              // 分支按钮（vs 式：名称 + 领先/落后计数）：点击开固定悬浮分支浮层
+              available && data
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    ref: branchBtnRef,
+                    className: "dshk-btn dshk-branchbtn" + (branchOpen ? " dshk-headbtn-on" : ""),
+                    title: t("scBranch"),
+                    "data-popkey": "branch",
+                    "aria-pressed": branchOpen || undefined,
+                    onClick: toggleBranch,
+                    children: [
+                      jsxRuntime.jsx("span", {
+                        className: "dshk-branch-name",
+                        children: data.detached === true ? t("scDetached") : data.branch || "—",
+                      }),
+                      !data.detached && (ahead > 0 || behind > 0)
+                        ? jsxRuntime.jsx("span", {
+                            className: "dshk-branch-ar",
+                            title: `${ahead > 0 ? t("scPushAhead").replace("{n}", String(ahead)) : ""}${ahead > 0 && behind > 0 ? " · " : ""}${behind > 0 ? t("scBehind").replace("{n}", String(behind)) : ""}`,
+                            children: `${ahead > 0 ? "↑" + ahead : ""}${behind > 0 ? "↓" + behind : ""}`,
+                          })
+                        : null,
+                      jsxRuntime.jsx("span", { className: "dshk-caret", children: "▾" }),
+                    ],
+                  })
+                : jsxRuntime.jsx("span", { className: "dshk-dir", title: root ?? "", children: t("scTitle") }),
               available && entries.length > 0
                 ? jsxRuntime.jsx("span", { className: "dshk-status", children: String(entries.length) })
                 : null,
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
               jsxRuntime.jsx("button", {
                 type: "button",
+                className: "dshk-btn dshk-headbtn" + (view === "graph" ? " dshk-headbtn-on" : ""),
+                title: t("scGraph"),
+                "aria-pressed": view === "graph" || undefined,
+                onClick: () => setView((v) => (v === "graph" ? "changes" : "graph")),
+                children: "⧉",
+              }),
+              // ⋯ 操作菜单（vs 式）：推送 / 发布分支收敛在这里
+              available && data
+                ? jsxRuntime.jsx("button", {
+                    type: "button",
+                    ref: actionsBtnRef,
+                    className: "dshk-btn dshk-headbtn" + (actionsOpen ? " dshk-headbtn-on" : ""),
+                    title: ahead > 0 ? t("scPushAhead").replace("{n}", String(ahead)) : t("scActions"),
+                    "data-popkey": "actions",
+                    "aria-pressed": actionsOpen || undefined,
+                    onClick: openActions,
+                    children: pushing ? t("saving") : "⋯",
+                  })
+                : null,
+              jsxRuntime.jsx("button", {
+                type: "button",
                 className: "dshk-btn",
                 title: t("treeRefresh"),
-                onClick: () => { if (fetchRef.current) fetchRef.current(); },
+                onClick: () => {
+                  if (fetchRef.current) fetchRef.current();
+                  if (graphRef.current) graphRef.current();
+                },
                 children: "⟳",
               }),
             ],
           }),
+          // 分支浮层 / ⋯ 操作菜单：fixed 悬浮（.dshk-menu 模式），不参与面板布局，
+          // 更改条目再多也不会挤压分支列表；关浮层由组件内 Esc/外部点击触发
+          branchOpen && branchAnchor
+            ? jsxRuntime.jsx(GitBranchMenu, {
+                rect: branchAnchor,
+                branches,
+                busy: branchBusy,
+                name: newBranch,
+                created: createdBranch,
+                onName: setNewBranch,
+                onCreate: createBranch,
+                onSwitch: async (name) => {
+                  const ok = await runBranchOp({ op: "branchSwitch", name });
+                  if (ok) {
+                    flashToast(t("scBranchSwitched").replace("{name}", name));
+                    closeBranch();
+                  }
+                },
+                onDelete: async (name) => {
+                  if (!window.confirm(t("scBranchDeleteConfirm").replace("{name}", name))) return;
+                  const ok = await runBranchOp({ op: "branchDelete", name });
+                  if (ok) {
+                    flashToast(t("scBranchDeleted").replace("{name}", name));
+                    return;
+                  }
+                  // -d 失败（典型：未合并）→ 二次确认强制删除
+                  if (window.confirm(t("scBranchForceConfirm"))) {
+                    const ok2 = await runBranchOp({ op: "branchDelete", name, force: true });
+                    if (ok2) flashToast(t("scBranchDeleted").replace("{name}", name));
+                  }
+                },
+                onClose: closeBranch,
+              })
+            : null,
+          actionsOpen && actionsAnchor
+            ? jsxRuntime.jsx(GitActionsMenu, {
+                rect: actionsAnchor,
+                items: [
+                  {
+                    key: "push",
+                    label: data && data.upstream ? t("scPush") : t("scPublish"),
+                    disabled: pushing || !available || data?.detached === true || data?.branch === "",
+                    run: () => doPush(!(data && data.upstream)),
+                  },
+                ],
+                onClose: closeActions,
+              })
+            : null,
+          // 无上游提示（push 失败后出现）：一键设置上游并重推
+          pushHint && view === "changes"
+            ? jsxRuntime.jsxs("div", { className: "dshk-pushhint", children: [
+                jsxRuntime.jsx("span", { children: t("scPushNoUpstream") }),
+                jsxRuntime.jsx("button", {
+                  type: "button",
+                  className: "dshk-btn-save",
+                  disabled: pushing,
+                  onClick: () => doPush(true),
+                  children: t("scPushSetUpstream"),
+                }),
+              ] })
+            : null,
           jsxRuntime.jsx("div", {
             className: "dshk-tree-body",
             children:
@@ -3002,6 +3597,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           }),
                         }),
                       ] })
+                    : view === "graph"
+                    ? jsxRuntime.jsx(GitGraphPanel, { cwd, root, refreshRef: graphRef, onOpenFile })
                     : jsxRuntime.jsxs(jsxRuntime.Fragment, {
                         children: [
                           // 提交框：暂存空=提交全部（需确认），否则只提交已暂存
@@ -3050,6 +3647,221 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                       }),
           }),
         ],
+      });
+    }
+
+    // ─────────── 提交图谱（源代码管理面板的 graph 视图）───────────
+    // 数据走 GET /dsh-kit/git/log（git log --all --graph 的 ASCII 图谱 + 结构化
+    // 字段），等宽渲染：图谱前缀 → 引用装饰 chip → 短哈希 → 提交说明；纯连线续行
+    // 只画前缀。点提交行进详情（/dsh-kit/git/show）：作者/时间/说明/文件清单，
+    // 清单行可点开进右侧预览面板（A 类按未跟踪语义进原文视图）。
+    // refreshRef：头部 ⟳ 一并刷新的句柄（由 GitChangesPanel 传入并回填）。
+    /** 图谱 ASCII 前缀 → 图元（* 实心点 / o 空心点 / | 竖线 / \\ 斜线）。
+     * 每个图元占一列定宽轨道；按轨道列（lane）循环分色，分支结构一眼可辨。
+     * 空格原样占位（pre 保留列位）。工厂顶层函数，render-check 直接导出渲染。 */
+    const LANE_COLORS = ["#4daafc", "#73c991", "#e2c08d", "#b088e0"];
+    function GraphGlyph({ g }) {
+      const out = [];
+      const glyph = (i, cls) =>
+        jsxRuntime.jsx(
+          "span",
+          { className: "dshk-gglyph", style: { color: LANE_COLORS[i % LANE_COLORS.length] }, children: jsxRuntime.jsx("span", { className: cls }) },
+          "g" + i,
+        );
+      for (let i = 0; i < g.length; i++) {
+        const ch = g[i];
+        if (ch === "*") out.push(glyph(i, "dshk-gdot"));
+        else if (ch === "o") out.push(glyph(i, "dshk-godot"));
+        else if (ch === "|") out.push(glyph(i, "dshk-gvline"));
+        else if (ch === "/") out.push(glyph(i, "dshk-gslash"));
+        else if (ch === "\\") out.push(glyph(i, "dshk-gbslash"));
+        else out.push(ch); // 空格等原样（pre 保留列位）
+      }
+      return jsxRuntime.jsx("span", { className: "dshk-graph-g", children: out });
+    }
+
+    function GitGraphPanel({ cwd, root, refreshRef, onOpenFile }) {
+      const [data, setData] = react.useState(null); // null=加载中；{available, lines?}
+      const [error, setError] = react.useState(null);
+      const [sel, setSel] = react.useState(null); // null=列表；否则为选中的提交哈希
+      const [detail, setDetail] = react.useState(null); // null | {phase, meta?, files?}
+      const fetchRef = react.useRef(null);
+      fetchRef.current = () => {
+        if (!cwd) return;
+        const c = new AbortController();
+        fetchGitLog(cwd, 200, c.signal)
+          .then((b) => {
+            if (c.signal.aborted) return;
+            setError(null);
+            setData(b);
+          })
+          .catch((e) => {
+            if (!c.signal.aborted && e?.name !== "AbortError") setError(String(e?.message ?? e));
+          });
+      };
+      // 把本面板的刷新函数暴露给父级的 ⟳
+      if (refreshRef) refreshRef.current = () => fetchRef.current();
+      react.useEffect(() => {
+        if (fetchRef.current) fetchRef.current();
+        const tick = () => {
+          if (document.visibilityState !== "hidden" && fetchRef.current) fetchRef.current();
+        };
+        const timer = window.setInterval(tick, GIT_POLL_MS);
+        document.addEventListener("visibilitychange", tick);
+        window.addEventListener("focus", tick);
+        return () => {
+          window.clearInterval(timer);
+          document.removeEventListener("visibilitychange", tick);
+          window.removeEventListener("focus", tick);
+        };
+      }, [cwd]);
+
+      /** 详情拉取控制器（供返回键中止在途请求） */
+      const detailFetchRef = react.useRef(null);
+      const openDetail = (hash) => {
+        setSel(hash);
+        setDetail({ phase: "loading" });
+        const c = new AbortController();
+        detailFetchRef.current = c;
+        fetchGitShow(cwd, hash, c.signal)
+          .then((b) => {
+            if (c.signal.aborted) return;
+            if (b.available !== true) throw new Error("unavailable");
+            setDetail({ phase: "ready", meta: b.meta, files: b.files || [] });
+          })
+          .catch((e) => {
+            if (!c.signal.aborted) setDetail({ phase: "error", error: String(e?.message ?? e) });
+          });
+      };
+      const closeDetail = () => {
+        const c = detailFetchRef.current;
+        if (c) {
+          try {
+            c.abort();
+          } catch {
+            // 已结束
+          }
+        }
+        setSel(null);
+        setDetail(null);
+      };
+
+      const renderRefChips = (d) => {
+        const decs = parseDecoration(d);
+        return decs.map((r, i) =>
+          jsxRuntime.jsx(
+            "span",
+            {
+              className: "dshk-gref",
+              "data-k": r.kind,
+              title: r.kind === "head" && r.pointsTo ? `HEAD → ${r.pointsTo}` : r.name,
+              children: r.kind === "head" && r.pointsTo ? r.pointsTo : r.name,
+            },
+            `${r.kind}-${i}`,
+          ),
+        );
+      };
+
+      if (!cwd) {
+        return jsxRuntime.jsx("div", { className: "dshk-note", children: t("noCwd") });
+      }
+
+      // ── 提交详情子视图 ──
+      if (sel !== null) {
+        const isMerge = typeof detail?.meta?.parents === "string" && detail.meta.parents.trim().includes(" ");
+        return jsxRuntime.jsxs("div", { className: "dshk-graph", children: [
+          jsxRuntime.jsxs("div", { className: "dshk-gdetail-head", children: [
+            jsxRuntime.jsx("button", {
+              type: "button",
+              className: "dshk-btn-cancel",
+              onClick: closeDetail,
+              children: t("scBack"),
+            }),
+            jsxRuntime.jsx("span", { className: "dshk-gdetail-title", children: t("scCommitDetail") }),
+          ] }),
+          detail === null || detail.phase === "loading"
+            ? jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") })
+            : detail.phase === "error"
+              ? jsxRuntime.jsx("div", { className: "dshk-note", children: `${t("scGraphFail")}：${detail.error}` })
+              : jsxRuntime.jsxs("div", { children: [
+                  jsxRuntime.jsxs("div", { className: "dshk-gmeta", children: [
+                    jsxRuntime.jsxs("div", { className: "dshk-gmeta-row", children: [
+                      jsxRuntime.jsx("span", { className: "dshk-gmeta-k", children: t("scAuthored") }),
+                      jsxRuntime.jsx("span", { children: detail.meta.an }),
+                      jsxRuntime.jsx("span", { className: "dshk-gmeta-date", children: detail.meta.ad }),
+                    ] }),
+                    jsxRuntime.jsx("div", { className: "dshk-gmeta-hash", children: detail.meta.H }),
+                    jsxRuntime.jsx("div", { className: "dshk-gmeta-subj", children: detail.meta.s }),
+                    detail.meta.b
+                      ? jsxRuntime.jsx("div", { className: "dshk-gmeta-body", children: detail.meta.b })
+                      : null,
+                    isMerge
+                      ? jsxRuntime.jsx("div", { className: "dshk-gmeta-merge", children: `${t("scMergedCommit")}：${detail.meta.parents}` })
+                      : null,
+                  ] }),
+                  jsxRuntime.jsx("div", { className: "dshk-gfiles-head", children: t("scFiles") }),
+                  detail.files.length === 0
+                    ? jsxRuntime.jsx("div", { className: "dshk-note", children: isMerge ? t("scMergedCommit") : t("scEmpty") })
+                    : detail.files.map((f) => {
+                        const st = f.st === "C" ? "R" : f.st;
+                        const base = f.path.split(/[\\/]/).pop() || f.path;
+                        return jsxRuntime.jsxs(
+                          "div",
+                          {
+                            className: "dshk-gfile",
+                            title: f.abs,
+                            onClick: () => onOpenFile(f.abs, st === "A"),
+                            children: [
+                              jsxRuntime.jsx("span", { className: "dshk-gitbadge", "data-k": st, children: st }),
+                              jsxRuntime.jsx("span", { className: "dshk-name", children: base }),
+                              jsxRuntime.jsx("span", { className: "dshk-dir", children: f.path }),
+                            ],
+                          },
+                          f.path,
+                        );
+                      }),
+                ] }),
+        ] });
+      }
+
+      // ── 图谱列表 ──
+      if (data === null) {
+        return jsxRuntime.jsx("div", { className: "dshk-note", children: t("treeLoading") });
+      }
+      if (data.available !== true) {
+        return jsxRuntime.jsx("div", { className: "dshk-note", children: error ? `${t("scGraphFail")}：${error}` : t("scGraphFail") });
+      }
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      if (lines.length === 0) {
+        return jsxRuntime.jsx("div", { className: "dshk-note", children: t("scGraphEmpty") });
+      }
+      return jsxRuntime.jsx("div", {
+        className: "dshk-graph",
+        children: lines.map((line, i) => {
+          // 纯连线行（无 %H 字段）不可点：必须判非空字符串，否则 undefined !== ""
+          // 会把连线行误判成提交行（悬浮 undefined tooltip、点击 commit=undefined → 400）
+          const clickable = typeof line.H === "string" && line.H !== "";
+          return jsxRuntime.jsxs(
+            "div",
+            {
+              className: clickable ? "dshk-grow dshk-grow-click" : "dshk-grow",
+              title: clickable ? `${line.an ?? ""} · ${line.ad ?? ""}
+${line.s ?? ""}` : undefined,
+              onClick: clickable ? () => openDetail(line.H) : undefined,
+              children: [
+                jsxRuntime.jsx(GraphGlyph, { g: line.g }),
+                clickable
+                  ? jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+                      renderRefChips(line.d),
+                      jsxRuntime.jsx("span", { className: "dshk-ghash", children: line.h }),
+                      jsxRuntime.jsx("span", { className: "dshk-gsubj", children: line.s }),
+                    ] })
+                  : null,
+              ],
+            },
+            i,
+          );
+        }),
       });
     }
 

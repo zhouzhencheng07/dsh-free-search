@@ -25,7 +25,11 @@
 //   5) GET /dsh-kit/raw?path=… —— 原始字节透传（扩展名白名单 + Range/206，PDF 预览用）；
 //   6) POST /dsh-kit/write —— 编辑保存（cwd 子树校验 + mtime CAS）；
 //   7) POST /dsh-kit/fs/op —— 文件树新建/重命名/删除（删除优先移入回收站）；
-//   8) GET /dsh-kit/git/status|diff、POST /dsh-kit/git/init|op —— 源代码管理。
+//   8) GET /dsh-kit/git/status|diff|log|show|branch、POST /dsh-kit/git/init|op ——
+//      源代码管理。status 含分支/领先信息（branch/upstream/ahead/behind），
+//      log 是提交图谱（git log --all --graph），show 是单个提交详情，
+//      branch 是本地分支列表；op 含 stage/unstage/discard/commit/push/
+//      branchCreate/branchSwitch/branchDelete。
 //
 // 终端的工作目录由浏览器端传入（当前会话的 cwd），宿主侧校验后才启动 shell。
 //
@@ -52,6 +56,7 @@ import path from 'node:path'
 
 import { applySkillPool, findProjectRoot } from './skill-pool.js'
 import { applyWebSearch } from './web-search.js'
+import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack } from './git.js'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
 import { decodePreviewText } from './text-decode.js'
 import { rawContentType, parseRangeHeader } from './raw-file.js'
@@ -1083,12 +1088,15 @@ export async function apply(ctx) {
         },
       })
 
-      // ── git 联动端点（只读）──
+      // ── git 联动端点 ──
       // spawn git CLI（不引库）；无 git / 非仓库 / 超时统一回 {available:false}，
-      // 前端据此隐藏入口。status 供文件树徽标，diff 供预览面板查看改动。
+      // 前端据此隐藏入口。status 供文件树徽标与分支/领先信息，diff 供预览面板
+      // 查看改动，log/show/branch 供提交图谱与分支管理，init/op 是写操作集。
       const GIT_TIMEOUT = 10000
+      /** 推送等网络操作允许更长的等待（默认 10s 会误杀慢推） */
+      const PUSH_TIMEOUT = 60000
       /** 跑一条 git 命令；任何失败（ENOENT/非零/超时）都 resolve {ok:false} */
-      const runGit = (args, cwdDir) =>
+      const runGit = (args, cwdDir, timeoutMs = GIT_TIMEOUT) =>
         new Promise((resolve) => {
           let child
           try {
@@ -1105,7 +1113,7 @@ export async function apply(ctx) {
               child.kill()
             } catch {}
             finish(false)
-          }, GIT_TIMEOUT)
+          }, timeoutMs)
           const finish = (ok) => {
             if (settled) return
             settled = true
@@ -1164,14 +1172,21 @@ export async function apply(ctx) {
           ;(async () => {
             // core.quotePath=false：porcelain 对非 ASCII 路径默认输出带引号的八进制
             // 转义（如 "\346\234\233..."），关掉后输出原始 UTF-8 路径
-            const r = await runGit(['-c', 'core.quotePath=false', 'status', '--porcelain'], root)
+            const r = await runGit(['-c', 'core.quotePath=false', 'status', '--porcelain', '-b'], root)
             if (!r.ok) {
               json(200, { available: false })
               return
             }
             const entries = []
             const untrackedDirs = []
+            // -b 的首行是分支摘要（## main...origin/main [ahead 1]），单独解析；
+            // 其余行不会出现 "##" 前缀（条目 xy 至多两位），不干扰条目解析
+            const branchInfo = { branch: '', upstream: null, ahead: 0, behind: 0, gone: false, detached: false, unborn: false }
             for (const line of r.out.split('\n')) {
+              if (line.startsWith('##')) {
+                Object.assign(branchInfo, parseStatusBranch(line))
+                continue
+              }
               if (line.length <= 3) continue
               const xy = line.slice(0, 2)
               let p = line.slice(3).trimEnd()
@@ -1208,7 +1223,7 @@ export async function apply(ctx) {
               }
               for (const e of entries) e.stats = statMap.get(e.path) ?? null
             }
-            json(200, { available: true, root, entries })
+            json(200, { available: true, root, entries, ...branchInfo })
           })()
         },
       })
@@ -1322,12 +1337,18 @@ export async function apply(ctx) {
         },
       })
 
-      // POST /dsh-kit/git/op {cwd, op, path?, message?, all?}：源代码管理的写操作集
+      // POST /dsh-kit/git/op {cwd, op, path?, message?, all?, ...}：源代码管理的写操作集
       //   stage(path)      = git add -- <rel>
       //   unstage(path)    = git restore --staged -- <rel>
       //   discard(path)    = git restore -- <rel>（放弃未暂存改动，破坏性；前端已二次确认）
       //   stageAll         = git add -A
       //   commit(message, all?) = 可选先 add -A（暂存区为空时的"提交全部"），再 commit -m
+      //   push(upstream?, remote?) = git push（upstream:true → push -u <remote> <当前分支>）
+      //   branchCreate(name, switch?) = git branch <name> 或 git switch -c <name>
+      //   branchSwitch(name) = git switch <name>
+      //   branchDelete(name, force?) = git branch -d|-D <name>（当前分支拒绝）
+      // 分支名一律作为单个 argv 元素传入（无 shell 注入面）并经
+      // git check-ref-format --branch 校验；push 网络操作走 PUSH_TIMEOUT 长超时。
       const disposeGitOp = webCtx.webServer.register({
         kind: 'exact',
         path: '/dsh-kit/git/op',
@@ -1399,6 +1420,54 @@ export async function apply(ctx) {
                 json(200, { ok: true, empty: true })
                 return
               }
+            } else if (op === 'push') {
+              // 默认沿用分支已有上游（git push）；upstream:true 显式设置上游，
+              // remote 缺省 origin 且必须在 git remote 列表内（防乱传参）
+              if (body.upstream === true) {
+                const remote = String(body?.remote ?? 'origin').trim()
+                if (remote === '' || /[/\\]/.test(remote) || remote.includes('..')) {
+                  json(400, { error: '远程名非法' })
+                  return
+                }
+                const rem = await runGit(['remote'], root)
+                if (!rem.ok || !rem.out.split('\n').map((s) => s.trim()).includes(remote)) {
+                  json(400, { error: `没有远程 ${remote}（git remote -v 查看，git remote add 新建）` })
+                  return
+                }
+                const cur = await runGit(['branch', '--show-current'], root)
+                const branch = cur.ok ? cur.out.trim() : ''
+                if (branch === '') {
+                  json(400, { error: '当前不在任何分支上（分离头无法设置上游）' })
+                  return
+                }
+                r = await runGit(['push', '-u', remote, branch], root, PUSH_TIMEOUT)
+              } else {
+                r = await runGit(['push'], root, PUSH_TIMEOUT)
+              }
+            } else if (op === 'branchCreate' || op === 'branchSwitch' || op === 'branchDelete') {
+              const name = String(body?.name ?? '').trim()
+              if (name === '') {
+                json(400, { error: '缺少分支名' })
+                return
+              }
+              const v = await runGit(['check-ref-format', '--branch', name], root)
+              if (!v.ok) {
+                json(400, { error: `分支名非法：${name}` })
+                return
+              }
+              if (op === 'branchCreate') {
+                if (body.switch === true) r = await runGit(['switch', '-c', name], root)
+                else r = await runGit(['branch', name], root)
+              } else if (op === 'branchSwitch') {
+                r = await runGit(['switch', name], root)
+              } else {
+                const cur = await runGit(['branch', '--show-current'], root)
+                if (cur.ok && cur.out.trim() === name) {
+                  json(400, { error: '不能删除当前所在分支' })
+                  return
+                }
+                r = await runGit(['branch', body.force === true ? '-D' : '-d', name], root)
+              }
             } else {
               json(400, { error: 'unknown op' })
               return
@@ -1408,6 +1477,206 @@ export async function apply(ctx) {
               return
             }
             json(200, { ok: true })
+          })
+        },
+      })
+
+      // GET /dsh-kit/git/log?cwd=<绝对目录>&n=<条数> → 提交图谱
+      //   {available:true, root, lines:[{g,H,h,an,ad,s,d}]} | {available:false}
+      //   g=图谱 ASCII 前缀（来自 git log --graph；纯连线续行只有 g），
+      //   d=%D 引用装饰原文；n 默认 120、上限 500；空库（尚无提交）→ lines:[]。
+      const LOG_DEFAULT = 120
+      const LOG_MAX = 500
+      const disposeGitLog = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/git/log',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const dir = validateCwd(url.searchParams.get('cwd') ?? '')
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          const root = gitRootFor(dir.path)
+          if (!root) {
+            json(200, { available: false })
+            return
+          }
+          let n = Number(url.searchParams.get('n') ?? LOG_DEFAULT)
+          if (!Number.isInteger(n) || n < 1) n = LOG_DEFAULT
+          if (n > LOG_MAX) n = LOG_MAX
+          runGit(
+            ['-c', 'core.quotePath=false', 'log', '--all', '--date-order', '--graph', `--max-count=${n}`,
+              '--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%D', '--date=format:%Y-%m-%d %H:%M'],
+            root,
+          ).then((r) => {
+            if (!r.ok) {
+              // 空库不是错误：git log 报 "does not have any commits yet"
+              if (/does not have any commits/i.test(r.err + r.out)) {
+                json(200, { available: true, root, lines: [] })
+                return
+              }
+              json(200, { available: false })
+              return
+            }
+            json(200, { available: true, root, lines: parseLogGraph(r.out) })
+          })
+        },
+      })
+
+      // GET /dsh-kit/git/show?cwd=<绝对目录>&commit=<哈希/引用> → 单个提交详情
+      //   {available:true, meta:{H,h,an,ae,ad,parents,s,b}, files:[{st,path,abs}]}
+      //   files 来自 diff-tree --name-status（合并提交无文件清单）；commit 先经
+      //   rev-parse 校验，伪造/不存在回 400。
+      const disposeGitShow = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/git/show',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const dir = validateCwd(url.searchParams.get('cwd') ?? '')
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          const root = gitRootFor(dir.path)
+          if (!root) {
+            json(200, { available: false })
+            return
+          }
+          const commit = String(url.searchParams.get('commit') ?? '').trim()
+          if (commit === '' || commit.length > 200 || /[\u0000-\u001f]/.test(commit)) {
+            json(400, { error: '缺少合法的提交引用' })
+            return
+          }
+          runGit(['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], root).then((rv) => {
+            const full = rv.ok ? rv.out.trim() : ''
+            if (!/^[0-9a-f]{40}$/.test(full)) {
+              json(400, { error: '提交不存在：' + commit })
+              return
+            }
+            Promise.all([
+              runGit(['show', '-s', '--format=%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%P%x1f%s%x1f%b', full], root),
+              runGit(['-c', 'core.quotePath=false', 'diff-tree', '--no-commit-id', '--name-status', '-r', '--root', full], root),
+            ]).then(([show, dt]) => {
+              if (!show.ok) {
+                json(200, { available: false })
+                return
+              }
+              const f = show.out.split('\n')[0].split('\x1f')
+              const meta = {
+                H: f[0] || '',
+                h: f[1] || '',
+                an: f[2] || '',
+                ae: f[3] || '',
+                ad: f[4] || '',
+                parents: f[5] || '',
+                s: f[6] || '',
+                b: f.slice(7).join('\x1f').trim(),
+              }
+              const files = []
+              if (dt.ok) {
+                for (const line of dt.out.split('\n')) {
+                  const tab = line.indexOf('\t')
+                  if (tab < 0) continue
+                  const st = line.slice(0, tab)[0] || ''
+                  const rest = line.slice(tab + 1)
+                  let p = rest
+                  if (st === 'R' || st === 'C') {
+                    const arrow = rest.indexOf('\t')
+                    if (arrow < 0) continue
+                    p = rest.slice(arrow + 1) // 重命名/复制取新路径
+                  }
+                  if (p === '') continue
+                  const abs = path.join(root, p)
+                  const rel = path.relative(root, abs)
+                  if (rel.startsWith('..') || path.isAbsolute(rel)) continue
+                  files.push({ st, path: p, abs })
+                }
+              }
+              json(200, { available: true, meta, files })
+            })
+          })
+        },
+      })
+
+      // GET /dsh-kit/git/branch?cwd=<绝对目录> → 本地分支列表
+      //   {available:true, current, branches:[{name,isHead,upstream,track,trackParsed}]}
+      //   trackParsed 由 parseTrack 归一（{ahead,behind,gone}|null），前端直接展示；
+      //   分离头时 current 为 "(HEAD detached at ...)" 伪条目。
+      const disposeGitBranch = webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-kit/git/branch',
+        handler: (req, res) => {
+          const json = (code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
+            res.end(JSON.stringify(obj))
+          }
+          if (req.method !== 'GET') {
+            json(405, { error: 'method not allowed' })
+            return
+          }
+          const origin = req.headers.origin
+          if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
+            json(403, { error: 'cross-origin denied' })
+            return
+          }
+          const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
+          const dir = validateCwd(url.searchParams.get('cwd') ?? '')
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          const root = gitRootFor(dir.path)
+          if (!root) {
+            json(200, { available: false })
+            return
+          }
+          // 注意：for-each-ref 的 --format 不做 %xx 转义（与 log --pretty 不同），
+          // 分隔符必须传真实字符（0x1F，与 parseBranchList 的 LOG_FS 一致）
+          const branchFormat = '%(refname:short)\x1f%(HEAD)\x1f%(upstream:short)\x1f%(upstream:track)'
+          runGit(['branch', '--format=' + branchFormat], root).then((r) => {
+            if (!r.ok) {
+              json(200, { available: false })
+              return
+            }
+            const parsed = parseBranchList(r.out)
+            json(200, {
+              available: true,
+              current: parsed.current ? parsed.current.name : null,
+              branches: parsed.branches.map((b) => ({
+                name: b.name,
+                isHead: b.isHead,
+                upstream: b.upstream === '' ? null : b.upstream,
+                track: b.track,
+                trackParsed: b.upstream === '' ? null : parseTrack(b.track),
+              })),
+            })
           })
         },
       })
@@ -1905,6 +2174,9 @@ export async function apply(ctx) {
         disposeGitDiff()
         disposeGitInit()
         disposeGitOp()
+        disposeGitLog()
+        disposeGitShow()
+        disposeGitBranch()
         if (disposeHttp) disposeHttp()
         if (disposeUpgrade) disposeUpgrade()
         disposePhoneInfo()

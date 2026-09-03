@@ -63,9 +63,18 @@ Ctrl+. 中英标点切换），页内 git 工作台：
   "整文件新增"全绿着色而非空提示
 - 非 git 目录一键**初始化仓库**（幂等）；中文等非 ASCII 文件名完整支持
   （`core.quotePath=false`）
-- 数据走宿主端点 `/dsh-kit/git/status`、`/dsh-kit/git/diff`、`/dsh-kit/git/init`
-  与 `/dsh-kit/git/op`（stage/unstage/discard/stageAll/commit；直接 spawn git CLI
-  不引库，全部同源校验）
+- 标题行**分支名按钮**展开分支浮层：本地分支列表（当前高亮、上游领先/落后
+  /失效标记）、单击行切换、✕ 删除（未合并二次确认后强制）、新建 / 新建并切换
+- 标题行 **↑ 推送**：沿用上游的一键 push，无上游时给「设置上游并推送」
+  （`push -u origin <分支>`）；推送计数随头部状态实时更新
+- 标题行 **⧉ 提交图谱**：`git log --all --graph` 的 ASCII 图谱 + 分支/标签装饰
+  等宽渲染，点提交看详情（作者/时间/说明/变更文件，文件可点开预览）；合并
+  提交单独标注
+- 数据走宿主端点 `/dsh-kit/git/status`（含分支/领先信息）、`/dsh-kit/git/diff`、
+  `/dsh-kit/git/log|show|branch`（图谱/详情/分支列表）、`/dsh-kit/git/init` 与
+  `/dsh-kit/git/op`（stage/unstage/discard/stageAll/commit/push/branchCreate/
+  branchSwitch/branchDelete；直接 spawn git CLI 不引库，全部同源校验，分支名过
+  `check-ref-format` 校验）
 
 ### 后台任务（background jobs）
 
