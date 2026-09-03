@@ -246,8 +246,12 @@ window.__ModuleLoader__.load({
       if (!hook || !hook.ready) return;
       const btn = ev.target instanceof Element ? ev.target.closest("button[title]") : null;
       if (!btn) return;
-      // 插件自身面板/入口的元素不拦（title 可能是路径的只有文件树行等）
-      if (btn.closest('.dshk-pane,.dshk-dock,[class*="dshk-"]')) return;
+      // 插件自身面板/入口的元素不拦（title 可能是路径的只有文件树行等）。
+      // 但命中元素必须是真插件容器：面板打开时 body 挂的让位标记类
+      // （dshk-pane-open/dshk-open）是全体对话的祖先，若不剔除，预览/终端
+      // 一开拦截就整体失效（点击放行官方 → 系统默认程序打开）
+      const kitAnc = btn.closest('[class*="dshk-"]');
+      if (kitAnc && kitAnc !== document.body && kitAnc !== document.documentElement) return;
       // 仅官方对话滚动区内的文件按钮（markdown 提及与产物 chips 都在其中）
       if (!btn.closest('[class*="_scroll"]')) return;
       const title = (btn.getAttribute("title") || "").trim();
@@ -335,7 +339,6 @@ window.__ModuleLoader__.load({
       treeCopyRel: "复制相对路径",
       treeCopied: "已复制路径",
       treeAt: "@ 到对话",
-      treeAtAdded: "已加入输入框，可继续编辑",
       treeAtUnavailable: "输入框未就绪（无会话或不可用）",
       treeMenu: "更多操作",
       promptFileName: "新文件名：",
@@ -531,7 +534,6 @@ window.__ModuleLoader__.load({
       treeCopyRel: "Copy relative path",
       treeCopied: "Path copied",
       treeAt: "Insert @ mention",
-      treeAtAdded: "Added to the input; keep editing",
       treeAtUnavailable: "Composer is not ready (no active session)",
       treeMenu: "More actions",
       promptFileName: "New file name:",
@@ -2541,17 +2543,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             } catch {
               applied = false;
             }
-            if (applied) {
-              flashToast(t("treeAtAdded"));
-              return;
-            }
+            if (applied) return;
           }
         }
         // 兜底：官方 @ 语法文本追加草稿末尾
         const state = typeof shell.state?.getSnapshot === "function" ? shell.state.getSnapshot() : null;
         const draft = state && typeof state.draft === "string" ? state.draft : "";
         shell.actions.setDraft(draft === "" ? mention : `${draft} ${mention}`);
-        flashToast(t("treeAtAdded"));
       };
       /** 预览中的文件被改名/删除后关闭预览（含其子路径） */
       const closeStalePreview = (prefix) => {
