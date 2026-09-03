@@ -196,10 +196,12 @@ window.__ModuleLoader__.load({
     const getCfgSnapshot = () => (cfgScope ? cfgScope.getSnapshot() : null);
 
     // ─────────── 对话文件点击接管（设置项，默认关闭）───────────
-    // 官方对话中「产物文件」chips 与 markdown 内联代码提及都渲染成
-    // button[title=<路径>]，点击默认走 session.openWorkspacePath RPC → 系统默认
-    // 程序打开；插件 /dsh-kit/read 支持任意绝对路径，开启 cfg.chatOpenFilePreview
-    // 后在这里拦截并把路径交给右侧预览面板。判定链任何一环不命中都放行官方。
+    // 官方对话中「产物文件」chips、markdown 内联代码提及与 read/write/edit
+    // 工具行的文件链接都点击走 session.openWorkspacePath RPC → 系统默认程序
+    // 打开（前两者渲染成 button[title=路径]，工具行是 button[class*=_fileLink]
+    // 文本路径，详见拦截器注释）；插件 /dsh-kit/read 支持任意绝对路径，开启
+    // cfg.chatOpenFilePreview 后在这里拦截并把路径交给右侧预览面板。
+    // 判定链任何一环不命中都放行官方。
     let chatPreviewHook = null;
 
     /** title 是否为可接管路径：盘符/UNC/根斜杠绝对路径，或含分隔符的相对路径 */
@@ -239,12 +241,18 @@ window.__ModuleLoader__.load({
       return out.join("\\");
     }
 
-    /** document capture：开启配置后接管官方对话区文件打开按钮的点击 */
+    /** document capture：开启配置后接管官方对话区文件打开按钮的点击。
+     *  两种形态：① markdown 内联代码与「产物文件」chips → button[title=路径]；
+     *  ② read/write/edit 工具行（ui-tool ToolRow）→ button[class*=_fileLink]，
+     *     无 title，按钮文本即工具 path/file_path 参数按 cwd 相对化的路径
+     *     （relativizeToCwd 剥掉的前缀由 resolveChatOpenPath 拼回，语义还原）。 */
     function onChatOpenFileClick(ev) {
       if (!ev.isTrusted) return;
       const hook = chatPreviewHook;
       if (!hook || !hook.ready) return;
-      const btn = ev.target instanceof Element ? ev.target.closest("button[title]") : null;
+      if (!(ev.target instanceof Element)) return;
+      const btn =
+        ev.target.closest("button[title]") || ev.target.closest('button[class*="_fileLink"]');
       if (!btn) return;
       // 插件自身面板/入口的元素不拦（title 可能是路径的只有文件树行等）。
       // 但命中元素必须是真插件容器：面板打开时 body 挂的让位标记类
@@ -252,19 +260,26 @@ window.__ModuleLoader__.load({
       // 一开拦截就整体失效（点击放行官方 → 系统默认程序打开）
       const kitAnc = btn.closest('[class*="dshk-"]');
       if (kitAnc && kitAnc !== document.body && kitAnc !== document.documentElement) return;
-      // 仅官方对话滚动区内的文件按钮（markdown 提及与产物 chips 都在其中）
+      // 仅官方对话滚动区内的文件按钮（markdown 提及、产物 chips、工具行都在其中）
       if (!btn.closest('[class*="_scroll"]')) return;
-      const title = (btn.getAttribute("title") || "").trim();
-      if (!isChatOpenPathish(title)) return;
+      let path = (btn.getAttribute("title") || "").trim();
+      if (path === "") {
+        // ② 工具行 fileLink：文本必为路径（参数解析不出路径时官方渲染 span）；
+        // 家目录缩写形态（~/…）客户端还原不了宿主 home，放行官方
+        path = (btn.textContent || "").trim();
+        if (path === "" || path.startsWith("~")) return;
+      } else if (!isChatOpenPathish(path)) {
+        return;
+      }
       // 无会话工作区时：仅盘符绝对/UNC（含 /D:… 归一的盘符形态）可脱离 cwd
       // 预览；相对路径解析无依，放行官方
       if (!hook.cwd) {
-        const t2 = title.startsWith("\\\\") ? title : title.replace(/^[\\/](?=[A-Za-z]:)/, "");
+        const t2 = path.startsWith("\\\\") ? path : path.replace(/^[\\/](?=[A-Za-z]:)/, "");
         if (!/^[A-Za-z]:[\\/]/.test(t2) && !t2.startsWith("\\\\")) return;
       }
       ev.preventDefault();
       ev.stopPropagation();
-      hook.openPreview(resolveChatOpenPath(hook.cwd, title));
+      hook.openPreview(resolveChatOpenPath(hook.cwd, path));
     }
 
     // ─────────── 对话 @ 引用（文件树 → 输入框）───────────
