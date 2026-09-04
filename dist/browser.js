@@ -410,6 +410,10 @@ export class BrowserService {
             if (this._viewId !== null)
                 void this._resyncStream(this._viewId);
         }
+        // 流的宿主页没了就拆掉：CDP 会话已死，留着会让面板把最后一帧当成活画面
+        // （关最后一页后面板冻结在旧视图，看起来像还在直播，误导人以为页面还在）
+        if (this._stream && this._stream.tabId === id)
+            void this._detachStream();
     }
     /** 无页则建一页（about:blank） */
     async ensurePage() {

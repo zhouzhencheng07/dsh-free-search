@@ -313,6 +313,16 @@ check("tabCloseConfirm 拒绝拦下", comps.tabCloseConfirm({ active: true }, ()
 check("tabCloseConfirm 非活动页不确认", comps.tabCloseConfirm({ active: false }, () => { throw new Error("should not confirm"); }, (k) => k) === true);
 global.window.confirm = undefined;
 
+// 7.2.6) 全部页签关闭后的空态：运行中 0 页显示「没有打开的页面」提示，
+// 不再留无提示的僵尸画面；预置 running + 空 pages
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, { running: true, launching: false, pages: [], activeId: null, viewId: null });
+callLog = [];
+out = comps.BrowserPanel({ active: true });
+const noPagesNote = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-brw-note" && typeof c[2].children === "string" && ["没有打开的页面", "No open pages"].some((s) => c[2].children.includes(s)));
+check("BrowserPanel 运行中 0 页渲染空态提示", !!noPagesNote);
+
 // 7.2.1) 右侧标签页容器：浏览器标签激活态。注意桩环境嵌套组件体不执行
 // （jsx(BrowserPanel) 只建元素），面板内部由上面直接调用 BrowserPanel 的用例覆盖；
 // 这里验证 dock 页签条高亮与面板挂载元素

@@ -582,6 +582,7 @@ window.__ModuleLoader__.load({
       browserAgentPage: "agent 正在此页操作",
       browserCloseAgentConfirm: "agent 正在此页面工作，关闭会中断它并丢失页面内状态（表单内容/滚动位置）。确定关闭？",
       browserNotRunning: "浏览器未启动——在上方输入网址回车，或等 agent 首次使用时自动拉起",
+      browserNoPages: "没有打开的页面——在上方输入网址回车，或等 agent 下次导航自动出现在这里",
       dockPreview: "预览",
       dockJobs: "任务",
       dockBrowser: "浏览器",
@@ -840,6 +841,7 @@ window.__ModuleLoader__.load({
       browserAgentPage: "agent is working on this page",
       browserCloseAgentConfirm: "agent is working on this page. Closing it interrupts the agent and loses in-page state (form input/scroll). Close anyway?",
       browserNotRunning: "Browser not started — type a URL above or wait for the agent's first use",
+      browserNoPages: "No open pages — type a URL above, or the agent's next navigation will appear here",
       dockPreview: "Preview",
       dockJobs: "Jobs",
       dockBrowser: "Browser",
@@ -5556,6 +5558,11 @@ ${line.s ?? ""}` : undefined,
             if (!msg || typeof msg !== "object") return;
             if (msg.t === "state") {
               setState((prev) => ({ ...prev, ...msg }));
+              // 全部页签被关后清掉画布残帧：死页面的定格不能伪装成直播
+              if (!(msg.pages ?? []).length && canvasRef.current) {
+                const ctx2d = canvasRef.current.getContext("2d");
+                if (ctx2d) ctx2d.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+              }
               return;
             }
             if (msg.t === "frame" && typeof msg.data === "string") {
@@ -5867,7 +5874,9 @@ ${line.s ?? ""}` : undefined,
               ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserStarting") })
               : state.running === false && viewUrl === ""
                 ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserNotRunning") })
-                : null,
+                : (state.pages ?? []).length === 0
+                  ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserNoPages") })
+                  : null,
         ],
       });
     }
