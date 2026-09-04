@@ -673,6 +673,11 @@ export class BrowserService {
         catch (error) {
             return { ok: false, error: `关闭失败：${error instanceof Error ? error.message : error}` };
         }
+        // 关掉最后一个页签 = 整个浏览器收摊（正常浏览器语义：0 页即关窗，不留空转
+        // 实例）；优雅关闭落盘 cookie，agent 下次使用懒启动重来。崩溃路径不走这里
+        // （页面崩 ≠ 用户要停），空态交给面板提示兜底
+        if (this._pages.size === 0 && this._context !== null)
+            await this.closeNow();
         return { ok: true };
     }
     /** 人切观察页（面板页签条）：只动观察指针，agent 的默认目标页不受影响 */

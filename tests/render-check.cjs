@@ -362,6 +362,24 @@ check("RightDock 渲染出二级文件标签条（2 个文件 chip）", !!pvTabr
 check("RightDock 坞头渲染全部关闭与最小化按钮", !!closeAllBtn && !!minimizeBtn);
 comps.setKitUi({ previews: [], activePreview: null, dockTab: null });
 
+// 7.2.2b) 单文件预览：文件标签条恒显示（与浏览器页签统一——单文件也有标签级 ✕，
+// 不再只能靠坞头全部关闭/Esc）；0 文件时不渲染空标签条
+comps.setKitUi({
+  previews: [{ path: "C:/x/only.js", from: "tree", untracked: false, usedAt: 1 }],
+  activePreview: "C:/x/only.js",
+  dockTab: "preview",
+});
+callLog = [];
+out = comps.RightDock({ props: {}, cwd: "C:/x" });
+const singleChip = callLog.filter((c) => (c[0] === "jsxs") && c[2] && typeof c[2].className === "string" && c[2].className.startsWith("dshk-tab") && c[2].title === "C:/x/only.js");
+const singleX = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-tab-x");
+check("RightDock 单文件预览渲染文件标签与 ✕（与浏览器统一）", singleChip.length === 1 && !!singleX);
+comps.setKitUi({ previews: [], activePreview: null, browserOpen: true, dockTab: "browser" });
+callLog = [];
+out = comps.RightDock({ props: {}, cwd: "C:/x" });
+check("无预览文件时不渲染空标签条", !callLog.some((c) => c[2] && c[2].className === "dshk-pv-tabrow"));
+comps.setKitUi({ browserOpen: false, dockTab: null });
+
 // 7.2.4) 最小化：KitSurfaces 收起态渲染 DockStub 竖条（RightDock 不再出现）；
 // DockStub 直调产出可点击的展开按钮
 comps.setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: true });

@@ -6050,13 +6050,14 @@ ${line.s ?? ""}` : undefined,
               }),
             ],
           }),
-          // 预览大标签：文件小标签条（二级标签，>1 个文件才显示）+ 多实例内容
-          // （非激活文件 display:none 保挂载——切回滚动位置/编辑草稿不丢）
+          // 预览大标签：文件小标签条（≥1 个文件恒显示——单文件也有标签级 ✕，与
+          // 浏览器页签逻辑统一）+ 多实例内容（非激活文件 display:none 保挂载——
+          // 切回滚动位置/编辑草稿不丢）
           jsxRuntime.jsxs("div", {
             className: "dshk-pane-view",
             style: { display: tab === "preview" ? "flex" : "none" },
             children: [
-              previewCount > 1
+              previewCount > 0
                 ? jsxRuntime.jsx("div", {
                     className: "dshk-pv-tabrow",
                     children: jsxRuntime.jsx("span", {
