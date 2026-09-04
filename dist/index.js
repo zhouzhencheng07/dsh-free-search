@@ -1970,6 +1970,12 @@ export async function apply(ctx) {
                                 // onFrame 只保留一份（服务内单回调），帧经 broadcast 扇出到全部连接
                                 void browserService.watcherOpen((data) => broadcast({ t: 'frame', data }));
                             }
+                            else if (msg.on === true) {
+                                // 已订阅的连接重发 watch = 面板重新激活：浏览器若已收摊（关最后一页/
+                                // 空闲关闭），懒启动拉回并自带空白页签——点开浏览器面板就该是
+                                // 「浏览器在、有页签」；运行中 ensure 是幂等 no-op
+                                void browserService.ensure();
+                            }
                             else if (msg.on === false && watched) {
                                 watched = false;
                                 browserService.watcherClose();
