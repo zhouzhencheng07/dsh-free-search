@@ -20,7 +20,7 @@
 //
 // 外观跟随：面板 chrome 全部用 --dsw-alias-* 令牌（随 DSH 明暗主题自动切换）；
 // xterm 需要具体色值，从 body 的 data-ds-dark-theme 属性判断明暗，
-// 再读令牌的 computed 值做背景/前景，ANSI 用 VSCode 明/暗两套标准调色板，
+// 再读令牌的 computed 值做背景/前景，ANSI 用明/暗两套通用标准调色板，
 // 并用 MutationObserver 监听属性变化热更新。
 //
 // 让位布局：打开终端时给 body 挂 dshk-open 类 + 根节点设 --dshk-dock-h，
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false };
+    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false, browserOpen: false };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -108,6 +108,7 @@ window.__ModuleLoader__.load({
       phonePort: 3090,
       phoneKeepGatewayOn: false,
       jobsEnabled: true,
+      browserEnabled: true,
       terminalShortcut: "Ctrl+/",
       fileTreeShortcut: "Ctrl+,",
       scShortcut: "Ctrl+Alt+.",
@@ -169,6 +170,7 @@ window.__ModuleLoader__.load({
         phoneEnabled: v.phoneEnabled === true,
         phoneRemoteDomain: typeof v.phoneRemoteDomain === "string" ? v.phoneRemoteDomain : "",
         jobsEnabled: v.jobsEnabled !== false,
+        browserEnabled: v.browserEnabled !== false,
         terminalShortcut:
           typeof v.terminalShortcut === "string" && parseCombo(v.terminalShortcut)
             ? v.terminalShortcut
@@ -490,6 +492,15 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabledHint: "在设置中显示「手机访问」页",
       cfgJobsEnabled: "启用后台任务面板",
       cfgJobsEnabledHint: "输入框旁的任务按钮：查看并结束后台任务",
+      cfgBrowserEnabled: "启用内置浏览器",
+      cfgBrowserEnabledHint: "输入框旁的浏览器按钮：实时画面查看并操作 agent 的浏览器（重启生效）",
+      browserTitle: "浏览器",
+      browserClose: "关闭浏览器面板",
+      browserUrlPh: "输入网址，回车打开",
+      browserGo: "打开",
+      browserNotRunning: "浏览器未启动——在上方输入网址回车，或等 agent 首次使用时自动拉起",
+      browserStarting: "正在拉起浏览器…",
+      browserErr: "浏览器出错：{error}",
       phoneGateStart: "启动网关",
       phoneGateStop: "关闭网关",
       phoneStoppedHint: "网关未启动。开启后可用「刷新链接」作废旧链接。",
@@ -720,6 +731,15 @@ window.__ModuleLoader__.load({
       cfgPhoneEnabledHint: "Shows the \"Phone access\" page in Settings",
       cfgJobsEnabled: "Enable background jobs panel",
       cfgJobsEnabledHint: "Composer-side button to watch and stop background jobs",
+      cfgBrowserEnabled: "Enable built-in browser",
+      cfgBrowserEnabledHint: "Composer-side browser button: watch and operate the agent's browser (restart to apply)",
+      browserTitle: "Browser",
+      browserClose: "Close browser panel",
+      browserUrlPh: "Type a URL and press Enter",
+      browserGo: "Go",
+      browserNotRunning: "Browser not started — type a URL above or wait for the agent's first use",
+      browserStarting: "Starting browser…",
+      browserErr: "Browser error: {error}",
       phoneGateStart: "Start gateway",
       phoneGateStop: "Stop gateway",
       phoneStoppedHint: "Gateway is off. Use \"New link\" after starting to invalidate old links.",
@@ -1082,6 +1102,14 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 .dshk-jobs-btn-kill{border-color:color-mix(in srgb,var(--dsw-alias-danger,#cd3131) 45%,transparent);color:var(--dsw-alias-danger,#cd3131)}
 .dshk-jobs-output{margin-top:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto;user-select:text}
 .dshk-jobs-empty{padding:10px 8px;font-size:12px;color:var(--dsw-alias-label-tertiary);text-align:center}
+/* 内置浏览器面板：右侧停靠（复用 .dshk-pane）；URL 栏 + 实时画面 canvas（人机共驾） */
+.dshk-brw-bar{display:flex;gap:6px;padding:0 12px 8px}
+.dshk-brw-url{flex:1;min-width:0;font-size:12px;font-family:ui-monospace,Consolas,monospace;padding:6px 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}
+.dshk-brw-url:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.dshk-brw-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0 10px 10px;overflow:hidden}
+.dshk-brw-canvas{max-width:100%;height:auto;margin:auto 0;display:block;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);outline:none}
+.dshk-brw-canvas:focus-visible{border-color:var(--dsw-alias-brand-primary)}
+.dshk-brw-note{padding:8px 12px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
 /* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
    类名是前端构建哈希（_3e4SsG_*），升级换哈希后本段静默失效——需跟随维护。 */
 @media (hover: none) {
@@ -1153,7 +1181,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 .dshk-inline{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-all;padding:4px 0;user-select:text;color:var(--dsw-alias-label-secondary)}
 .dshk-il-add{color:#0dbc79;background:rgba(13,188,121,.08)}
 .dshk-il-del{color:#cd3131;background:rgba(205,49,49,.08)}
-/* 「更改」清单（VSCode 源代码管理式） */
+/* 「更改」清单（源代码管理视图） */
 .dshk-changes{margin:2px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
 .dshk-chg-head{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px}
 .dshk-diff{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.55;padding:4px 0;white-space:pre;overflow-x:auto;user-select:text;color:var(--dsw-alias-label-secondary)}
@@ -2333,6 +2361,29 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       );
     }
 
+    /** 浏览器图标：地球（圆 + 经纬弧线），与终端/任务描边体系一致 */
+    function BrowserIcon() {
+      return jsxRuntime.jsxs(
+        "svg",
+        {
+          width: 15,
+          height: 15,
+          viewBox: "0 0 16 16",
+          "aria-hidden": true,
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.2,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          children: [
+            jsxRuntime.jsx("circle", { cx: 8, cy: 8, r: 6 }),
+            jsxRuntime.jsx("path", { d: "M2 8h12" }),
+            jsxRuntime.jsx("path", { d: "M8 2c1.8 1.6 2.7 3.6 2.7 6S9.8 12.4 8 14c-1.8-1.6-2.7-3.6-2.7-6S6.2 3.6 8 2z" }),
+          ],
+        },
+      );
+    }
+
     /** 上传图标：向上箭头 + 底部托盘 */
     function UploadIcon() {
       return jsxRuntime.jsxs(
@@ -2780,7 +2831,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         flashToast(t("created"));
         loadDir(dirPath);
       };
-      // ── 行内改名（✎ 触发，VSCode 式）：聚焦时只选中最后一个扩展名分隔符之前的
+      // ── 行内改名（✎ 触发）：聚焦时只选中最后一个扩展名分隔符之前的
       // 主名（目录/隐藏文件选全名），Enter 提交、Esc/失焦取消；改名期间面板快捷键
       // 让路（inlineEditCapture），Esc 不会顺手关掉树/预览 ──
       const startRename = (entry) => {
@@ -3162,10 +3213,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       });
     }
 
-    // ─────────── 源代码管理视图（sidebar.workspaces 的 git 模式，对标 VSCode SCM）───────────
+    // ─────────── 源代码管理视图（sidebar.workspaces 的 git 模式）───────────
     // 文件树头部分支按钮进入；与文件树互斥占用同一单槽，**无 ✕**——原文件树入口
     // 按钮（及 Ctrl+E）就是切换开关：树 ⇄ 源代码管理 来回切。
-    // 布局对标 VSCode：标题行（分支图标+分支按钮（名称+↑N↓M）+条目数+图谱/⋯/刷新）
+    // 布局：标题行（分支图标+分支按钮（名称+↑N↓M）+条目数+图谱/⋯/刷新）
     // →「暂存的更改」组 →「更改」组（未跟踪 U 归入更改组）；分支浮层与 ⋯ 菜单是
     // fixed 悬浮层（不参与面板布局，更改条目再多分支也完整显示；Esc/外部点击关闭，
     // 分支列表自带滚动；新建分支输入打开即聚焦，仅新建不切换时浮层保留、新分支
@@ -3378,7 +3429,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const available = data !== null && data.available === true;
       const entries = available && Array.isArray(data.entries) ? data.entries : [];
       const root = available ? data.root ?? null : null;
-      // 分组：暂存（xy 第一列非空格且非 ??）与其余（含未跟踪 U），对标 VSCode 两组
+      // 分组：暂存（xy 第一列非空格且非 ??）与其余（含未跟踪 U），分两组
       const stagedList = [];
       const workList = [];
       for (const e of entries) {
@@ -3408,7 +3459,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             children: [
               jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
               dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
-              // 悬停操作（对标 VSCode 行内命令）：暂存＋ / 放弃↩ / 取消暂存－
+              // 悬停操作（行内命令）：暂存＋ / 放弃↩ / 取消暂存－
               jsxRuntime.jsxs("span", { className: "dshk-rowact", children: [
                 isStaged
                   ? jsxRuntime.jsx("button", { type: "button", title: t("scUnstage"), disabled: busy, onClick: (e) => { e.stopPropagation(); runOp({ op: "unstage", path: item.abs }); }, children: "－" })
@@ -5330,6 +5381,356 @@ ${line.s ?? ""}` : undefined,
       });
     }
 
+    // ─────────── 内置浏览器面板（右侧停靠，复用 .dshk-pane 停靠位）───────────
+    // 数据走宿主半边 /dsh-kit/browser WS：state/event 广播 + frame 帧流（jpeg）+
+    // watch 引用计数 + open（URL 栏导航）+ input（人机共驾输入回传）。
+    // 设计定位：面板是 agent 隔离浏览器的「现场直播 + 遥控」——canvas 绘实时画面
+    // （agent 所见即所播）；人的点击/滚轮/键入经画布坐标换算回传宿主，由 Playwright
+    // 派发到 agent 正在操作的同一页面，agent 与人对同一实例双向操作。
+    // 生命周期：面板关闭仅停流不关浏览器（空闲 10 分钟自动优雅关，登录态保留在
+    // 专用 profile，重开无损）。
+
+    function BrowserEntry() {
+      const ui = useKitUi();
+      return jsxRuntime.jsx("button", {
+        type: "button",
+        className: "dshk-btn dshk-enbtn",
+        "aria-pressed": ui.browserOpen,
+        title: t("browserTitle"),
+        onClick: () => {
+          // 与任务面板同语义：共用右侧停靠位，打开时收起文件预览；关闭只收自己
+          if (ui.browserOpen) setKitUi({ browserOpen: false });
+          else setKitUi({ browserOpen: true, openFile: null, openFrom: null, openUntracked: null, jobsOpen: false });
+        },
+        children: jsxRuntime.jsx(BrowserIcon, {}),
+      });
+    }
+
+    function BrowserPanel() {
+      const [state, setState] = react.useState({ running: false, pages: [], activeId: null });
+      const [draft, setDraft] = react.useState("");
+      const [visible, setVisible] = react.useState(document.visibilityState === "visible");
+      const [connLost, setConnLost] = react.useState(false);
+      const canvasRef = react.useRef(null);
+      const wsRef = react.useRef(null);
+      const frameRef = react.useRef(null); // 最新帧（绘制去抖：只画最新）
+      const rafRef = react.useRef(0);
+      const moveRef = react.useRef(0); // 输入节流（~30/s）
+      const downRef = react.useRef(null); // 双击判定（时间+距离窗）
+
+      // 右停靠让位 + 拖宽（默认更宽：浏览器内容需要横向空间）
+      const widthRef = react.useRef(0);
+      const dragRef = react.useRef(null);
+      const [dragging, setDragging] = react.useState(false);
+      const paneBounds = () => ({ min: 480, max: Math.min(960, Math.max(560, window.innerWidth - 820)) });
+      react.useLayoutEffect(() => {
+        document.body.classList.add("dshk-pane-open");
+        const b = paneBounds();
+        const w = Math.min(b.max, Math.max(b.min, window.innerWidth - 880));
+        widthRef.current = w;
+        document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        return () => {
+          document.body.classList.remove("dshk-pane-open");
+          document.documentElement.style.removeProperty("--dshk-pane-w");
+        };
+      }, []);
+      react.useEffect(() => {
+        if (!dragging) return undefined;
+        const onMove = (e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const b = paneBounds();
+          const w = Math.min(b.max, Math.max(b.min, d.startW + (d.startX - e.clientX)));
+          widthRef.current = w;
+          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        };
+        const onUp = () => {
+          dragRef.current = null;
+          setDragging(false);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+        };
+      }, [dragging]);
+      const onHandleDown = (e) => {
+        e.preventDefault();
+        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 640 };
+        setDragging(true);
+      };
+
+      // 活动页（面板语义跟随 active 页）：URL 栏数据源
+      const activePage = (state.pages ?? []).find((p) => p.active) ?? null;
+      const activeUrl = activePage?.url ?? "";
+      const live = state.running === true;
+
+      // 帧绘制：base64 jpeg → Image 解码 → canvas（尺寸随帧更新，宽 100% 等比）
+      const drawFrame = react.useCallback((data) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+          }
+          const ctx = canvas.getContext("2d");
+          if (ctx) ctx.drawImage(img, 0, 0);
+        };
+        img.src = `data:image/jpeg;base64,${data}`;
+      }, []);
+
+      // WS 生命周期：挂载连接 + 断线重连（2.5s）；watch 跟随「实时画面模式 + 页面可见」
+      react.useEffect(() => {
+        let disposed = false;
+        let retry = null;
+        const connect = () => {
+          const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/dsh-kit/browser`);
+          wsRef.current = ws;
+          ws.onopen = () => {
+            if (disposed) return;
+            setConnLost(false);
+          };
+          ws.onmessage = (e) => {
+            let msg;
+            try {
+              msg = JSON.parse(e.data);
+            } catch {
+              return;
+            }
+            if (!msg || typeof msg !== "object") return;
+            if (msg.t === "state") {
+              setState((prev) => ({ ...prev, ...msg }));
+              return;
+            }
+            if (msg.t === "frame" && typeof msg.data === "string") {
+              frameRef.current = msg.data;
+              if (!rafRef.current) {
+                rafRef.current = window.requestAnimationFrame(() => {
+                  rafRef.current = 0;
+                  const data = frameRef.current;
+                  frameRef.current = null;
+                  if (data) drawFrame(data);
+                });
+              }
+              return;
+            }
+            if (msg.t === "event") {
+              if (msg.kind === "navigated" && typeof msg.url === "string") {
+                setState((prev) => {
+                  const pages = (prev.pages ?? []).map((p) =>
+                    p.tabId === msg.tabId ? { ...p, url: msg.url, title: msg.title ?? p.title } : p,
+                  );
+                  return { ...prev, pages, running: true };
+                });
+                return;
+              }
+              if (msg.kind === "crashed" || msg.kind === "closed") {
+                setState((prev) => ({ ...prev, running: msg.kind === "closed" ? false : prev.running }));
+                return;
+              }
+              if (msg.kind === "error" && typeof msg.message === "string") {
+                flashToast(msg.message);
+              }
+            }
+          };
+          ws.onclose = () => {
+            if (disposed) return;
+            setConnLost(true);
+            setState((prev) => ({ ...prev, running: false }));
+            retry = window.setTimeout(connect, 2500);
+          };
+          ws.onerror = () => {};
+        };
+        connect();
+        const onVis = () => setVisible(document.visibilityState === "visible");
+        document.addEventListener("visibilitychange", onVis);
+        return () => {
+          disposed = true;
+          document.removeEventListener("visibilitychange", onVis);
+          if (retry !== null) window.clearTimeout(retry);
+          try {
+            wsRef.current?.close();
+          } catch {
+            // 已断
+          }
+        };
+      }, [drawFrame]);
+
+      // watch 开关：页面可见才要帧（隐藏即停流，回可见自动续）
+      react.useEffect(() => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== 1) return undefined;
+        ws.send(JSON.stringify({ t: "watch", on: visible }));
+        const onVis = () => {
+          try {
+            ws.send(JSON.stringify({ t: "watch", on: document.visibilityState === "visible" }));
+          } catch {
+            // 已断
+          }
+        };
+        document.addEventListener("visibilitychange", onVis);
+        return () => document.removeEventListener("visibilitychange", onVis);
+      }, [visible, connLost]);
+
+      // ── 人机共驾：画布输入 → 页面坐标 → 宿主派发（仅运行中；未运行不误拉起）──
+      const sendInput = (obj) => {
+        try {
+          wsRef.current?.send(JSON.stringify(obj));
+        } catch {
+          // 已断：丢帧无害（下一帧画面自校正）
+        }
+      };
+      const pagePoint = (e) => {
+        const c = canvasRef.current;
+        if (!c) return null;
+        const rect = c.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || !c.width || !c.height) return null;
+        const x = ((e.clientX - rect.left) * c.width) / rect.width;
+        const y = ((e.clientY - rect.top) * c.height) / rect.height;
+        return { x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) };
+      };
+      const onCanvasPointerDown = (e) => {
+        if (!live) return;
+        if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+        e.preventDefault();
+        try {
+          canvasRef.current?.setPointerCapture?.(e.pointerId);
+        } catch {
+          // 捕获失败不影响转发
+        }
+        const p = pagePoint(e);
+        if (!p) return;
+        const now = Date.now();
+        const dbl =
+          downRef.current !== null &&
+          now - downRef.current.t < 350 &&
+          Math.abs(p.x - downRef.current.x) < 12 &&
+          Math.abs(p.y - downRef.current.y) < 12;
+        downRef.current = { t: now, x: p.x, y: p.y };
+        sendInput({ t: "input", kind: "mousedown", x: p.x, y: p.y, button: e.button, clicks: dbl ? 2 : 1 });
+      };
+      const onCanvasPointerMove = (e) => {
+        if (!live) return;
+        const now = performance.now();
+        if (now - moveRef.current < 33) return; // ~30/s 节流（悬停 + 拖拽共用）
+        moveRef.current = now;
+        const p = pagePoint(e);
+        if (!p) return;
+        sendInput({ t: "input", kind: "mousemove", x: p.x, y: p.y });
+      };
+      const onCanvasPointerUp = (e) => {
+        if (!live) return;
+        const p = pagePoint(e);
+        if (!p) return;
+        sendInput({ t: "input", kind: "mouseup", x: p.x, y: p.y, button: e.button });
+      };
+      const onCanvasWheel = (e) => {
+        if (!live) return;
+        e.preventDefault(); // 画面滚动交给远端页面，不滚面板
+        sendInput({ t: "input", kind: "wheel", dx: e.deltaX, dy: e.deltaY });
+      };
+      const onCanvasKeyDown = (e) => {
+        if (!live) return;
+        // 纯修饰键不单独转发（并入下一个键的组合串）
+        if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+        e.preventDefault(); // 焦点留在画布，Tab 等也透传给页面
+        const parts = [];
+        if (e.ctrlKey) parts.push("Control");
+        if (e.altKey) parts.push("Alt");
+        if (e.shiftKey) parts.push("Shift");
+        if (e.metaKey) parts.push("Meta");
+        parts.push(e.key.length === 1 ? e.key.toLowerCase() : e.key);
+        sendInput({ t: "input", kind: "key", combo: parts.join("+") });
+      };
+
+      const go = (raw) => {
+        const text = String(raw ?? "").trim();
+        if (text === "") return;
+        const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `http://${text}`;
+        setDraft(withScheme);
+        // 先本地反馈（宿主 navigated 事件随后校正）；humanOpen 会在宿主侧懒启动浏览器
+        setState((prev) => ({
+          ...prev,
+          running: true,
+          pages: (prev.pages ?? []).map((p) => (p.active ? { ...p, url: withScheme, title: "" } : p)),
+        }));
+        try {
+          wsRef.current?.send(JSON.stringify({ t: "open", url: withScheme }));
+        } catch {
+          // 连接断开时忽略（重连后用户可再按）
+        }
+      };
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-pane",
+        "data-dragging": dragging || undefined,
+        role: "dialog",
+        "aria-label": t("browserTitle"),
+        children: [
+          jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
+          jsxRuntime.jsxs("div", {
+            className: "dshk-jobs-head",
+            children: [
+              jsxRuntime.jsxs("span", {
+                className: "dshk-jobs-headside",
+                children: [
+                  jsxRuntime.jsx("span", { children: t("browserTitle") }),
+                  connLost ? jsxRuntime.jsx("span", { className: "dshk-jobs-count", children: "…" }) : null,
+                ],
+              }),
+              jsxRuntime.jsx("button", {
+                type: "button",
+                className: "dshk-jobs-close",
+                "aria-label": t("browserClose"),
+                title: t("browserClose"),
+                onClick: () => setKitUi({ browserOpen: false }),
+                children: "\u2715",
+              }),
+            ],
+          }),
+          jsxRuntime.jsxs("form", {
+            className: "dshk-brw-bar",
+            onSubmit: (e) => {
+              e.preventDefault();
+              go(draft);
+            },
+            children: [
+              jsxRuntime.jsx("input", {
+                className: "dshk-brw-url",
+                value: draft,
+                placeholder: t("browserUrlPh"),
+                onChange: (e) => setDraft(e.target.value),
+                spellCheck: false,
+              }),
+              jsxRuntime.jsx("button", { type: "submit", className: "dshk-jobs-btn", children: t("browserGo") }),
+            ],
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-brw-body",
+            children: jsxRuntime.jsx("canvas", {
+              className: "dshk-brw-canvas",
+              ref: canvasRef,
+              tabIndex: 0,
+              onPointerDown: onCanvasPointerDown,
+              onPointerMove: onCanvasPointerMove,
+              onPointerUp: onCanvasPointerUp,
+              onWheel: onCanvasWheel,
+              onKeyDown: onCanvasKeyDown,
+              onContextMenu: (e) => e.preventDefault(), // 右键菜单交给远端页面
+            }),
+          }),
+          state.running === false && activeUrl === ""
+            ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserNotRunning") })
+            : null,
+        ],
+      });
+    }
+
     // ─────────── 面板宿主（shell.overlay 全帧浮层）───────────
     // 终端停靠面板与文件预览面板在这里渲染（fixed 定位不受 composer 祖先
     // stacking context 影响）；文件树的 sidebar.workspaces 动态注册、让位 body 类、
@@ -5345,7 +5746,7 @@ ${line.s ?? ""}` : undefined,
       chatPreviewHook = {
         ready: cfg.chatOpenFilePreview === true && (cfg.fileTreeEnabled || cfg.sourceControlEnabled),
         cwd,
-        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, jobsOpen: false }),
+        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, jobsOpen: false, browserOpen: false }),
       };
 
       // 卸载时清空模块级接管状态，避免拦截器持有失效闭包
@@ -5366,6 +5767,8 @@ ${line.s ?? ""}` : undefined,
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-scm", order: 11 }, ScmEntry)],
           ["jobs", cfg.jobsEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-jobs", order: 12 }, JobsEntry)],
+          ["browser", cfg.browserEnabled, () =>
+            slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-browser", order: 14 }, BrowserEntry)],
           ["terminal", cfg.terminalEnabled, () =>
             slotsCtx.slots.register({ name: "conversation.input.left", id: "dsh-kit-terminal", order: 13 }, TerminalEntry)],
           ["skills", cfg.skillsPageEnabled, () =>
@@ -5396,7 +5799,7 @@ ${line.s ?? ""}` : undefined,
             }
           }
         };
-      }, [cfg.phoneEnabled, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.skillsPageEnabled, cfg.jobsEnabled]);
+      }, [cfg.phoneEnabled, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.skillsPageEnabled, cfg.jobsEnabled, cfg.browserEnabled]);
 
       // 配置关闭但视图还开着（如设置卡保存瞬间）：立即归位，预览随来源跟随清掉；
       // 终端功能关闭 = 结束全部终端会话（连 WS 杀 pty，与单终端时代语义一致）
@@ -5407,7 +5810,8 @@ ${line.s ?? ""}` : undefined,
         if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
         if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
         if (!cfg.jobsEnabled && ui.jobsOpen) setKitUi({ jobsOpen: false });
-      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.jobsEnabled]);
+        if (!cfg.browserEnabled && ui.browserOpen) setKitUi({ browserOpen: false });
+      }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.jobsEnabled, cfg.browserEnabled]);
 
       // 侧边栏浏览区占用：文件树与「更改」视图互斥共享 sidebar.workspaces 单槽
       // （gitOpen 时切换到更改页，✕ 关闭回到仍处打开状态的文件树）。
@@ -5423,8 +5827,8 @@ ${line.s ?? ""}` : undefined,
             const side = owner ?? {};
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, jobsOpen: false }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, jobsOpen: false }), ...owner });
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, jobsOpen: false, browserOpen: false }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, jobsOpen: false, browserOpen: false }), ...owner });
           });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
@@ -5498,6 +5902,7 @@ ${line.s ?? ""}` : undefined,
             else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
             else if (kitUi.jobsOpen) setKitUi({ jobsOpen: false });
+            else if (kitUi.browserOpen) setKitUi({ browserOpen: false });
             else if (kitUi.termDockOpen) setKitUi({ termDockOpen: false }); // 只隐藏，不杀会话
           }
         };
@@ -5533,10 +5938,11 @@ ${line.s ?? ""}` : undefined,
                 untracked: ui.openUntracked === true,
                 cwd,
                 onClose: () => setKitUi({ openFile: null, openFrom: null, openUntracked: null }),
-                onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, jobsOpen: false }),
+                onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, jobsOpen: false, browserOpen: false }),
               })
             : null,
           cfg.jobsEnabled && ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
+          cfg.browserEnabled && ui.browserOpen ? jsxRuntime.jsx(BrowserPanel, {}) : null,
         ],
       });
     }
@@ -5919,6 +6325,7 @@ ${line.s ?? ""}` : undefined,
       { key: "phoneEnabled", kind: "bool" },
       { key: "phoneKeepGatewayOn", kind: "bool" },
       { key: "jobsEnabled", kind: "bool" },
+      { key: "browserEnabled", kind: "bool" },
       { key: "sidebarShortcutEnabled", kind: "bool" },
       { key: "terminalShortcut", kind: "combo" },
       { key: "fileTreeShortcut", kind: "combo" },
@@ -5934,6 +6341,7 @@ ${line.s ?? ""}` : undefined,
       { switchKey: "chatOpenFilePreview", fields: [] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "jobsEnabled", fields: [] },
+      { switchKey: "browserEnabled", fields: [] },
       { switchKey: "terminalEnabled", fields: ["terminalShortcut"] },
       { switchKey: "skillsPageEnabled", fields: [] },
       { switchKey: "searchEnabled", fields: ["searchMaxResults"] },

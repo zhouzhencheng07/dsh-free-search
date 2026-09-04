@@ -19,6 +19,13 @@ dsh browser UI, each independent and dependency-free; with none used, dsh stays 
 - **Background jobs** (composer-row toggle): a right-docked panel listing the
   session's running jobs, with output viewing and job termination (official
   `job_output`/`job_kill` semantics)
+- **Built-in browser** (composer-row toggle, on by default): the agent drives the
+  system Edge via 5 `browser_*` tools (vendored playwright-core, dedicated
+  persistent profile) — snapshot → act → assert GUI-testing loops, screenshots
+  (attached directly for multimodal models, saved to disk otherwise); the
+  composer-side button opens a right-docked panel showing the agent's browser
+  live — your clicks/wheel/keys act on the very page the agent is operating
+  (shared control)
 - **Skill pool** (new Settings page): workspace / user-level / skill-pool groups
   with copy, move, delete, disable/enable; shadowed same-name skills get a dashed
   badge
@@ -61,7 +68,7 @@ agent's `web_search` switches to the free multi-source chain.
 
 - `src/index.js`: host side — `/dsh-kit/terminal` WebSocket endpoint (node-pty),
   `/tree`, `/read` (512 KB cap + text decoding), `/write` (cwd subtree + mtime
-  CAS), `/fs/op`, `/jobs/kill|output`, and the phone-gateway endpoints
+  CAS), `/fs/op`, `/jobs/kill|output`, `/browser` (built-in browser WS), and the phone-gateway endpoints
 - `client/bundle.js`: browser side (hand-written ModuleLoader bundle, no build) —
   four toggles on `conversation.input.left`; the file tree and source control
   share the sidebar slot; self-drawn preview panels and the terminal dock

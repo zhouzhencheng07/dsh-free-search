@@ -13,6 +13,7 @@
   "files": [
     "src",
     "client",
+    "host-vendor",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"

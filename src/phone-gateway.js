@@ -5,7 +5,7 @@
 // --host 0.0.0.0，见 @deepseek-ai/dsh-web-app/lib/startup.js），而插件路由只能
 // 叠加在主 webserver 上、拦不住别人的路由——「验链接」这件事没地方放，只能前置。
 //
-// 授权模型（ZCode Remote Control 同款：授权内嵌在链接里）：
+// 授权模型（授权内嵌在链接里）：
 //   二维码 URL 携带一次性下发的高熵令牌 ?k=<token>；
 //   首次校验通过后种长期 Cookie（dshk_phone），此后普通地址即可直达；
 //   「刷新链接」= 轮换令牌，旧链接（含已种 Cookie 的旧令牌）立即全部失效。

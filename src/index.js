@@ -61,6 +61,8 @@ import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, sa
 import { decodePreviewText } from './text-decode.js'
 import { rawContentType, parseRangeHeader } from './raw-file.js'
 import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from './upload.js'
+import { BrowserService } from './browser.js'
+import { loadToolsModule, buildBrowserTools } from './browser-tools.js'
 
 /** 手机访问网关对外端口（0.0.0.0）的默认值，可在设置里改（phonePort，1-65535） */
 const PHONE_PORT = 3090
@@ -443,6 +445,9 @@ export async function apply(ctx) {
     phonePort: z.number().step(1).min(1).max(65535).default(3090),
     phoneKeepGatewayOn: z.boolean().default(false),
     jobsEnabled: z.boolean().default(true),
+    // 内置浏览器总开关（默认开）：关=不注册 browser_* 工具（重启生效）；浏览器
+    // 半边入口按钮与面板同步隐藏。execute 内另有守卫兜底（注册期竞态时挡调用）。
+    browserEnabled: z.boolean().default(true),
     sidebarShortcut: z.string().default('Ctrl+B'),
     sidebarShortcutEnabled: z.boolean().default(true),
     terminalShortcut: z.string().default('Ctrl+/'),
@@ -504,6 +509,44 @@ export async function apply(ctx) {
   let agentsRegistry = null
   ctx.inject(['agents'], (capacityCtx) => {
     agentsRegistry = capacityCtx.agents
+  })
+
+  // ── 内置浏览器（src/browser.js + src/browser-tools.js）──
+  // 服务懒启动（首次工具调用/面板 watch 才拉起 Edge），这里只建对象与注册：
+  //   工具注册门控 = settings 就绪 + tools 就绪（双键注入），关=不注册（重启生效）；
+  //   execute 内有 isDisabled 守卫兜底注册期竞态；dispose 挂 ctx.effect（插件卸载
+  //   时关浏览器，profile 保留）。
+  const browserService = new BrowserService({ log: (m) => console.log(`dsh-kit: ${m}`) })
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      void browserService.dispose()
+    })
+  }
+  const browserToolsMod = browserService.available ? await loadToolsModule((m) => console.warn(`dsh-kit: ${m}`)) : null
+  let browserDefs = null
+  try {
+    browserDefs =
+      browserToolsMod && typeof browserToolsMod.defineTool === 'function'
+        ? buildBrowserTools({ defineTool: browserToolsMod.defineTool, service: browserService, ctx, isDisabled: () => readSettings().browserEnabled === false })
+        : null
+  } catch (error) {
+    // 构建失败降级为无浏览器工具，不炸插件树（可用性优先，同 node-pty 先例）
+    console.warn(`dsh-kit: 浏览器工具构建失败，本插件浏览器工具未注册：${error?.message ?? error}`)
+    browserDefs = null
+  }
+  if (browserService.available && !browserDefs) {
+    console.warn('dsh-kit: dsh-tools 不可达或形态不符，浏览器工具未注册（其余功能不受影响）')
+  }
+  ctx.inject(['settings', 'tools'], (caps) => {
+    if (readSettings().browserEnabled === false) return
+    if (!browserDefs) return
+    for (const def of browserDefs) {
+      try {
+        caps.tools.register(def)
+      } catch (error) {
+        console.warn(`dsh-kit: 浏览器工具注册失败：${error?.message ?? error}`)
+      }
+    }
   })
 
   // webServer 可能在本插件 apply 之后才挂载，用动态注入等它就绪
@@ -1795,6 +1838,104 @@ export async function apply(ctx) {
             res.end('dsh-kit terminal: WebSocket Upgrade Required')
           },
         })
+      }
+
+      // ── 浏览器面板 WebSocket 端点（src/browser.js 的面板面）──
+      // 协议：hello（连接即回 state）→ 浏览器端；watch {on}（帧流订阅引用计数，
+      // 0 时停流）/ open {url}（URL 栏手动导航）→ 宿主。服务事件（state/navigated/
+      // crashed/closed）广播给所有连接，帧 {t:'frame', data(jpeg base64)} 同通道。
+      // 同源校验同终端；开关关闭时面板入口在浏览器端已隐藏，此处不再重复门控。
+      if (browserService.available) {
+        const browserSockets = new Set()
+        const sendTo = (ws, obj) => {
+          try {
+            if (ws.readyState === 1) ws.send(JSON.stringify(obj))
+          } catch {
+            // 连接正在断开
+          }
+        }
+        const broadcast = (obj) => {
+          for (const ws of browserSockets) sendTo(ws, obj)
+        }
+        const offBrowserEvent = browserService.on((evt) => {
+          broadcast({ t: 'event', kind: evt.kind, tabId: evt.tabId, url: evt.url, title: evt.title })
+          if (evt.kind === 'closed' || evt.kind === 'crashed' || evt.kind === 'state') {
+            void browserService.state().then((s) => broadcast({ t: 'state', ...s }))
+          }
+        })
+        void offBrowserEvent
+        const bwss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
+        bwss.on('connection', (ws) => {
+          browserSockets.add(ws)
+          let watched = false
+          void browserService.state().then((s) => sendTo(ws, { t: 'state', ...s }))
+          ws.on('message', (raw) => {
+            let msg
+            try {
+              msg = JSON.parse(String(raw))
+            } catch {
+              return
+            }
+            if (!msg || typeof msg !== 'object') return
+            if (msg.t === 'watch') {
+              if (msg.on === true && !watched) {
+                watched = true
+                // onFrame 只保留一份（服务内单回调），帧经 broadcast 扇出到全部连接
+                void browserService.watcherOpen((data) => broadcast({ t: 'frame', data }))
+              } else if (msg.on === false && watched) {
+                watched = false
+                browserService.watcherClose()
+              }
+              return
+            }
+            if (msg.t === 'open' && typeof msg.url === 'string') {
+              void browserService.humanOpen(msg.url).then((r) => {
+                if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
+              })
+              return
+            }
+            if (msg.t === 'close') {
+              // 优雅关闭（cookie 落盘；下次打开免重新登录）
+              void browserService.closeNow()
+              return
+            }
+            if (msg.t === 'input') {
+              // 人机共驾：面板输入回传（未运行时宿主拒绝，不误拉起）
+              void browserService.humanInput(msg)
+              return
+            }
+          })
+          ws.on('close', () => {
+            browserSockets.delete(ws)
+            if (watched) {
+              watched = false
+              browserService.watcherClose()
+            }
+          })
+          ws.on('error', () => {
+            // close 会跟着来
+          })
+        })
+        const disposeBrowserUpgrade = webCtx.webServer.registerUpgrade({
+          path: '/dsh-kit/browser',
+          handler: (req, socket, head) => {
+            if (!sameOrigin(req)) {
+              socket.destroy()
+              return
+            }
+            bwss.handleUpgrade(req, socket, head, (ws) => bwss.emit('connection', ws, req))
+          },
+        })
+        const disposeBrowserProbe = webCtx.webServer.register({
+          kind: 'exact',
+          path: '/dsh-kit/browser',
+          handler: (_req, res) => {
+            res.writeHead(426, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('dsh-kit browser: WebSocket Upgrade Required')
+          },
+        })
+        void disposeBrowserUpgrade
+        void disposeBrowserProbe
       }
 
       // ── 手机访问网关（src/phone-gateway.js）──

@@ -31,6 +31,7 @@ const reactStub = {
   },
   useEffect: () => undefined,
   useLayoutEffect: () => undefined,
+  useCallback: (fn) => fn,
   useRef: (v) => ({ current: v }),
   useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
   Fragment: function Fragment() {},
@@ -43,12 +44,23 @@ const jsxRuntimeStub = {
 const windowStub = {
   __ModuleLoader__: { load: () => { /* noop */ } },
 };
+// Node 无浏览器全局，浏览器面板组件的渲染体直接读 document/location/window——
+// 渲染检查补最小桩（真实运行在浏览器里天然存在）
+if (!global.document) {
+  global.document = { visibilityState: "visible", addEventListener: () => {}, removeEventListener: () => {}, body: { classList: { add() {}, remove() {} } } };
+}
+if (!global.window) {
+  global.window = { innerWidth: 1600, requestAnimationFrame: () => 0, setTimeout: () => 0, clearTimeout: () => {} };
+}
+if (!global.location) {
+  global.location = { protocol: "http:", host: "127.0.0.1:3081" };
+}
 
 // 3) 组装可执行的 factory 闭包，并导出组件（替换防 early-return）；
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -58,7 +70,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -223,6 +235,18 @@ comps.setKitUi({ jobsOpen: false });
 callLog = [];
 out = comps.PhoneSection({});
 check("PhoneSection loading 渲染无异常", !!out && typeof out === "object");
+
+// 7.2) 内置浏览器：入口 + 面板（未运行态：canvas + 输入处理器就位）
+callLog = [];
+out = comps.BrowserEntry({});
+check("BrowserEntry 渲染无异常", !!out && typeof out === "object");
+callLog = [];
+out = comps.BrowserPanel({});
+const canvasHost = callLog.find((c) => (c[0] === "jsx") && c[2] && typeof c[2].className === "string" && c[2].className.includes("dshk-brw-canvas"));
+const hasInputHandlers = canvasHost && canvasHost[2].onPointerDown && canvasHost[2].onKeyDown && canvasHost[2].onWheel;
+check("BrowserPanel 未运行态渲染无异常", !!out && typeof out === "object");
+check("BrowserPanel 渲染出带共驾输入处理器的 canvas", !!canvasHost && !!hasInputHandlers);
+comps.setKitUi({ browserOpen: false });
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"

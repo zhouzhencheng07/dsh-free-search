@@ -16,6 +16,10 @@
   放弃/提交、diff 视图、分支切换与新建删除、一键 push、提交图谱；非 git 目录可一键初始化
 - **后台任务**（工具行开关）：右侧停靠面板列出会话运行中的后台任务，可查看输出、
   结束任务（等同官方 `job_output`/`job_kill`）
+- **内置浏览器**（工具行开关，默认开）：agent 以 5 个 `browser_*` 工具驱动系统 Edge
+  （vendored playwright-core，专用持久 profile）——快照→动作→断言的 GUI 测试循环、
+  截图（多模态模型直看，否则落盘）；浏览器按钮打开右侧面板：agent 浏览器的实时
+  画面，点击/滚轮/键入直接作用于 agent 正在操作的同一页面（人机共驾）
 - **技能管理**（设置面板新页）：工作区/用户级/技能池三组展示，支持复制、移动、删除、
   禁用/启用；被同名技能覆盖者打虚线徽标
 - **手机访问**（设置面板新页）：手机扫码连上本机 dsh web——令牌鉴权网关（默认端口
@@ -46,14 +50,15 @@ dsh plugin --profile web update dsh-kit
 ```
 
 本包声明了 `dsh.bundle.patch`，会被激活为 profile 的 bundle 层。安装/更新后重启
-`dsh web`：工具行出现文件树/源代码管理/后台任务/终端四个开关，AI 的 `web_search`
+`dsh web`：工具行出现文件树/源代码管理/后台任务/终端/浏览器等开关，AI 的 `web_search`
 同时切到免费多源搜索。
 
 ## 工作原理
 
 - `src/index.js`：宿主半边——挂 `conversation` `/dsh-kit/terminal` WS 端点
   （node-pty）、`/tree`、`/read`（512 KB 限长 + 文本解码）、`/write`（cwd 子树 +
-  mtime CAS）、`/fs/op`、`/jobs/kill|output` 与手机访问网关端点
+  mtime CAS）、`/fs/op`、`/jobs/kill|output`、`/browser`（内置浏览器 WS）与手机
+  访问网关端点
 - `client/bundle.js`：浏览器半边（手写 ModuleLoader bundle，无构建）——
   `conversation.input.left` 注册四个开关；文件树与源代码管理共用侧边栏槽，预览面板
   与终端坞自绘（CSS 让位）；设置页与设置卡注册进 settings 槽位
