@@ -1,12 +1,12 @@
 // 上传端点（/dsh-kit/upload）辅助：multipart/form-data 手工解析（零依赖）。
 // 只覆盖浏览器 FormData 的标准形态：整体缓冲后按 boundary 切分，提取各 part 的
 // filename 与数据；filename*（RFC 5987 URL 编码 UTF-8）优先，回退 filename。
-// 单独成模块：宿主侧 index.js 消费，tests/test-upload.mjs 单测。
+// 单独成模块：宿主侧 index.ts 消费，tests/test-upload.mjs 单测。
 
 import path from 'node:path'
 
 /** 从 Content-Type 头取 boundary；非 multipart/form-data 或缺 boundary 返回 null */
-export function multipartBoundary(contentType) {
+export function multipartBoundary(contentType: unknown): string | null {
   if (typeof contentType !== 'string') return null
   const m = /multipart\/form-data[^;]*;.*boundary=(?:"([^"]+)"|([^;,\s]+))/i.exec(contentType)
   if (!m) return null
@@ -18,12 +18,12 @@ export function multipartBoundary(contentType) {
  *  边界行以 \r\n--boundary 定位（body 开头的裸 --boundary 也认）——裸串搜
  *  "--boundary" 会把内容里恰好出现的同款字样误切。只取带 filename 的 part；
  *  filename*（RFC 5987）优先，回退 filename。解析不了的 part 静默跳过。 */
-export function parseMultipart(body, boundary) {
-  const parts = []
+export function parseMultipart(body: unknown, boundary: unknown): Array<{ filename: string; data: Buffer }> {
+  const parts: Array<{ filename: string; data: Buffer }> = []
   if (!Buffer.isBuffer(body) || typeof boundary !== 'string' || boundary === '') return parts
   const dash = Buffer.from(`--${boundary}`)
   const crlfDash = Buffer.from(`\r\n--${boundary}`)
-  const starts = []
+  const starts: number[] = []
   if (body.length >= dash.length && body.subarray(0, dash.length).equals(dash)) starts.push(0)
   let i = body.indexOf(crlfDash)
   while (i !== -1) {
@@ -31,9 +31,9 @@ export function parseMultipart(body, boundary) {
     i = body.indexOf(crlfDash, i + 1)
   }
   for (let k = 0; k < starts.length; k++) {
-    const s = starts[k]
+    const s = starts[k]!
     // part 内容终点 = 下一边界行的 CRLF 之前；末段以收尾边界为界
-    const e = k + 1 < starts.length ? starts[k + 1] - 2 : body.length
+    const e = k + 1 < starts.length ? starts[k + 1]! - 2 : body.length
     let segStart = s + dash.length
     if (body.length >= segStart + 2 && body[segStart] === 0x2d && body[segStart + 1] === 0x2d) break // "--" 终止
     if (body.length >= segStart + 2 && body[segStart] === 0x0d && body[segStart + 1] === 0x0a) segStart += 2
@@ -51,12 +51,12 @@ export function parseMultipart(body, boundary) {
     let filename = ''
     if (star) {
       try {
-        filename = decodeURIComponent(star[1])
+        filename = decodeURIComponent(star[1] ?? '')
       } catch {
-        filename = star[1]
+        filename = star[1] ?? ''
       }
     } else if (plain) {
-      filename = plain[1]
+      filename = plain[1] ?? ''
     }
     if (filename !== '') parts.push({ filename, data })
   }
@@ -65,7 +65,7 @@ export function parseMultipart(body, boundary) {
 
 /** 上传文件落盘名：取 basename、去控制字符与 Windows 非法字符、限长（保尾部）；
  *  非法（空/点目录）返回 null */
-export function safeUploadName(name) {
+export function safeUploadName(name: unknown): string | null {
   const base = String(name ?? '').split(/[\\/]/).pop() ?? ''
   const cleaned = base.replace(/[\x00-\x1f<>:"|?*]/g, '').trim()
   if (cleaned === '' || cleaned === '.' || cleaned === '..') return null
@@ -74,7 +74,7 @@ export function safeUploadName(name) {
 
 /** 目标已存在时不覆盖：在扩展名前追加 " (n)" 序号；1..999 全占返回 null。
  *  existsSync 注入便于单测。 */
-export function dedupeName(dir, name, existsSync) {
+export function dedupeName(dir: string, name: string, existsSync: (p: string) => boolean): string | null {
   if (!existsSync(path.join(dir, name))) return name
   const dot = name.lastIndexOf('.')
   const stem = dot > 0 ? name.slice(0, dot) : name

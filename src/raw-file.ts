@@ -2,7 +2,7 @@
 // 白名单按扩展名收口——只放行明确支持的预览类型，避免把任意二进制按
 // octet-stream 喂给浏览器（触发下载）；新增预览格式时在此扩表。
 //
-// 单独成模块：宿主侧 index.js 消费，tests/test-raw-file.mjs 单测。
+// 单独成模块：宿主侧 index.ts 消费，tests/test-raw-file.mjs 单测。
 
 /** 可原始预览的类型：扩展名 → content-type */
 const RAW_TYPES = new Map([
@@ -14,14 +14,14 @@ const RAW_TYPES = new Map([
 ])
 
 /** 取小写扩展名：`a.PDF` → pdf；无点/点文件 → '' */
-export function rawExtOf(name) {
+export function rawExtOf(name: unknown): string {
   const base = String(name ?? '').split(/[\\/]/).pop() ?? ''
   const dot = base.lastIndexOf('.')
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
 }
 
 /** 命中白名单返回 content-type，否则 null */
-export function rawContentType(name) {
+export function rawContentType(name: unknown): string | null {
   return RAW_TYPES.get(rawExtOf(name)) ?? null
 }
 
@@ -32,7 +32,7 @@ export function rawContentType(name) {
  * - undefined：无 Range 头或语法不认（多区间、单位错、乱写），调用方按无
  *   Range 处理回 200 全量——服务端允许忽略 Range，浏览器自会兜底。
  */
-export function parseRangeHeader(header, size) {
+export function parseRangeHeader(header: unknown, size: number): { start: number; end: number } | null | undefined {
   if (typeof header !== 'string' || header.trim() === '') return undefined
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
   if (!m || (m[1] === '' && m[2] === '')) return undefined

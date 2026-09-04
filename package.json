@@ -4,13 +4,14 @@
   "description": "Page capability kit for DeepSeek Harness (dsh): composer-docked file tree / source control / terminal panels for the current session workspace, plus free multi-source web search (merged from dsh-free-search)",
   "license": "MIT",
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.js",
+    ".": "./dist/index.js",
     "./client": "./client/bundle.js",
     "./package.json": "./package.json"
   },
   "files": [
+    "dist",
     "src",
     "client",
     "host-vendor",
@@ -18,6 +19,14 @@
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
   "keywords": [
     "dsh",
     "deepseek",

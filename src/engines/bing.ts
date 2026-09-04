@@ -15,7 +15,7 @@ const UA =
 export const bingEngine = {
   id: 'bing',
   available: () => true,
-  async search(query, { maxResults = 5, signal } = {}) {
+  async search(query: string, { maxResults = 5, signal }: { maxResults?: number; signal?: AbortSignal } = {}) {
     const url = `${BING_SEARCH}?q=${encodeURIComponent(query)}&format=rss`
     const resp = await fetch(url, { headers: { 'User-Agent': UA }, signal })
     if (!resp.ok) {
@@ -31,10 +31,10 @@ export const bingEngine = {
 }
 
 /** RSS 2.0 文本 → 规范 items。导出仅为单元测试（正则解析是唯一脆弱点） */
-export function parseBingRss(xml) {
-  const items = []
+export function parseBingRss(xml: string): Array<{ url: string; title?: string; snippet?: string }> {
+  const items: Array<{ url: string; title?: string; snippet?: string }> = []
   for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-    const block = m[1]
+    const block = m[1] ?? ''
     const url = decodeEntities(extractTag(block, 'link'))
     const title = decodeEntities(extractTag(block, 'title'))
     const snippet = decodeEntities(extractTag(block, 'description'))
@@ -44,13 +44,13 @@ export function parseBingRss(xml) {
   return items
 }
 
-function extractTag(block, tag) {
+function extractTag(block: string, tag: string): string {
   const m = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
-  return m ? m[1].trim() : ''
+  return m ? (m[1] ?? '').trim() : ''
 }
 
 /** 实体解码：数字实体先解，&amp; 最后解（避免双重解码） */
-function decodeEntities(text) {
+function decodeEntities(text: string): string {
   return text
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeFromCode(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => safeFromCode(Number(dec)))
@@ -62,6 +62,6 @@ function decodeEntities(text) {
     .replace(/&amp;/g, '&')
 }
 
-function safeFromCode(code) {
+function safeFromCode(code: number): string {
   return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
 }

@@ -1,6 +1,6 @@
 // raw-file 单测：content-type 白名单 / Range 头解析（含 416 与忽略语义）。
 // 用法（dsh-kit 根）：node tests\test-raw-file.mjs
-import { rawExtOf, rawContentType, parseRangeHeader } from '../src/raw-file.js'
+import { rawExtOf, rawContentType, parseRangeHeader } from '../src/raw-file.ts'
 
 let failed = 0
 const check = (label, cond) => {

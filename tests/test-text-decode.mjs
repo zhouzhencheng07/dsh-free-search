@@ -1,6 +1,6 @@
 // text-decode 单测：BOM 解码 / NUL 二进制判定 / 无 BOM UTF-16LE 恢复。
 // 用法（dsh-kit 根）：node tests\test-text-decode.mjs
-import { decodePreviewText, textExtOf } from '../src/text-decode.js'
+import { decodePreviewText, textExtOf } from '../src/text-decode.ts'
 
 let failed = 0
 /** Buffer 辅助：字符串按指定编码转 Buffer，并可选加 BOM */

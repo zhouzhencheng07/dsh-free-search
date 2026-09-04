@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { BrowserService } from '../src/browser.js'
+import { BrowserService } from '../src/browser.ts'
 
 const EDGE_CANDIDATES = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',

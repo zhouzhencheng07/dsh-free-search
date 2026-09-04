@@ -4,7 +4,7 @@
 // 扫描根（DSH 不会把它当技能源），只作为工作区之间流通的仓库货架；本模块提供
 // 管理面端点，浏览器半边在 settings.section 渲染"技能管理"页。
 //
-// 端点（同源校验同 index.js；webserver 默认只绑 loopback）：
+// 端点（同源校验同 index.ts；webserver 默认只绑 loopback）：
 //   GET  /dsh-kit/skills?cwd=<会话cwd>
 //       按三个逻辑组返回：workspace（.dsh/.agents 两根聚合）、user（$DSH_HOME 与
 //       ~/.agents 两根聚合）、pool。每个技能带 root（物理根）、rank（DSH 扫描
@@ -26,6 +26,7 @@
 //   - 全路径 realpath 后再做包含性校验，符号链接逃逸出白名单即拒。
 
 import fs from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -35,7 +36,13 @@ const POOL_DIRNAME = 'skill-pool'
  * 物理根定义：group = 所属逻辑分组；rank = DSH 扫描优先级（数值越小越优先，
  * 对齐 dsh-skill-filesystem 的 roots() 常量；pool 不是扫描根，不参与排序）。
  */
-const PHYSICAL_ROOTS = [
+interface PhysicalRoot {
+  id: string
+  group: string
+  rank: number | null
+}
+
+const PHYSICAL_ROOTS: PhysicalRoot[] = [
   { id: 'project-dsh', group: 'workspace', rank: 100 },
   { id: 'project-agents', group: 'workspace', rank: 200 },
   { id: 'user-dsh', group: 'user', rank: 400 },
@@ -46,14 +53,41 @@ const PHYSICAL_ROOTS = [
 /** 逻辑分组展示顺序：工作区 → 用户级 → 技能池 */
 const GROUP_ORDER = ['workspace', 'user', 'pool']
 
-function dshHome() {
+export interface SkillEntry {
+  name: string
+  description: string
+  path: string
+  file: string | null
+  kind: 'dir' | 'file'
+  disabled: boolean
+  modelInvocable: boolean
+  userInvocable: boolean
+  root?: string
+  rank?: number | null
+  shadowed?: boolean
+}
+
+interface PhysicalRootWithDir extends PhysicalRoot {
+  dir: string
+}
+
+/** GET 枚举里每个物理根的聚合桶 */
+interface ResolvedRoot {
+  id: string
+  dir: string
+  exists: boolean
+  rank: number | null
+  skills: SkillEntry[]
+}
+
+function dshHome(): string {
   const env = process.env.DSH_HOME
   return env && env.trim() !== '' ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
 /** 自 start 向上找 .git（目录或文件都算），找不到退回 start 本身（对齐 skill-filesystem 语义）。
  *  git 相关端点也用它定位项目根。 */
-export function findProjectRoot(start) {
+export function findProjectRoot(start: string): string {
   let current = start
   for (;;) {
     try {
@@ -68,9 +102,9 @@ export function findProjectRoot(start) {
 }
 
 /** 解析全部白名单物理根（带逻辑分组与 rank）；cwd 缺省则无项目组 */
-export function resolveRoots(cwd) {
+export function resolveRoots(cwd: unknown): PhysicalRootWithDir[] {
   const home = dshHome()
-  const dirById = {
+  const dirById: Record<string, string> = {
     pool: path.join(home, POOL_DIRNAME),
     'user-dsh': path.join(home, 'skills'),
     'user-agents': path.join(os.homedir(), '.agents', 'skills'),
@@ -84,15 +118,27 @@ export function resolveRoots(cwd) {
       // cwd 非法就没有项目组
     }
   }
-  return PHYSICAL_ROOTS.filter((def) => dirById[def.id] !== undefined).map((def) => ({ ...def, dir: dirById[def.id] }))
+  const roots: PhysicalRootWithDir[] = []
+  for (const def of PHYSICAL_ROOTS) {
+    const dir = dirById[def.id]
+    if (dir === undefined) continue
+    roots.push({ ...def, dir })
+  }
+  return roots
 }
 
-function isDir(p) {
+function isDir(p: string): boolean {
   try {
     return fs.statSync(p).isDirectory()
   } catch {
     return false
   }
+}
+
+interface Frontmatter {
+  data: Record<string, string>
+  blockStart: number
+  blockEnd: number
 }
 
 /**
@@ -101,29 +147,29 @@ function isDir(p) {
  * 无 frontmatter 时三个字段为 null。不追求 YAML 完备——技能 frontmatter 本就要求
  * 平铺的 name/description/布尔开关，行级足够。
  */
-function parseFrontmatter(text) {
+function parseFrontmatter(text: string): Frontmatter {
   const head = text.slice(0, 4096)
   if (!/^---[ \t]*\r?\n/.test(head)) return { data: {}, blockStart: -1, blockEnd: -1 }
   const close = head.slice(3).match(/^---[ \t]*(?:\r?\n|$)/m)
   if (!close) return { data: {}, blockStart: -1, blockEnd: -1 }
-  const fenceLen = close[0].length
-  const innerEnd = 3 + close.index
+  const fenceLen = close[0]!.length
+  const innerEnd = 3 + close.index!
   const blockEnd = innerEnd + fenceLen
-  const data = {}
+  const data: Record<string, string> = {}
   for (const rawLine of head.slice(3, innerEnd).split(/\r?\n/)) {
     const m = /^([A-Za-z][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)$/.exec(rawLine)
     if (!m) continue
-    let value = m[2].trim()
+    let value = m[2]!.trim()
     if ((value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
         (value.startsWith("'") && value.endsWith("'") && value.length >= 2)) {
       value = value.slice(1, -1)
     }
-    data[m[1].toLowerCase()] = value
+    data[m[1]!.toLowerCase()] = value
   }
   return { data, blockStart: 0, blockEnd }
 }
 
-function boolFlag(value) {
+function boolFlag(value: unknown): boolean | null {
   if (value === undefined) return null
   const v = String(value).trim().toLowerCase()
   return v !== '' && v !== 'false' && v !== 'no' && v !== '0'
@@ -134,13 +180,13 @@ function boolFlag(value) {
  * disabled=true → 两键置为 true/false（已有则原位改值，缺失则补在块尾）；
  * disabled=false → 删除这两行。无 frontmatter 且要禁用时新建一个最小块。
  */
-function setDisableFlags(text, disabled) {
+function setDisableFlags(text: string, disabled: boolean): string {
   const lines = text.split(/\r?\n/)
   // 定位首块（第 0 行必须是 --- 围栏）
   if (lines[0] !== undefined && /^---[ \t]*$/.test(lines[0])) {
     let closeIdx = -1
     for (let i = 1; i < Math.min(lines.length, 200); i++) {
-      if (/^---[ \t]*$/.test(lines[i])) {
+      if (/^---[ \t]*$/.test(lines[i]!)) {
         closeIdx = i
         break
       }
@@ -152,12 +198,12 @@ function setDisableFlags(text, disabled) {
         const filtered = lines.filter((line, i) => !(i > 0 && i < closeIdx && dropRe.test(line)))
         return filtered.join('\n')
       }
-      const wanted = { 'disable-model-invocation': 'true', 'user-invocable': 'false' }
+      const wanted: Record<string, string> = { 'disable-model-invocation': 'true', 'user-invocable': 'false' }
       const inner = lines.slice(1, closeIdx)
       for (const key of Object.keys(wanted)) {
         const idx = inner.findIndex((line) => {
           const m = keepRe.exec(line)
-          return m && m[0].slice(0, -1).trim().toLowerCase() === key
+          return (m?.[0] ?? '').slice(0, -1).trim().toLowerCase() === key
         })
         if (idx >= 0) inner[idx] = `${key}: ${wanted[key]}`
         else inner.push(`${key}: ${wanted[key]}`)
@@ -171,9 +217,9 @@ function setDisableFlags(text, disabled) {
 }
 
 /** 扫单个根：一层条目，目录须含 SKILL.md，平铺 .md 也算技能 */
-function scanRoot(root) {
-  const skills = []
-  let dirents
+function scanRoot(root: PhysicalRootWithDir): SkillEntry[] {
+  const skills: SkillEntry[] = []
+  let dirents: fs.Dirent[]
   try {
     dirents = fs.readdirSync(root.dir, { withFileTypes: true })
   } catch {
@@ -182,8 +228,8 @@ function scanRoot(root) {
   for (const ent of dirents) {
     if (ent.name.startsWith('.')) continue
     const entryPath = path.join(root.dir, ent.name)
-    let skillFile = null
-    let kind = null
+    let skillFile: string | null = null
+    let kind: 'dir' | 'file' | null = null
     if (ent.isDirectory()) {
       const candidate = path.join(entryPath, 'SKILL.md')
       if (fs.existsSync(candidate)) {
@@ -194,7 +240,7 @@ function scanRoot(root) {
       kind = 'file'
       skillFile = entryPath
     }
-    if (!kind) continue
+    if (kind === null || skillFile === null) continue
     let text = ''
     try {
       text = fs.readFileSync(skillFile, 'utf8')
@@ -222,16 +268,16 @@ function scanRoot(root) {
 }
 
 /** 路径必须真实存在且落在某个白名单根内；返回 {root, real} 或 null */
-function locateInside(roots, rawPath) {
+function locateInside(roots: PhysicalRootWithDir[], rawPath: unknown): { root: PhysicalRootWithDir & { real: string }; real: string } | null {
   if (typeof rawPath !== 'string' || rawPath.trim() === '') return null
-  let target
+  let target: string
   try {
     target = fs.realpathSync(path.resolve(rawPath.trim()))
   } catch {
     return null
   }
   for (const root of roots) {
-    let realRoot
+    let realRoot: string
     try {
       realRoot = fs.realpathSync(root.dir)
     } catch {
@@ -245,19 +291,19 @@ function locateInside(roots, rawPath) {
 }
 
 /** 源必须是根的直接子项（官方技能发现只有一层） */
-function directChildOnly(located) {
+function directChildOnly(located: { root: { real: string }; real: string }): boolean {
   return path.dirname(located.real) === located.root.real
 }
 
-function jsonOf(res, code, obj) {
+function jsonOf(res: http.ServerResponse, code: number, obj: unknown): void {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
   res.end(JSON.stringify(obj))
 }
 
-function readBody(req) {
+function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolvePromise, rejectPromise) => {
     let size = 0
-    const chunks = []
+    const chunks: Buffer[] = []
     req.on('data', (chunk) => {
       size += chunk.length
       if (size > 256 * 1024) {
@@ -278,21 +324,33 @@ function readBody(req) {
   })
 }
 
-/** cpSync + 目标完整性校验后移除源（移动语义的数据安全：目标验证过才动源） */
-function moveTo(srcReal, dstPath, srcKind) {
-  fs.cpSync(srcReal, dstPath, { recursive: true })
-  const marker = srcKind === 'dir' ? path.join(dstPath, 'SKILL.md') : dstPath
-  if (!fs.existsSync(marker)) throw new Error('移动后校验失败：目标缺少技能入口文件')
-  fs.rmSync(srcReal, { recursive: true, force: true })
+interface SkillWebCtx {
+  effect(fn: () => void | (() => void), label?: string): void
+  webServer: {
+    register(route: {
+      kind: string
+      path: string
+      handler: (req: http.IncomingMessage, res: http.ServerResponse) => void | Promise<void>
+    }): () => void
+  }
+}
+
+/** cordis ctx 里本层用到的最小面 */
+interface KitCtx {
+  inject(deps: string[], cb: (webCtx: SkillWebCtx) => void): void
+}
+
+interface SkillPoolHooks {
+  getRegistry?: () => unknown
 }
 
 /**
  * 注册技能池端点。registryApi 由外部注入回调捕获（ctx.skills 服务可能晚于本模块就绪）。
  */
-export function applySkillPool(ctx, hooks) {
+export function applySkillPool(ctx: KitCtx, hooks?: SkillPoolHooks): void {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => {
-      const origins = (req) => {
+      const origins = (req: http.IncomingMessage): boolean => {
         const origin = req.headers.origin
         const host = req.headers.host
         if (typeof origin !== 'string' || origin === '') return true
@@ -320,8 +378,8 @@ export function applySkillPool(ctx, hooks) {
           const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
           const cwd = url.searchParams.get('cwd') ?? ''
           const roots = resolveRoots(cwd)
-          const scannedDirs = []
-          const buckets = new Map(GROUP_ORDER.map((id) => [id, []]))
+          const scannedDirs: string[] = []
+          const buckets = new Map<string, ResolvedRoot[]>(GROUP_ORDER.map((id): [string, ResolvedRoot[]] => [id, []]))
           for (const root of roots) {
             const exists = isDir(root.dir)
             const skills = exists ? scanRoot(root) : []
@@ -329,15 +387,15 @@ export function applySkillPool(ctx, hooks) {
               skill.root = root.id
               skill.rank = root.rank
             }
-            buckets.get(root.group).push({ id: root.id, dir: root.dir, exists, rank: root.rank, skills })
+            buckets.get(root.group)!.push({ id: root.id, dir: root.dir, exists, rank: root.rank, skills })
             if (exists) scannedDirs.push(root.dir)
           }
           // 三逻辑组：物理根聚合；同名跨根按 rank（小者优先）标注被覆盖
           const groups = GROUP_ORDER.map((id) => {
-            const rootsOf = buckets.get(id)
+            const rootsOf = buckets.get(id)!
             return { id, roots: rootsOf, skills: rootsOf.flatMap((r) => r.skills) }
           })
-          const winner = new Map()
+          const winner = new Map<string, number>()
           for (const group of groups) {
             for (const skill of group.skills) {
               if (typeof skill.rank !== 'number') continue
@@ -347,34 +405,39 @@ export function applySkillPool(ctx, hooks) {
           }
           for (const group of groups) {
             for (const skill of group.skills) {
-              skill.shadowed = typeof skill.rank === 'number' && winner.get(skill.name) < skill.rank
+              const best = winner.get(skill.name)
+              skill.shadowed = typeof skill.rank === 'number' && best !== undefined && best < skill.rank
             }
           }
           // 注册表增强：插件自带 / 运行时 / custom 等不在白名单根里的技能，只读展示。
-          const providers = []
+          const providers: Array<Record<string, unknown>> = []
           const registry = hooks && typeof hooks.getRegistry === 'function' ? hooks.getRegistry() : null
-          if (registry && typeof registry.list === 'function') {
+          if (registry !== null && registry !== undefined && typeof (registry as { list?: unknown }).list === 'function') {
             try {
-              const summaries = registry.list(typeof cwd === 'string' && cwd.trim() !== '' ? { cwd: cwd.trim() } : {})
+              // 注册表方法必须以 registry 为接收者调用——解绑（const l = registry.list; l()）会断 this 链
+              const summaries = (registry as { list: (opts?: { cwd?: string }) => unknown }).list(
+                typeof cwd === 'string' && cwd.trim() !== '' ? { cwd: cwd.trim() } : {},
+              )
               for (const summary of Array.isArray(summaries) ? summaries : []) {
-                if (!summary || typeof summary.name !== 'string') continue
-                const base = summary.resourceBase && typeof summary.resourceBase.path === 'string' ? summary.resourceBase.path : ''
+                const s = summary as { name?: unknown; description?: unknown; provider?: unknown; source?: unknown; invocation?: unknown; resourceBase?: { path?: unknown } }
+                if (!s || typeof s.name !== 'string') continue
+                const base = s.resourceBase && typeof s.resourceBase.path === 'string' ? s.resourceBase.path : ''
                 const covered = base !== '' && scannedDirs.some((dir) => {
                   const rel = path.relative(dir, base)
                   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
                 })
                 if (covered) continue
                 providers.push({
-                  name: summary.name,
-                  description: typeof summary.description === 'string' ? summary.description : '',
-                  provider: typeof summary.provider === 'string' ? summary.provider : '',
-                  source: typeof summary.source === 'string' ? summary.source : '',
-                  invocation: summary.invocation ?? null,
+                  name: s.name,
+                  description: typeof s.description === 'string' ? s.description : '',
+                  provider: typeof s.provider === 'string' ? s.provider : '',
+                  source: typeof s.source === 'string' ? s.source : '',
+                  invocation: s.invocation ?? null,
                 })
               }
             } catch (error) {
               // 注册表不可用就不给这一段，枚举本身不受影响
-              console.warn('[dsh-kit] skills registry list failed:', error?.message ?? error)
+              console.warn('[dsh-kit] skills registry list failed:', error instanceof Error ? error.message : error)
             }
           }
           jsonOf(res, 200, { cwd, groups, providers })
@@ -394,11 +457,11 @@ export function applySkillPool(ctx, hooks) {
             jsonOf(res, 403, { error: 'cross-origin denied' })
             return
           }
-          let body
+          let body: any
           try {
             body = await readBody(req)
           } catch (error) {
-            jsonOf(res, 400, { error: `请求体非法：${error?.message ?? error}` })
+            jsonOf(res, 400, { error: `请求体非法：${error instanceof Error ? error.message : error}` })
             return
           }
           const cwd = typeof body.cwd === 'string' ? body.cwd : ''
@@ -416,7 +479,7 @@ export function applySkillPool(ctx, hooks) {
                 jsonOf(res, 400, { error: '未知目标根' })
                 return
               }
-              let destReal
+              let destReal: string
               try {
                 // 目标根不存在则按需创建（池/工作区/用户级首次使用即落盘）
                 fs.mkdirSync(destRoot.dir, { recursive: true })
@@ -489,7 +552,7 @@ export function applySkillPool(ctx, hooks) {
 
             jsonOf(res, 400, { error: '未知操作' })
           } catch (error) {
-            jsonOf(res, 500, { error: `操作失败：${error?.message ?? error}` })
+            jsonOf(res, 500, { error: `操作失败：${error instanceof Error ? error.message : error}` })
           }
         },
       })

@@ -1,4 +1,4 @@
-// dsh-kit 内置浏览器——工具层（browser-tools.js）
+// dsh-kit 内置浏览器——工具层（browser-tools.ts）
 //
 // 向 DSH 工具注册表（dsh-tools，ctx.tools）注册 5 个浏览器工具：
 //   browser_navigate / browser_snapshot / browser_act / browser_eval / browser_screenshot
@@ -22,15 +22,49 @@ import os from 'node:os'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
-import { pngSize, normalizeLocatorArgs, normalizeActArgs } from './browser.js'
+import { pngSize, normalizeLocatorArgs, normalizeActArgs } from './browser.ts'
+import type { BrowserService } from './browser.ts'
 
-function dshHomeDir() {
+/** 工具定义的结构契约（dsh-tools 的 defineTool 产物按名字注入注册表） */
+export interface ToolDefinition {
+  name: string
+  [key: string]: unknown
+}
+
+/** 工具执行上下文里本层用到的最小面（宿主对象运行时才挂载） */
+interface ToolExec {
+  signal?: AbortSignal
+  agent?: {
+    session?: { requestHeader?: () => { config?: { provider?: string; model?: string } } | null }
+    options?: { provider?: string; model?: string }
+  } | null
+}
+
+interface HostCtx {
+  get(name: string): unknown
+}
+
+export interface DefineToolOptions {
+  name: string
+  description: string
+  parameters: Record<string, { type: string; required?: boolean; enum?: string[]; description?: string }>
+  output: {
+    schema: Record<string, unknown>
+    render: (args: unknown, value: any) => Array<Record<string, unknown>>
+  }
+  timeoutMs?: number
+  execute: (args: any, exec?: ToolExec) => Promise<unknown>
+}
+
+export type DefineTool = (options: DefineToolOptions) => ToolDefinition
+
+function dshHomeDir(): string {
   const env = process.env.DSH_HOME
   return env && env.trim() !== '' ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
 /** 异步两锚点加载 @deepseek-ai/dsh-tools（ESM）。失败返回 null。 */
-export async function loadToolsModule(log = () => {}) {
+export async function loadToolsModule(log: (msg: string) => void = () => {}) {
   try {
     return await import('@deepseek-ai/dsh-tools')
   } catch {
@@ -54,16 +88,16 @@ export async function loadToolsModule(log = () => {}) {
  * 截图图片入附件库（带模型能力证明），照 mcp-client 的准入门：
  * 任一步失败抛错——调用方把原因写进文本投影，不让截图失败炸掉工具。
  */
-async function admitImage(ctx, exec, buffer) {
-  const attachments = ctx.get('attachments')
+async function admitImage(ctx: HostCtx, exec: ToolExec, buffer: Buffer) {
+  const attachments = ctx.get('attachments') as { saveImages?: (images: Array<{ data: Buffer; mediaType: string }>) => Promise<Array<unknown>> } | undefined
   if (!attachments || typeof attachments.saveImages !== 'function') {
     throw new Error('附件服务未挂载')
   }
   const routed = exec.agent?.session?.requestHeader?.()?.config
   const provider = routed?.provider ?? exec.agent?.options?.provider
   const model = routed?.model ?? exec.agent?.options?.model
-  const llm = ctx.get('llm')
-  if (provider === undefined || model === undefined || !llm) {
+  const llm = ctx.get('llm') as { resolveModelInfo?: (provider: string, model: string, signal?: AbortSignal) => Promise<{ inputModalities?: string[] } | null> } | undefined
+  if (provider === undefined || model === undefined || !llm?.resolveModelInfo) {
     throw new Error('当前模型路由无法解析')
   }
   let info
@@ -81,8 +115,8 @@ async function admitImage(ctx, exec, buffer) {
 }
 
 /** navigate/act/snapshot 共用的文本投影：状态行 + 快照 + 警告 */
-function renderPageState(value) {
-  const lines = []
+function renderPageState(value: { tabId: unknown; url: unknown; title?: string; warning?: string; snapshot?: string }) {
+  const lines: string[] = []
   lines.push(`tab=${value.tabId} ${value.url}${value.title ? ` 「${value.title}」` : ''}`)
   if (value.warning) lines.push(`注意：${value.warning}`)
   if (value.snapshot) lines.push(value.snapshot)
@@ -90,7 +124,7 @@ function renderPageState(value) {
 }
 
 /** 组装 5 个工具定义（defineTool 来自 dsh-tools，由调用方传入） */
-export function buildBrowserTools({ defineTool, service, ctx, isDisabled } = {}) {
+export function buildBrowserTools({ defineTool, service, ctx, isDisabled }: { defineTool: DefineTool; service: BrowserService; ctx: HostCtx; isDisabled?: () => boolean }): ToolDefinition[] {
   const guard = () => {
     if (typeof isDisabled === 'function' && isDisabled()) {
       throw new Error('浏览器能力已在 dsh-kit 设置中停用（重启后工具将从列表消失）')
@@ -162,13 +196,13 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled } = {})
       guard()
       const loc = normalizeLocatorArgs(args)
       const actArgs = normalizeActArgs(args)
-      if (actArgs.error) throw new Error(actArgs.error)
+      if ('error' in actArgs) throw new Error(actArgs.error)
       // press 允许无定位目标（直接发给页面）；其余动作必须有定位
       const hasLocator = [args.role, args.name, args.text, args.selector].some(
         (v) => v !== undefined && v !== null && String(v).trim() !== '',
       )
       if (!hasLocator && actArgs.action !== 'press') {
-        throw new Error(loc.error ?? '缺少定位参数')
+        throw new Error(('error' in loc ? loc.error : '') || '缺少定位参数')
       }
       const r = await service.act(args)
       if (!r.ok) throw new Error(r.error)
@@ -211,7 +245,7 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled } = {})
       schema: { type: 'object', additionalProperties: true },
       render: (_args, value) => {
         const meta = `截图已保存：${value.path}（${value.width}×${value.height}，${Math.round(value.bytes / 1024)}KB，tab=${value.tabId} ${value.url}）`
-        const blocks = [{ type: 'text', text: value.note ? `${meta}\n${value.note}` : meta }]
+        const blocks: Array<Record<string, unknown>> = [{ type: 'text', text: value.note ? `${meta}\n${value.note}` : meta }]
         if (value.image) blocks.push({ type: 'image', attachment: value.image })
         return blocks
       },
@@ -227,12 +261,12 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled } = {})
       const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
       fs.writeFileSync(file, r.buffer)
       // 图片入附件库（尽力而为，失败写进 note）
-      let image = null
+      let image: unknown = null
       let note = ''
       try {
-        image = await admitImage(ctx, exec, r.buffer)
+        image = await admitImage(ctx, exec ?? {}, r.buffer)
       } catch (error) {
-        note = `（图片未附加给模型：${error?.message ?? error}；文件已落盘，可在浏览器面板查看）`
+        note = `（图片未附加给模型：${error instanceof Error ? error.message : error}；文件已落盘，可在浏览器面板查看）`
       }
       const size = r.size ?? pngSize(r.buffer) ?? { width: 0, height: 0 }
       return { tabId: r.tabId, url: r.url, path: file, width: size.width, height: size.height, bytes: r.buffer.length, image, note }

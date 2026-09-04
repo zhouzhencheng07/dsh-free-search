@@ -8,7 +8,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
-import { startPhoneGateway, PHONE_COOKIE } from '../src/phone-gateway.js'
+import { startPhoneGateway, PHONE_COOKIE } from '../src/phone-gateway.ts'
 
 let failed = 0
 const check = (label, ok) => {

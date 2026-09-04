@@ -8,9 +8,9 @@ import path from 'node:path'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const { capText, pngSize, normalizeLocatorArgs, normalizeActArgs, BrowserService } = await import(
-  pathToFileURL(path.join(root, 'src/browser.js')).href
+  pathToFileURL(path.join(root, 'src/browser.ts')).href
 )
-const { buildBrowserTools } = await import(pathToFileURL(path.join(root, 'src/browser-tools.js')).href)
+const { buildBrowserTools } = await import(pathToFileURL(path.join(root, 'src/browser-tools.ts')).href)
 
 let passed = 0
 const ok = (name) => {

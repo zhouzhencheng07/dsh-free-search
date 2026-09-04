@@ -51,21 +51,30 @@ const POLYFILL_SCRIPT =
   'return h.join("").replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/,"$1-$2-$3-$4-$5");}})}catch(e){}})();</script>'
 
 /** 在 HTML 的 <head> 开标签后插入脚本；找不到开标签就整体前置 */
-export function injectHeadScript(html, script) {
+export function injectHeadScript(html: string, script: string): string {
   const match = /<head[^>]*>/i.exec(html)
   if (match === null) return script + html
-  const idx = match.index + match[0].length
+  const idx = match.index + match[0]!.length
   return html.slice(0, idx) + script + html.slice(idx)
 }
 
 /** 生成一个高熵令牌（192-bit，URL 安全） */
-export function newToken() {
+export function newToken(): string {
   return crypto.randomBytes(24).toString('base64url')
 }
 
 /** base64url 编码（与 dsh client-connection 的 encodeBase64Url 一致） */
-function encodeBase64Url(buf) {
+function encodeBase64Url(buf: Buffer): string {
   return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+export interface DshSessionCookieOptions {
+  /** 32 字节 HMAC 原始密钥 */
+  secret: Buffer
+  /** 校验 authority（= 转发时重写后的 Host，即 127.0.0.1:<upstream>） */
+  authority: string
+  issuedAt?: number
+  maxAgeMs?: number
 }
 
 /**
@@ -74,10 +83,8 @@ function encodeBase64Url(buf) {
  * payload = {version:1, authority, issuedAt, expiresAt}。跨度取 1 天：dsh 校验要求
  * 跨度 ≤ 其 cookieMaxAgeDays 配置（默认 30），而网关每请求现铸（issuedAt≈now），
  * 跨度只影响上限兼容——取 1 天对任何 ≥1 天的配置都成立。
- * @param {Buffer} secret 32 字节 HMAC 原始密钥
- * @param {string} authority 校验 authority（= 转发时重写后的 Host，即 127.0.0.1:<upstream>）
  */
-export function dshSessionCookie({ secret, authority, issuedAt = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000 }) {
+export function dshSessionCookie({ secret, authority, issuedAt = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000 }: DshSessionCookieOptions): string {
   const name = 'dsh-auth-' + encodeBase64Url(crypto.createHash('sha256').update(authority).digest())
   const payload = { version: 1, authority, issuedAt, expiresAt: issuedAt + maxAgeMs }
   const body = encodeBase64Url(Buffer.from(JSON.stringify(payload), 'utf8'))
@@ -86,7 +93,7 @@ export function dshSessionCookie({ secret, authority, issuedAt = Date.now(), max
 }
 
 /** 定长无关的恒时字符串比较 */
-function safeEq(a, b) {
+function safeEq(a: unknown, b: unknown): boolean {
   const ab = Buffer.from(String(a))
   const bb = Buffer.from(String(b))
   if (ab.length !== bb.length) return false
@@ -94,8 +101,8 @@ function safeEq(a, b) {
 }
 
 /** 极简 Cookie 解析（只需要取一个名值对） */
-export function parseCookies(header) {
-  const out = {}
+export function parseCookies(header: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
   if (typeof header !== 'string') return out
   for (const pair of header.split(';')) {
     const idx = pair.indexOf('=')
@@ -110,33 +117,39 @@ export function parseCookies(header) {
  * 重启 dsh 后令牌不变，手机端 Cookie 继续有效；文件损坏则重新生成
  * （等价于一次轮换，旧链接失效属预期）。
  */
-export function defaultStateFile() {
+export function defaultStateFile(): string {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
     ? process.env.DSH_HOME
     : os.tmpdir()
   return path.join(home, 'data', 'dsh-kit-phone-gateway.json')
 }
 
+export interface GatewayState {
+  token: string
+  enabled: boolean
+}
+
 /**
  * 状态文件读写（令牌 + 网关启用位）。启用位独立于 settings 通道：
- * 设置读取器回填有时序滞后，网关开关用文件直管，见 index.js 的
+ * 设置读取器回填有时序滞后，网关开关用文件直管，见 index.ts 的
  * /dsh-kit/phone/gateway 端点。
  */
-export function loadGatewayState(stateFile, log = () => {}) {
+export function loadGatewayState(stateFile: string, log: (msg: string) => void = () => {}): GatewayState {
   try {
-    const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+    const raw: any = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
     if (typeof raw?.token !== 'string' || raw.token.length < 20) throw new Error('token 缺失或过短')
     return {
       token: raw.token,
       enabled: typeof raw.enabled === 'boolean' ? raw.enabled : false,
     }
   } catch (error) {
-    if (error?.code !== 'ENOENT') log(`状态文件读取失败，将重新生成：${error?.message ?? error}`)
+    const code = (error as { code?: string } | null)?.code
+    if (code !== 'ENOENT') log(`状态文件读取失败，将重新生成：${error instanceof Error ? error.message : String(error)}`)
     return { token: newToken(), enabled: false }
   }
 }
 
-export function saveGatewayState(stateFile, { token, enabled }, log = () => {}) {
+export function saveGatewayState(stateFile: string, { token, enabled }: GatewayState, log: (msg: string) => void = () => {}): void {
   try {
     fs.mkdirSync(path.dirname(stateFile), { recursive: true })
     const body = JSON.stringify({ token, enabled, createdAt: new Date().toISOString() })
@@ -144,30 +157,48 @@ export function saveGatewayState(stateFile, { token, enabled }, log = () => {}) 
     fs.writeFileSync(tmp, body)
     fs.renameSync(tmp, stateFile)
   } catch (error) {
-    log(`状态文件写入失败（重启后将回退默认）：${error?.message ?? error}`)
+    log(`状态文件写入失败（重启后将回退默认）：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 /** 本机非回环 IPv4 地址列表（二维码里局域网链接的候选） */
-export function lanAddresses() {
+export function lanAddresses(): string[] {
   return Object.values(os.networkInterfaces())
     .flat()
-    .filter((iface) => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
+    .filter((iface): iface is import('node:os').NetworkInterfaceInfoIPv4 => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
     .map((iface) => iface.address)
 }
 
-/**
- * 启动网关监听。
- * @param {object} opts
- * @param {number} opts.port 对外端口（默认 3090）
- * @param {number} opts.upstreamPort dsh web 主端口（回环）
- * @param {string} [opts.stateFile] 令牌持久化路径
- * @param {Buffer | (() => Buffer | null) | null} [opts.sessionSecret] dsh web 浏览器
- *   会话密钥（32 字节原始密钥）；可传取值函数以便读好后自动生效。null/未就绪时
- *   不注入会话 cookie（手机访问显示 401，网关其余功能不受影响）。
- * @param {(msg: string) => void} [opts.log]
- */
-export function startPhoneGateway({ port, upstreamPort, stateFile = defaultStateFile(), log = () => {}, sessionSecret = null }) {
+export interface PhoneGatewayOptions {
+  /** 对外端口（默认 3090） */
+  port: number
+  /** dsh web 主端口（回环） */
+  upstreamPort: number
+  /** 令牌持久化路径 */
+  stateFile?: string
+  log?: (msg: string) => void
+  /**
+   * dsh web 浏览器会话密钥（32 字节原始密钥）；可传取值函数以便读好后自动生效。
+   * null/未就绪时不注入会话 cookie（手机访问显示 401，网关其余功能不受影响）。
+   */
+  sessionSecret?: Buffer | (() => Buffer | null) | null
+}
+
+export interface PhoneGatewayHandle {
+  /** 实际监听端口（支持 port 0 由系统自选后回读） */
+  port(): number | null
+  /** 当前令牌（轮换后变化） */
+  token(): string
+  /** 轮换令牌并持久化；旧链接与旧 Cookie 立即失效 */
+  rotate(): string
+  /** 令牌尾迹（日志/状态展示用，不暴露全文） */
+  fingerprint(): string
+  /** 运行状态快照 */
+  state(): { listening: boolean; error: string | null }
+  close(): void
+}
+
+export function startPhoneGateway({ port, upstreamPort, stateFile = defaultStateFile(), log = () => {}, sessionSecret = null }: PhoneGatewayOptions): PhoneGatewayHandle {
   if (!Number.isInteger(port) || port < 0 || !Number.isInteger(upstreamPort) || upstreamPort <= 0) {
     throw new Error('startPhoneGateway: port 必须是非负整数（0=系统自选），upstreamPort 必须是正整数')
   }
@@ -177,20 +208,20 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
   saveGatewayState(stateFile, { token, enabled: boot.enabled }, log)
 
   /** 从请求里验令牌：query ?k= 或 Cookie，二者其一命中即可 */
-  function authorized(req, urlObj) {
+  function authorized(req: http.IncomingMessage, urlObj: URL): boolean {
     const q = urlObj.searchParams.get('k')
     if (q !== null && q !== '' && safeEq(q, token)) return true
     const cookie = parseCookies(req.headers.cookie)[PHONE_COOKIE]
     return typeof cookie === 'string' && cookie !== '' && safeEq(cookie, token)
   }
 
-  function notFound(res) {
+  function notFound(res: http.ServerResponse): void {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
     res.end('Not Found')
   }
 
   /** 自铸的 dsh web 会话 cookie 头值；密钥未就绪时返回 null */
-  const sessionCookieHeader = () => {
+  const sessionCookieHeader = (): string | null => {
     if (sessionSecret === null) return null
     const secret = typeof sessionSecret === 'function' ? sessionSecret() : sessionSecret
     if (secret === null) return null
@@ -201,8 +232,8 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
    * 组装转发头：Host 改写为回环上游、剥 Origin（fence 视作回环同源）、
    * 剥本网关 Cookie（不把网关令牌漏给上游）、注入 dsh web 会话 Cookie、滤逐跳头。
    */
-  function proxyHeaders(src, upgrade) {
-    const headers = { ...src }
+  function proxyHeaders(src: http.IncomingHttpHeaders, upgrade: boolean): http.OutgoingHttpHeaders {
+    const headers: http.OutgoingHttpHeaders = { ...src }
     headers.host = `127.0.0.1:${upstreamPort}`
     delete headers.origin
     // 统一要未压缩响应：HTML 注入需要原文；远程层由 VPS caddy 重新压缩给手机
@@ -232,7 +263,7 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
   }
 
   const server = http.createServer((req, res) => {
-    let urlObj
+    let urlObj: URL
     try {
       urlObj = new URL(req.url ?? '/', 'http://gateway.local')
     } catch {
@@ -263,13 +294,13 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
     const up = http.request(
       { host: '127.0.0.1', port: upstreamPort, method: req.method, path: req.url, headers },
       (upRes) => {
-        const out = { ...upRes.headers }
+        const out: http.OutgoingHttpHeaders = { ...upRes.headers }
         delete out.connection
         delete out['keep-alive']
         delete out['transfer-encoding']
         if (/text\/html/i.test(String(out['content-type'] ?? '')) && req.method !== 'HEAD') {
           // HTML 需注入兜底脚本：缓冲整个页面（dsh 首页仅十余 KB）再回写
-          const chunks = []
+          const chunks: Buffer[] = []
           upRes.on('data', (c) => chunks.push(c))
           upRes.on('end', () => {
             const injected = injectHeadScript(Buffer.concat(chunks).toString('utf8'), POLYFILL_SCRIPT)
@@ -297,8 +328,9 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
   })
 
   // WebSocket 升级：同样鉴权后手动隧道（101 回写 + 双向 pipe，不经过任何缓冲）
-  server.on('upgrade', (req, socket, head) => {
-    let urlObj = null
+  server.on('upgrade', (req, rawSocket, head) => {
+    const socket = rawSocket as import('node:net').Socket
+    let urlObj: URL
     try {
       urlObj = new URL(req.url ?? '/', 'http://gateway.local')
     } catch {
@@ -317,6 +349,7 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
       headers,
     })
     up.on('upgrade', (upRes, upSocket, upHead) => {
+      const upSock = upSocket as import('node:net').Socket
       const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage ?? 'Switching Protocols'}`]
       for (const [name, value] of Object.entries(upRes.headers)) {
         if (value === undefined) continue
@@ -326,54 +359,49 @@ export function startPhoneGateway({ port, upstreamPort, stateFile = defaultState
       // 方向易错点：head 是客户端随升级请求早到的字节（发往上游）；upHead 是
       // 服务端 101 后立即推的字节——真实 dsh 会在此推初始事件帧（实测 436B），
       // 必须写给客户端。两者接反的表现是握手成功但零帧、随即 1002 断开。
-      if (head !== undefined && head.length > 0) upSocket.write(head)
+      if (head !== undefined && head.length > 0) upSock.write(head)
       if (upHead !== undefined && upHead.length > 0) socket.write(upHead)
-      upSocket.setNoDelay(true)
+      upSock.setNoDelay(true)
       socket.setNoDelay(true)
-      upSocket.pipe(socket)
-      socket.pipe(upSocket)
+      upSock.pipe(socket)
+      socket.pipe(upSock)
       const die = () => {
         try { socket.destroy() } catch { /* 已销毁 */ }
-        try { upSocket.destroy() } catch { /* 已销毁 */ }
+        try { upSock.destroy() } catch { /* 已销毁 */ }
       }
-      upSocket.on('error', die)
+      upSock.on('error', die)
       socket.on('error', die)
-      upSocket.on('close', die)
+      upSock.on('close', die)
       socket.on('close', die)
     })
     up.on('error', () => socket.destroy())
     up.end()
   })
 
-  const state = { listening: false, error: null }
+  const state: { listening: boolean; error: string | null } = { listening: false, error: null }
   server.on('listening', () => {
     state.listening = true
     state.error = null
   })
   server.on('error', (error) => {
     state.listening = false
-    state.error = error?.message ?? String(error)
+    state.error = error.message
     log(`网关监听异常：${state.error}`)
   })
   server.listen(port, '0.0.0.0')
 
   return {
-    /** 实际监听端口（支持 port 0 由系统自选后回读） */
     port: () => {
       const addr = server.address()
       return typeof addr === 'object' && addr !== null ? addr.port : null
     },
-    /** 当前令牌（轮换后变化） */
     token: () => token,
-    /** 轮换令牌并持久化；旧链接与旧 Cookie 立即失效 */
     rotate() {
       token = newToken()
       saveGatewayState(stateFile, { token, enabled: boot.enabled }, log)
       return token
     },
-    /** 令牌尾迹（日志/状态展示用，不暴露全文） */
     fingerprint: () => token.slice(-4),
-    /** 运行状态快照 */
     state: () => ({ listening: state.listening, error: state.error }),
     close() {
       try {

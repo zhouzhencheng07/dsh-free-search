@@ -7,9 +7,9 @@ const KEYLESS_HEADER = { 'X-Tavily-Access-Mode': 'keyless' }
 export const tavilyEngine = {
   id: 'tavily',
   available: () => true,
-  async search(query, { maxResults = 5, signal } = {}) {
+  async search(query: string, { maxResults = 5, signal }: { maxResults?: number; signal?: AbortSignal } = {}) {
     const apiKey = process.env.TAVILY_API_KEY
-    const headers = { 'Content-Type': 'application/json' }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`
     } else {
@@ -29,12 +29,14 @@ export const tavilyEngine = {
     if (!resp.ok) {
       throw new Error(`tavily: HTTP ${resp.status}`)
     }
-    const data = await resp.json()
-    const items = (data.results ?? []).map((r) => ({
-      url: r.url ?? '',
-      title: r.title ?? '',
-      snippet: r.content ?? '',
-    })).filter((it) => it.url)
+    const data: any = await resp.json()
+    const items = (data.results ?? [])
+      .map((r: { url?: string; title?: string; content?: string }) => ({
+        url: r.url ?? '',
+        title: r.title ?? '',
+        snippet: r.content ?? '',
+      }))
+      .filter((it: { url: string }) => it.url)
     return {
       items,
       ...(typeof data.answer === 'string' && data.answer ? { summary: data.answer } : {}),

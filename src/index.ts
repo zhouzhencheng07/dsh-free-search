@@ -7,8 +7,8 @@
 //   文件预览（file preview）——GET /dsh-kit/read?path=<绝对文件> 读取文本
 //     内容（限长 + 二进制探测），浏览器端在右侧 details 列展示；
 //   网页搜索（web search）——自 dsh-free-search v0.2.0 并入：向 web seam 注册
-//     'free-search' provider（免费引擎链），实现见 src/web-search.js +
-//     src/engine-chain.js + src/engines/*。
+//     'free-search' provider（免费引擎链），实现见 src/web-search.ts +
+//     src/engine-chain.ts + src/engines/*。
 //
 // 浏览器半边（client/bundle.js）：终端/文件树入口按钮注册在对话输入框工具行
 // （conversation.input.left），面板本体挂 shell.overlay 全帧浮层；终端开合底部
@@ -52,17 +52,19 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 
-import { applySkillPool, findProjectRoot } from './skill-pool.js'
-import { applyWebSearch } from './web-search.js'
-import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack } from './git.js'
-import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.js'
-import { decodePreviewText } from './text-decode.js'
-import { rawContentType, parseRangeHeader } from './raw-file.js'
-import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from './upload.js'
-import { BrowserService } from './browser.js'
-import { loadToolsModule, buildBrowserTools } from './browser-tools.js'
+import { applySkillPool, findProjectRoot } from './skill-pool.ts'
+import { applyWebSearch } from './web-search.ts'
+import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack } from './git.ts'
+import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.ts'
+import type { PhoneGatewayHandle } from './phone-gateway.ts'
+import { decodePreviewText } from './text-decode.ts'
+import { rawContentType, parseRangeHeader } from './raw-file.ts'
+import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from './upload.ts'
+import { BrowserService } from './browser.ts'
+import { loadToolsModule, buildBrowserTools } from './browser-tools.ts'
 
 /** 手机访问网关对外端口（0.0.0.0）的默认值，可在设置里改（phonePort，1-65535） */
 const PHONE_PORT = 3090
@@ -71,12 +73,64 @@ export const name = 'dsh-kit'
 
 const require = createRequire(import.meta.url)
 
+// ── 宿主对象最小依赖面 ──
+// cordis ctx / webServer / settings 等都是运行时才挂载的宿主组合对象，类型不随
+// 插件分发；这里只声明本插件实际触达的成员（与 browser-tools.ts / skill-pool.ts
+// 同一约定）。inject 回调的 services 袋按 any 传入，各回调自行具化参数类型。
+
+interface KitCtx {
+  inject(deps: string[], cb: (svc: any) => void): void
+  effect?(fn: () => void | (() => void), label?: string): void
+  get(name: string): unknown
+}
+
+interface KitWebRoute {
+  kind: 'exact' | 'prefix'
+  path: string
+  handler: (req: http.IncomingMessage, res: http.ServerResponse) => void | Promise<void>
+}
+
+interface KitWebServer {
+  register(route: KitWebRoute): () => void
+  registerUpgrade(route: {
+    path: string
+    handler: (req: http.IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void
+  }): () => void
+  port: number
+}
+
+interface KitSettingsService {
+  installSection(owner: unknown, ns: string, schema: unknown, entry: Record<string, never>, hooks: unknown): void
+}
+
+interface KitCredentials {
+  readRecord?: (name: string) => Promise<{ kind?: string; payload?: any } | null>
+}
+
+interface KitWebCtx {
+  webServer: KitWebServer
+  credentials: KitCredentials
+  effect(fn: () => void | (() => void), label?: string): void
+}
+
+interface ShellChoice {
+  file: string
+  args: string[]
+  label: string
+}
+
+interface GitRunResult {
+  ok: boolean
+  out: string
+  err: string
+}
+
 /**
  * 定位运行中 DSH 的 monorepo 根（含 pnpm-workspace.yaml 的目录）。从
  * process.argv[1]（dsh 启动脚本；tsx 开发模式下可能是相对路径，先 path.resolve
  * 成绝对路径，否则 pnpm-workspace.yaml 检查落空）向上走。非 DSH 环境返回 null。
  */
-function findMonorepoRoot() {
+function findMonorepoRoot(): string | null {
   const anchor = process.argv[1]
   if (!anchor) return null
   const abs = path.isAbsolute(anchor) ? anchor : path.resolve(process.cwd(), anchor)
@@ -102,7 +156,7 @@ function findMonorepoRoot() {
  *      都够不到；直接从 pnpm store 按 spec 定位实体加载。
  * 都失败返回 null（终端能力不可用，插件其余功能正常）。
  */
-function loadDep(spec) {
+function loadDep(spec: string): any {
   try {
     return require(spec)
   } catch {
@@ -121,7 +175,7 @@ function loadDep(spec) {
   if (root) {
     const pnpm = path.join(root, 'node_modules', '.pnpm')
     if (fs.existsSync(pnpm)) {
-      let entries = []
+      let entries: string[] = []
       try {
         entries = fs.readdirSync(pnpm)
       } catch {
@@ -151,7 +205,7 @@ function loadDep(spec) {
  * 直接 import 根下 lib 入口；其 workspace 依赖在 monorepo 自身 node_modules 内解析，
  * 完整可用。
  */
-async function loadMonorepoDep(relEntry) {
+async function loadMonorepoDep(relEntry: string): Promise<any | null> {
   const root = findMonorepoRoot()
   if (!root) return null
   const entry = path.join(root, relEntry)
@@ -177,7 +231,7 @@ async function loadMonorepoDep(relEntry) {
  *      相对路径直 import 本地包 lib 入口（见 loadMonorepoDep）。
  * 都失败返回 null（设置命名空间不注册，插件其余功能保持可用性优先）。
  */
-async function loadSettingsDep(spec, monorepoEntry) {
+async function loadSettingsDep(spec: string, monorepoEntry?: string): Promise<any> {
   try {
     return await import(spec)
   } catch {
@@ -203,23 +257,26 @@ if (!pty || !WebSocketServer) {
 }
 
 /** 尺寸参数收敛到安全区间 */
-function clampDim(value, min, max, fallback) {
+function clampDim(value: unknown, min: number, max: number, fallback: number): number {
   const n = Math.floor(Number(value))
   if (!Number.isFinite(n)) return fallback
   return Math.min(max, Math.max(min, n))
 }
 
+type ValidateOk<T> = { ok: true } & T
+type ValidateFail = { ok: false; message: string }
+
 /** 校验浏览器传来的 cwd：绝对路径 + 存在 + 是目录，返回规范化的真实路径 */
-function validateCwd(raw) {
+function validateCwd(raw: unknown): ValidateOk<{ path: string }> | ValidateFail {
   if (typeof raw !== 'string' || raw.trim() === '') return { ok: false, message: '缺少工作目录（cwd）' }
   const resolved = path.resolve(raw.trim())
-  let real
+  let real: string
   try {
     real = fs.realpathSync(resolved)
   } catch {
     return { ok: false, message: `目录不存在：${resolved}` }
   }
-  let stat
+  let stat: fs.Stats
   try {
     stat = fs.statSync(real)
   } catch {
@@ -230,16 +287,16 @@ function validateCwd(raw) {
 }
 
 /** 校验浏览器传来的文件路径：绝对路径 + 存在 + 是文件，返回真实路径、大小与修改时间 */
-function validateFile(raw) {
+function validateFile(raw: unknown): ValidateOk<{ path: string; size: number; mtimeMs: number }> | ValidateFail {
   if (typeof raw !== 'string' || raw.trim() === '') return { ok: false, message: '缺少文件路径' }
   const resolved = path.resolve(raw.trim())
-  let real
+  let real: string
   try {
     real = fs.realpathSync(resolved)
   } catch {
     return { ok: false, message: `文件不存在：${resolved}` }
   }
-  let stat
+  let stat: fs.Stats
   try {
     stat = fs.statSync(real)
   } catch {
@@ -250,16 +307,16 @@ function validateFile(raw) {
 }
 
 /** 校验浏览器传来的路径：绝对路径 + 存在（文件或目录均可），返回真实路径与 stat */
-function validateAny(raw) {
+function validateAny(raw: unknown): ValidateOk<{ path: string; stat: fs.Stats }> | ValidateFail {
   if (typeof raw !== 'string' || raw.trim() === '') return { ok: false, message: '缺少路径' }
   const resolved = path.resolve(raw.trim())
-  let real
+  let real: string
   try {
     real = fs.realpathSync(resolved)
   } catch {
     return { ok: false, message: `路径不存在：${resolved}` }
   }
-  let stat
+  let stat: fs.Stats
   try {
     stat = fs.statSync(real)
   } catch {
@@ -269,7 +326,7 @@ function validateAny(raw) {
 }
 
 /** target 是否位于 dir 子树内（dir 本身不算在内——根目录不可改删） */
-function withinTree(dirReal, targetReal) {
+function withinTree(dirReal: string, targetReal: string): boolean {
   const rel = path.relative(dirReal, targetReal)
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
@@ -277,14 +334,14 @@ function withinTree(dirReal, targetReal) {
 /** Windows 保留设备名（con.txt 这类同样保留，故只取第一个点之前的部分判） */
 const WIN_RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i
 /** 新建/重命名的名称合法性：禁空、首尾空白、路径分隔符、控制字符、Windows 特殊字符与相对段 */
-function invalidFsName(raw) {
+function invalidFsName(raw: unknown): boolean {
   if (typeof raw !== 'string') return true
   const name = raw.trim()
   if (name === '' || name !== raw) return true
   if (name === '.' || name === '..') return true
   if (/[/\\]/.test(name)) return true
   if (/[\u0000-\u001f<>:"|?*]/.test(name)) return true
-  if (WIN_RESERVED_NAME.test(name.split('.')[0])) return true
+  if (WIN_RESERVED_NAME.test(name.split('.')[0] ?? '')) return true
   return false
 }
 
@@ -294,7 +351,7 @@ function invalidFsName(raw) {
  * 转义后嵌入脚本再以 -Command 原样传递，规避命令行引号转义问题）；其它平台无
  * 回收站 API，resolve(false) 由调用方决定回退方式。
  */
-function recycleDelete(target, isDir) {
+function recycleDelete(target: string, isDir: boolean): Promise<boolean> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
       resolve(false)
@@ -305,7 +362,7 @@ function recycleDelete(target, isDir) {
     const script =
       `try{Add-Type -AssemblyName Microsoft.VisualBasic;` +
       `[Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${esc}','OnlyErrorDialogs','SendToRecycleBin')}catch{exit 1}`
-    let child
+    let child: import('node:child_process').ChildProcess
     try {
       child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true })
     } catch {
@@ -316,7 +373,7 @@ function recycleDelete(target, isDir) {
     const timer = setTimeout(() => {
       try { child.kill() } catch {}
     }, 15000)
-    const finish = (ok) => {
+    const finish = (ok: boolean) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -328,7 +385,7 @@ function recycleDelete(target, isDir) {
 }
 
 /** Windows 优先 pwsh（PowerShell 7+），退回 powershell.exe；其它平台用 $SHELL 或 bash。结果缓存。 */
-let shellCache
+let shellCache: ShellChoice | undefined
 /** PSReadLine 历史预测初始化（灰字建议 + → 接受整条建议，fish 风格）：PowerShell
  *  默认不启用，启动参数显式开启。-EncodedCommand（UTF-16LE base64）把初始化脚本
  *  变成单一 token，规避 Windows 命令行的引号/空格问题；-NoExit 保证执行完初始化
@@ -340,10 +397,10 @@ const PS_PREDICT_INIT = Buffer.from(
   'utf16le',
 ).toString('base64')
 
-function resolveShell() {
+function resolveShell(): ShellChoice {
   if (shellCache) return shellCache
   if (process.platform === 'win32') {
-    let pwsh = null
+    let pwsh: string | null = null
     for (const dir of (process.env.PATH ?? '').split(';')) {
       if (!dir) continue
       try {
@@ -366,7 +423,7 @@ function resolveShell() {
 }
 
 /** 同源校验：Origin 必须存在且 host 与请求 Host 完全一致（webserver 默认只绑 loopback）。 */
-function sameOrigin(req) {
+function sameOrigin(req: http.IncomingMessage): boolean {
   const origin = req.headers.origin
   const host = req.headers.host
   if (typeof origin !== 'string' || typeof host !== 'string') return false
@@ -404,7 +461,7 @@ const VENDOR_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
 ])
 
-export async function apply(ctx) {
+export async function apply(ctx: KitCtx): Promise<void> {
   // ── 插件设置命名空间 ──
   // 浏览器半边设置卡（client/bundle.js 的 dsh-kit 卡片，settings.plugin.item）
   // 的数据通道：terminalEnabled/fileTreeEnabled/skillsPageEnabled 三个功能开关
@@ -413,7 +470,7 @@ export async function apply(ctx) {
   // "namespace not registered"。注册经 ctx.inject(['settings']) 等服务就绪，
   // 不能拿 ctx.get('settings') 判存在后跳过。
   // 宿主消费的开关：searchEnabled 在启动期决定 free-search provider 挂哪种
-  // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.js）；
+  // 实现——开=免费引擎链，关=同 id 转发官方渠道（见 web-search.ts）；
   // searchMaxResults 是每次搜索的来源条数上限（1-8，默认 5），provider 每次
   // 调用现读，改完即生效。phoneEnabled 同为宿主消费：经 onChange 热同步网关
   // 启停/端口，改开关立即生效无需重启。其余开关全在浏览器端门控入口按钮，
@@ -455,7 +512,7 @@ export async function apply(ctx) {
     scShortcut: z.string().default('Ctrl+Alt+.'),
   }) : null
 
-  let readSettings = () => ({})
+  let readSettings: () => any = () => ({})
   /** phoneSettingsReady：setSource 首次触发时置 true，下游 webServer 注入段由此判断
    *  是立即评估网关启用位还是等 onSettingsReady 回调。解决时序差——readSettings 在
    *  settings 注册前是空函数，phoneKeepGatewayOn() 恒 false */
@@ -467,7 +524,7 @@ export async function apply(ctx) {
    *  才读到真实值）；注意 onSettingsReady 在 webServer 注入回填前是空函数——如果注入
    *  回调还未执行，调用无效果；注入回调已存在时触发首次评估（解决时序差） */
   const settingsHooks = {
-    setSource: (current) => {
+    setSource: (current: () => any) => {
       readSettings = current
       phoneSettingsReady = true
       onSettingsReady()
@@ -475,11 +532,11 @@ export async function apply(ctx) {
     onChange: () => { onSettingsChanged() },
   }
   if (Config) {
-    ctx.inject(['settings'], (settingsCtx) => {
+    ctx.inject(['settings'], (settingsCtx: { settings: KitSettingsService }) => {
       try {
         settingsCtx.settings.installSection(ctx, 'dsh-kit', Config, {}, settingsHooks)
       } catch (error) {
-        console.warn(`dsh-kit: 设置命名空间注册失败：${error?.message ?? error}`)
+        console.warn(`dsh-kit: 设置命名空间注册失败：${error instanceof Error ? error.message : error}`)
       }
     })
     applyWebSearch(ctx, {
@@ -491,10 +548,10 @@ export async function apply(ctx) {
     applyWebSearch(ctx)
   }
 
-  // 技能池端点（实现见 src/skill-pool.js）：自带 webServer 注入与同源校验。
+  // 技能池端点（实现见 src/skill-pool.ts）：自带 webServer 注入与同源校验。
   // skills 注册表是可选增强（归属展示），服务晚于本行就绪也无碍——注入回调捕获引用。
-  let skillsRegistry = null
-  ctx.inject(['skills'], (skillsCtx) => {
+  let skillsRegistry: unknown = null
+  ctx.inject(['skills'], (skillsCtx: { skills: unknown }) => {
     skillsRegistry = skillsCtx.skills
   })
   applySkillPool(ctx, { getRegistry: () => skillsRegistry })
@@ -502,16 +559,16 @@ export async function apply(ctx) {
   // 后台任务控制（实现见下）：浏览器半边「任务」面板的结束/读输出走这里。
   // jobs 注册表（dsh-jobs-local）与 agents 注册表（dsh-agent）都是宿主组合里的
   // 可选服务，分开注入捕获引用；缺失时对应端点返回 503（面板隐藏对应能力）。
-  let jobsRegistry = null
-  ctx.inject(['jobs'], (capacityCtx) => {
+  let jobsRegistry: any = null
+  ctx.inject(['jobs'], (capacityCtx: { jobs: any }) => {
     jobsRegistry = capacityCtx.jobs
   })
-  let agentsRegistry = null
-  ctx.inject(['agents'], (capacityCtx) => {
+  let agentsRegistry: any = null
+  ctx.inject(['agents'], (capacityCtx: { agents: any }) => {
     agentsRegistry = capacityCtx.agents
   })
 
-  // ── 内置浏览器（src/browser.js + src/browser-tools.js）──
+  // ── 内置浏览器（src/browser.ts + src/browser-tools.ts）──
   // 服务懒启动（首次工具调用/面板 watch 才拉起 Edge），这里只建对象与注册：
   //   工具注册门控 = settings 就绪 + tools 就绪（双键注入），关=不注册（重启生效）；
   //   execute 内有 isDisabled 守卫兜底注册期竞态；dispose 挂 ctx.effect（插件卸载
@@ -523,7 +580,7 @@ export async function apply(ctx) {
     })
   }
   const browserToolsMod = browserService.available ? await loadToolsModule((m) => console.warn(`dsh-kit: ${m}`)) : null
-  let browserDefs = null
+  let browserDefs: ReturnType<typeof buildBrowserTools> | null = null
   try {
     browserDefs =
       browserToolsMod && typeof browserToolsMod.defineTool === 'function'
@@ -531,26 +588,26 @@ export async function apply(ctx) {
         : null
   } catch (error) {
     // 构建失败降级为无浏览器工具，不炸插件树（可用性优先，同 node-pty 先例）
-    console.warn(`dsh-kit: 浏览器工具构建失败，本插件浏览器工具未注册：${error?.message ?? error}`)
+    console.warn(`dsh-kit: 浏览器工具构建失败，本插件浏览器工具未注册：${error instanceof Error ? error.message : error}`)
     browserDefs = null
   }
   if (browserService.available && !browserDefs) {
     console.warn('dsh-kit: dsh-tools 不可达或形态不符，浏览器工具未注册（其余功能不受影响）')
   }
-  ctx.inject(['settings', 'tools'], (caps) => {
+  ctx.inject(['settings', 'tools'], (caps: { tools: { register: (def: unknown) => void } }) => {
     if (readSettings().browserEnabled === false) return
     if (!browserDefs) return
     for (const def of browserDefs) {
       try {
         caps.tools.register(def)
       } catch (error) {
-        console.warn(`dsh-kit: 浏览器工具注册失败：${error?.message ?? error}`)
+        console.warn(`dsh-kit: 浏览器工具注册失败：${error instanceof Error ? error.message : error}`)
       }
     }
   })
 
   // webServer 可能在本插件 apply 之后才挂载，用动态注入等它就绪
-  ctx.inject(['webServer', 'credentials'], (webCtx) => {
+  ctx.inject(['webServer', 'credentials'], (webCtx: KitWebCtx) => {
     webCtx.effect(() => {
       // ── vendor 静态资源 ──
       const disposeVendor = webCtx.webServer.register({
@@ -564,10 +621,10 @@ export async function apply(ctx) {
           }
           // 子目录资源（cmaps/*.bcmap、standard_fonts/*.pfb 等）：单段文件名
           // 白名单字符校验，杜绝路径穿越
-          let file = null
+          let file: string | null
           const sub = /^\/dsh-kit\/vendor\/(cmaps|standard_fonts)\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(pathname)
           if (sub) {
-            file = path.join(VENDOR_SUBDIRS.get(sub[1]), sub[2])
+            file = path.join(VENDOR_SUBDIRS.get(sub[1] ?? '') ?? '', sub[2] ?? '')
           } else {
             file = VENDOR_FILES.get(pathname) ?? null
           }
@@ -597,7 +654,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/tree',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -654,7 +711,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/read',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -708,7 +765,7 @@ export async function apply(ctx) {
             }
             // 文本/二进制判定与解码：BOM 优先（UTF-8/UTF-16 系），无 BOM 含 NUL
             // 时文本类扩展名按 UTF-16LE 尝试恢复（Windows 常见存法），详见
-            // src/text-decode.js（有单测）
+            // src/text-decode.ts（有单测）
             const decoded = decodePreviewText(body, file.path)
             json(200, { path: file.path, size: file.size, mtimeMs: file.mtimeMs, truncated: false, binary: decoded.binary, content: decoded.content })
           })
@@ -723,7 +780,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/raw',
         handler: (req, res) => {
-          const fail = (code, msg) => {
+          const fail = (code: number, msg: string) => {
             res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(msg)
           }
@@ -761,12 +818,11 @@ export async function apply(ctx) {
             res.end()
             return
           }
-          const partial = range !== undefined
-          let stream
+          let stream: import('node:fs').ReadStream
           try {
-            stream = fs.createReadStream(file.path, partial ? { start: range.start, end: range.end } : {})
+            stream = fs.createReadStream(file.path, range !== undefined ? { start: range.start, end: range.end } : {})
           } catch (error) {
-            fail(404, `读取文件失败：${error?.message ?? error}`)
+            fail(404, `读取文件失败：${error instanceof Error ? error.message : error}`)
             return
           }
           stream.on('error', (error) => {
@@ -777,7 +833,7 @@ export async function apply(ctx) {
             }
             fail(404, `读取文件失败：${error?.message ?? error}`)
           })
-          if (partial) {
+          if (range !== undefined) {
             res.writeHead(206, {
               ...headers,
               'content-range': `bytes ${range.start}-${range.end}/${file.size}`,
@@ -799,7 +855,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/write',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -811,7 +867,7 @@ export async function apply(ctx) {
             json(403, { error: 'cross-origin denied' })
             return
           }
-          const chunks = []
+          const chunks: Buffer[] = []
           let total = 0
           let aborted = false
           req.on('data', (c) => {
@@ -827,7 +883,7 @@ export async function apply(ctx) {
           })
           req.on('end', () => {
             if (aborted) return
-            let body
+            let body: any
             try {
               body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
             } catch {
@@ -836,8 +892,12 @@ export async function apply(ctx) {
             }
             const dir = validateCwd(String(body?.cwd ?? ''))
             const file = validateFile(String(body?.path ?? ''))
-            if (!dir.ok || !file.ok) {
-              json(400, { error: !dir.ok ? dir.message : file.message })
+            if (!dir.ok) {
+              json(400, { error: dir.message })
+              return
+            }
+            if (!file.ok) {
+              json(400, { error: file.message })
               return
             }
             const rel = path.relative(dir.path, file.path)
@@ -862,11 +922,11 @@ export async function apply(ctx) {
               json(400, { error: '缺少 baseMtime' })
               return
             }
-            let stat
+            let stat: fs.Stats
             try {
               stat = fs.statSync(file.path)
             } catch (error) {
-              json(404, { error: `读取文件失败：${error?.message ?? error}` })
+              json(404, { error: `读取文件失败：${error instanceof Error ? error.message : error}` })
               return
             }
             if (stat.mtimeMs !== baseMtime) {
@@ -878,7 +938,7 @@ export async function apply(ctx) {
                 json(500, { error: `写入失败：${writeError?.message ?? writeError}` })
                 return
               }
-              let next
+              let next: number | undefined
               try {
                 next = fs.statSync(file.path).mtimeMs
               } catch {}
@@ -893,14 +953,14 @@ export async function apply(ctx) {
       // 只会弹在运行它的机器上，手机够不到电脑的），选完经 HTTP 传回写入工作区。
       // 校验链与 /write 一致：同源（POST 强制 Origin）→ dir 走 validateCwd；文件名
       // 只取 basename + 去非法字符，重名自动追加 " (n)" 序号不覆盖。整体缓冲有上限，
-      // 单文件另设上限（multipart 手工解析，见 src/upload.js）。
+      // 单文件另设上限（multipart 手工解析，见 src/upload.ts）。
       const UPLOAD_TOTAL_LIMIT = 200 * 1024 * 1024
       const UPLOAD_FILE_LIMIT = 100 * 1024 * 1024
       const disposeUpload = webCtx.webServer.register({
         kind: 'exact',
         path: '/dsh-kit/upload',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -923,7 +983,7 @@ export async function apply(ctx) {
             json(415, { error: '需要 multipart/form-data' })
             return
           }
-          const chunks = []
+          const chunks: Buffer[] = []
           let total = 0
           let aborted = false
           req.on('data', (c) => {
@@ -944,8 +1004,8 @@ export async function apply(ctx) {
               json(400, { error: '没有可解析的文件' })
               return
             }
-            const saved = []
-            let warning = null
+            const saved: Array<{ name: string; size: number }> = []
+            let warning: string | null = null
             for (const part of parts) {
               const name = safeUploadName(part.filename)
               if (!name) {
@@ -965,7 +1025,7 @@ export async function apply(ctx) {
                 fs.writeFileSync(path.join(dir.path, final), part.data)
                 saved.push({ name: final, size: part.data.length })
               } catch (error) {
-                warning = `写入失败：${error?.message ?? error}`
+                warning = `写入失败：${error instanceof Error ? error.message : error}`
               }
             }
             if (saved.length === 0) {
@@ -990,7 +1050,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/fs/op',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1008,7 +1068,7 @@ export async function apply(ctx) {
             if (raw.length > 65536) req.destroy()
           })
           req.on('end', async () => {
-            let body
+            let body: any
             try {
               body = JSON.parse(raw)
             } catch {
@@ -1070,12 +1130,12 @@ export async function apply(ctx) {
               return
             }
 
-            const any = validateAny(String(body?.path ?? ''))
-            if (!any.ok) {
-              json(400, { error: any.message })
+            const target = validateAny(String(body?.path ?? ''))
+            if (!target.ok) {
+              json(400, { error: target.message })
               return
             }
-            if (!withinTree(dir.path, any.path)) {
+            if (!withinTree(dir.path, target.path)) {
               json(400, { error: '目标不在当前工作区内' })
               return
             }
@@ -1086,35 +1146,35 @@ export async function apply(ctx) {
                 return
               }
               const name = String(body.name).trim()
-              const target = path.join(path.dirname(any.path), name)
+              const renamed = path.join(path.dirname(target.path), name)
               let clash = false
               try {
-                fs.statSync(target)
+                fs.statSync(renamed)
                 clash = true
               } catch {}
               if (clash) {
                 json(400, { error: `目标已存在：${name}` })
                 return
               }
-              fs.rename(any.path, target, (rError) => {
+              fs.rename(target.path, renamed, (rError) => {
                 if (rError) {
                   json(500, { error: `重命名失败：${rError?.message ?? rError}` })
                   return
                 }
-                json(200, { ok: true, path: target })
+                json(200, { ok: true, path: renamed })
               })
               return
             }
 
             if (op === 'delete') {
-              const gone = await recycleDelete(any.path, any.stat.isDirectory())
+              const gone = await recycleDelete(target.path, target.stat.isDirectory())
               if (!gone) {
                 if (process.platform !== 'win32') {
                   // 无回收站 API 的平台：退回直接删除
                   try {
-                    await fs.promises.rm(any.path, { recursive: true })
+                    await fs.promises.rm(target.path, { recursive: true })
                   } catch (dError) {
-                    json(500, { error: `删除失败：${dError?.message ?? dError}` })
+                    json(500, { error: `删除失败：${dError instanceof Error ? dError.message : dError}` })
                     return
                   }
                 } else {
@@ -1139,9 +1199,9 @@ export async function apply(ctx) {
       /** 推送等网络操作允许更长的等待（默认 10s 会误杀慢推） */
       const PUSH_TIMEOUT = 60000
       /** 跑一条 git 命令；任何失败（ENOENT/非零/超时）都 resolve {ok:false} */
-      const runGit = (args, cwdDir, timeoutMs = GIT_TIMEOUT) =>
+      const runGit = (args: string[], cwdDir: string, timeoutMs: number = GIT_TIMEOUT): Promise<GitRunResult> =>
         new Promise((resolve) => {
-          let child
+          let child: import('node:child_process').ChildProcess
           try {
             child = spawn('git', args, { cwd: cwdDir, windowsHide: true })
           } catch {
@@ -1157,7 +1217,7 @@ export async function apply(ctx) {
             } catch {}
             finish(false)
           }, timeoutMs)
-          const finish = (ok) => {
+          const finish = (ok: boolean) => {
             if (settled) return
             settled = true
             clearTimeout(timer)
@@ -1173,7 +1233,7 @@ export async function apply(ctx) {
           child.on('close', (code) => finish(code === 0))
         })
       /** cwd 的 git 项目根；非仓库返回 null */
-      const gitRootFor = (realCwd) => {
+      const gitRootFor = (realCwd: string): string | null => {
         const root = findProjectRoot(realCwd)
         try {
           return fs.existsSync(path.join(root, '.git')) ? root : null
@@ -1188,7 +1248,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/status',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1220,8 +1280,8 @@ export async function apply(ctx) {
               json(200, { available: false })
               return
             }
-            const entries = []
-            const untrackedDirs = []
+            const entries: Array<{ xy: string; path: string; abs: string; stats?: { a: number; d: number } | null }> = []
+            const untrackedDirs: string[] = []
             // -b 的首行是分支摘要（## main...origin/main [ahead 1]），单独解析；
             // 其余行不会出现 "##" 前缀（条目 xy 至多两位），不干扰条目解析
             const branchInfo = { branch: '', upstream: null, ahead: 0, behind: 0, gone: false, detached: false, unborn: false }
@@ -1258,11 +1318,11 @@ export async function apply(ctx) {
             // 无统计；二进制行为 "- - path" 跳过；重命名路径格式特殊，允许缺失）
             const n = await runGit(['-c', 'core.quotePath=false', 'diff', 'HEAD', '--numstat'], root)
             if (n.ok) {
-              const statMap = new Map()
+              const statMap = new Map<string, { a: number; d: number }>()
               for (const line of n.out.split('\n')) {
                 const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line)
                 if (!m || m[1] === '-' || m[2] === '-') continue
-                statMap.set(m[3], { a: Number(m[1]), d: Number(m[2]) })
+                statMap.set(m[3]!, { a: Number(m[1]), d: Number(m[2]) })
               }
               for (const e of entries) e.stats = statMap.get(e.path) ?? null
             }
@@ -1279,7 +1339,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/diff',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1295,8 +1355,12 @@ export async function apply(ctx) {
           const url = new URL(req.url ?? '/', 'http://dsh-kit.local')
           const dir = validateCwd(url.searchParams.get('cwd') ?? '')
           const file = validateFile(url.searchParams.get('path') ?? '')
-          if (!dir.ok || !file.ok) {
-            json(400, { error: !dir.ok ? dir.message : file.message })
+          if (!dir.ok) {
+            json(400, { error: dir.message })
+            return
+          }
+          if (!file.ok) {
+            json(400, { error: file.message })
             return
           }
           const root = gitRootFor(dir.path)
@@ -1336,7 +1400,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/init',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1354,7 +1418,7 @@ export async function apply(ctx) {
             if (raw.length > 4096) req.destroy()
           })
           req.on('end', async () => {
-            let body
+            let body: any
             try {
               body = JSON.parse(raw)
             } catch {
@@ -1396,7 +1460,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/op',
         handler: async (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1414,7 +1478,7 @@ export async function apply(ctx) {
             if (raw.length > 65536) req.destroy()
           })
           req.on('end', async () => {
-            let body
+            let body: any
             try {
               body = JSON.parse(raw)
             } catch {
@@ -1433,7 +1497,7 @@ export async function apply(ctx) {
             }
             const op = String(body?.op ?? '')
             const pathOp = op === 'stage' || op === 'unstage' || op === 'discard'
-            let rel = null
+            let rel = ''
             if (pathOp) {
               const file = validateFile(String(body?.path ?? ''))
               if (!file.ok) {
@@ -1446,7 +1510,7 @@ export async function apply(ctx) {
                 return
               }
             }
-            let r
+            let r: GitRunResult | undefined
             if (op === 'stage') r = await runGit(['add', '--', rel], root)
             else if (op === 'unstage') r = await runGit(['restore', '--staged', '--', rel], root)
             else if (op === 'discard') r = await runGit(['restore', '--', rel], root)
@@ -1534,7 +1598,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/log',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1588,7 +1652,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/show',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1631,7 +1695,7 @@ export async function apply(ctx) {
                 json(200, { available: false })
                 return
               }
-              const f = show.out.split('\n')[0].split('\x1f')
+              const f = show.out.split('\n')[0]!.split('\x1f')
               const meta = {
                 H: f[0] || '',
                 h: f[1] || '',
@@ -1642,7 +1706,7 @@ export async function apply(ctx) {
                 s: f[6] || '',
                 b: f.slice(7).join('\x1f').trim(),
               }
-              const files = []
+              const files: Array<{ st: string; path: string; abs: string }> = []
               if (dt.ok) {
                 for (const line of dt.out.split('\n')) {
                   const tab = line.indexOf('\t')
@@ -1676,7 +1740,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/git/branch',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -1726,15 +1790,15 @@ export async function apply(ctx) {
 
       // ── 终端 WebSocket 端点 ──
       // 一条 WS 连接 = 一个 pty 会话；连接关闭即杀进程（面板语义见文件头注释）。
-      let disposeUpgrade = null
-      let disposeHttp = null
+      let disposeUpgrade: (() => void) | null = null
+      let disposeHttp: (() => void) | null = null
       if (pty && WebSocketServer) {
         const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
 
-        wss.on('connection', (ws) => {
-          let proc = null
+        wss.on('connection', (ws: any) => {
+          let proc: any = null
           let dead = false
-          const send = (obj) => {
+          const send = (obj: unknown) => {
             if (!dead && ws.readyState === ws.OPEN) {
               try {
                 ws.send(JSON.stringify(obj))
@@ -1744,8 +1808,8 @@ export async function apply(ctx) {
             }
           }
 
-          ws.on('message', (raw) => {
-            let msg
+          ws.on('message', (raw: any) => {
+            let msg: any
             try {
               msg = JSON.parse(String(raw))
             } catch {
@@ -1773,13 +1837,13 @@ export async function apply(ctx) {
                   env: { ...process.env, TERM: 'xterm-256color' },
                 })
               } catch (error) {
-                send({ t: 'error', message: `启动 shell 失败：${error?.message ?? error}` })
+                send({ t: 'error', message: `启动 shell 失败：${error instanceof Error ? error.message : error}` })
                 ws.close(1011, 'spawn failed')
                 return
               }
               send({ t: 'started', shell: shell.label, cwd: dir.path })
-              proc.onData((data) => send({ t: 'o', d: data }))
-              proc.onExit(({ exitCode }) => {
+              proc.onData((data: any) => send({ t: 'o', d: data }))
+              proc.onExit(({ exitCode }: any) => {
                 send({ t: 'exit', exitCode })
                 try {
                   ws.close(1000, 'exited')
@@ -1825,7 +1889,7 @@ export async function apply(ctx) {
               socket.destroy()
               return
             }
-            wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
+            wss.handleUpgrade(req, socket, head, (ws: any) => wss.emit('connection', ws, req))
           },
         })
 
@@ -1840,37 +1904,39 @@ export async function apply(ctx) {
         })
       }
 
-      // ── 浏览器面板 WebSocket 端点（src/browser.js 的面板面）──
+      // ── 浏览器面板 WebSocket 端点（src/browser.ts 的面板面）──
       // 协议：hello（连接即回 state）→ 浏览器端；watch {on}（帧流订阅引用计数，
       // 0 时停流）/ open {url}（URL 栏手动导航）→ 宿主。服务事件（state/navigated/
       // crashed/closed）广播给所有连接，帧 {t:'frame', data(jpeg base64)} 同通道。
       // 同源校验同终端；开关关闭时面板入口在浏览器端已隐藏，此处不再重复门控。
       if (browserService.available) {
-        const browserSockets = new Set()
-        const sendTo = (ws, obj) => {
+        const browserSockets = new Set<any>()
+        const sendTo = (ws: any, obj: unknown) => {
           try {
             if (ws.readyState === 1) ws.send(JSON.stringify(obj))
           } catch {
             // 连接正在断开
           }
         }
-        const broadcast = (obj) => {
+        const broadcast = (obj: unknown) => {
           for (const ws of browserSockets) sendTo(ws, obj)
         }
         const offBrowserEvent = browserService.on((evt) => {
-          broadcast({ t: 'event', kind: evt.kind, tabId: evt.tabId, url: evt.url, title: evt.title })
+          // ws 投影统一字段形状：state/closed 无 tabId/url/title（投影为 undefined，JSON 序列化时丢弃）
+          const flat = evt as { kind: string; tabId?: number; url?: string; title?: string }
+          broadcast({ t: 'event', kind: flat.kind, tabId: flat.tabId, url: flat.url, title: flat.title })
           if (evt.kind === 'closed' || evt.kind === 'crashed' || evt.kind === 'state') {
             void browserService.state().then((s) => broadcast({ t: 'state', ...s }))
           }
         })
         void offBrowserEvent
         const bwss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
-        bwss.on('connection', (ws) => {
+        bwss.on('connection', (ws: any) => {
           browserSockets.add(ws)
           let watched = false
           void browserService.state().then((s) => sendTo(ws, { t: 'state', ...s }))
-          ws.on('message', (raw) => {
-            let msg
+          ws.on('message', (raw: any) => {
+            let msg: any
             try {
               msg = JSON.parse(String(raw))
             } catch {
@@ -1923,7 +1989,7 @@ export async function apply(ctx) {
               socket.destroy()
               return
             }
-            bwss.handleUpgrade(req, socket, head, (ws) => bwss.emit('connection', ws, req))
+            bwss.handleUpgrade(req, socket, head, (ws: any) => bwss.emit('connection', ws, req))
           },
         })
         const disposeBrowserProbe = webCtx.webServer.register({
@@ -1938,7 +2004,7 @@ export async function apply(ctx) {
         void disposeBrowserProbe
       }
 
-      // ── 手机访问网关（src/phone-gateway.js）──
+      // ── 手机访问网关（src/phone-gateway.ts）──
       // 网关启用位以状态文件直管（loadGatewayState/enabled 字段）：settings 读取器
       // 回填有时序滞后（实测开关写了但 reader 仍报旧值，重进设置页"恢复未开启"），
       // 手机访问页的启停按钮走 /dsh-kit/phone/gateway 端点，不经过 settings。
@@ -1947,18 +2013,18 @@ export async function apply(ctx) {
       const pageVisible = () => readSettings().phoneEnabled === true
       const phoneRemoteDomain = () => String(readSettings().phoneRemoteDomain ?? '').trim()
       /** 网关端口：设置里读，缺失/非法回落默认 3090 */
-      const phonePort = () => {
+      const phonePort = (): number => {
         const n = readSettings().phonePort
         return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : PHONE_PORT
       }
       /** 重启后保留开启：勾选时启动才恢复上次启用位；不勾=每次启动网关都是关的 */
       const phoneKeepGatewayOn = () => readSettings().phoneKeepGatewayOn === true
-      const warnLog = (msg) => console.warn(`dsh-kit: ${msg}`)
+      const warnLog = (msg: string) => console.warn(`dsh-kit: ${msg}`)
       // dsh web ≥ v0.1.2-alpha.5 的浏览器鉴权：网关反代须自带签名会话 cookie，
       // 否则手机端访问 index 一律 401。密钥即 credentials 服务的
       // client-connection/browser-session 记录（与 dsh web 共享），b64url 解码回
       // 32 字节原始密钥。读不到时按降级处理：网关其余功能不受影响，仅手机访问 401。
-      let dshSessionSecret = null
+      let dshSessionSecret: Buffer | null = null
       const loadDshSessionSecret = () => {
         try {
           const creds = webCtx.credentials
@@ -1980,12 +2046,12 @@ export async function apply(ctx) {
             warnLog(`读取浏览器会话密钥失败：${error?.message ?? error}，手机访问将显示 401（网关其余功能正常）`)
           })
         } catch (error) {
-          warnLog(`读取浏览器会话密钥失败：${error?.message ?? error}，手机访问将显示 401（网关其余功能正常）`)
+          warnLog(`读取浏览器会话密钥失败：${error instanceof Error ? error.message : error}，手机访问将显示 401（网关其余功能正常）`)
         }
       }
       loadDshSessionSecret()
-      let phoneGw = null
-      let phoneGwError = null
+      let phoneGw: PhoneGatewayHandle | null = null
+      let phoneGwError: string | null = null
       const bootGwState = loadGatewayState(stateFile, warnLog)
       // 启动评估（phoneGwWanted）和首次 syncPhoneGateway 由 onSettingsReady 执行：
       // readSettings 在 setSource 回调前是空函数，phoneKeepGatewayOn() 恒 false。
@@ -2002,7 +2068,7 @@ export async function apply(ctx) {
       }
       onSettingsReady = () => { bootEvalGateway() }
       /** 现役实例监听的端口；null = 无实例。用于识别端口配置变更 */
-      let gwPort = null
+      let gwPort: number | null = null
       /** 按当前启用位同步网关启停 */
       const syncPhoneGateway = () => {
         // 端口配置变更：关掉旧端口的现役实例，走下方重启动路径按新端口起步
@@ -2034,7 +2100,7 @@ export async function apply(ctx) {
             phoneGwError = null
           } catch (error) {
             gwPort = null
-            phoneGwError = String(error?.message ?? error)
+            phoneGwError = String(error instanceof Error ? error.message : error)
             warnLog(`手机访问网关启动失败：${phoneGwError}`)
           }
         } else if (!phoneGwWanted && phoneGw !== null) {
@@ -2054,14 +2120,14 @@ export async function apply(ctx) {
       /** 改启用位（持久化到状态文件 + 热启停）；由 /dsh-kit/phone/gateway 端点调用。
        *  令牌轮换不再随启停自动发生——页内「刷新链接」按钮经 rotate 端点手动触发，
        *  重启/重开沿用同一令牌（已授权设备不掉线） */
-      const setGatewayEnabled = (on) => {
+      const setGatewayEnabled = (on: boolean) => {
         phoneGwWanted = on === true
         const token = phoneGw ? phoneGw.token() : loadGatewayState(stateFile, warnLog).token
         saveGatewayState(stateFile, { token, enabled: phoneGwWanted }, warnLog)
         syncPhoneGateway()
       }
       /** 带令牌的可扫码链接：局域网每个 IPv4 一条 + 远程域名（配置了才有） */
-      const phoneLinks = () => {
+      const phoneLinks = (): Array<{ label: string; url: string }> => {
         if (!phoneGw) return []
         const k = encodeURIComponent(phoneGw.token())
         const links = lanAddresses().map((ip) => ({ label: 'lan', url: `http://${ip}:${phonePort()}/?k=${k}` }))
@@ -2070,12 +2136,12 @@ export async function apply(ctx) {
         }
         return links
       }
-      const phoneJson = (res, code, obj) => {
+      const phoneJson = (res: http.ServerResponse, code: number, obj: unknown) => {
         res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
         res.end(JSON.stringify(obj))
       }
       /** GET 类守卫：同源 fetch 的 GET 可能不带 Origin，带了就必须匹配 Host */
-      const phoneGuardGet = (req, res) => {
+      const phoneGuardGet = (req: http.IncomingMessage, res: http.ServerResponse): boolean => {
         const origin = req.headers.origin
         if (typeof origin === 'string' && origin !== '' && !sameOrigin(req)) {
           phoneJson(res, 403, { error: 'cross-origin denied' })
@@ -2155,7 +2221,7 @@ export async function apply(ctx) {
           let raw = ''
           req.on('data', (c) => { raw += c.toString('utf8') })
           req.on('end', () => {
-            let on = null
+            let on: unknown = null
             try {
               on = JSON.parse(raw || '{}').on
             } catch {
@@ -2199,7 +2265,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/jobs/kill',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' })
             res.end(JSON.stringify(obj))
           }
@@ -2214,7 +2280,7 @@ export async function apply(ctx) {
           let raw = ''
           req.on('data', (c) => { raw += c.toString('utf8') })
           req.on('end', () => {
-            let body
+            let body: any
             try {
               body = JSON.parse(raw || '{}')
             } catch {
@@ -2243,7 +2309,7 @@ export async function apply(ctx) {
                 jobId,
               })
             } catch (error) {
-              json(404, { error: String(error?.message ?? error) })
+              json(404, { error: String(error instanceof Error ? error.message : error) })
             }
           })
         },
@@ -2252,7 +2318,7 @@ export async function apply(ctx) {
         kind: 'exact',
         path: '/dsh-kit/jobs/output',
         handler: (req, res) => {
-          const json = (code, obj) => {
+          const json = (code: number, obj: unknown) => {
             res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
             res.end(JSON.stringify(obj))
           }
@@ -2298,7 +2364,7 @@ export async function apply(ctx) {
               },
             })
           } catch (error) {
-            json(404, { error: String(error?.message ?? error) })
+            json(404, { error: String(error instanceof Error ? error.message : error) })
           }
         },
       })

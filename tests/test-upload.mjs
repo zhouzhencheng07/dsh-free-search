@@ -1,6 +1,6 @@
 // upload 单测：multipart 解析 / boundary 提取 / 文件名清洗 / 重名序号。
 // 用法（dsh-kit 根）：node tests\test-upload.mjs
-import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from '../src/upload.js'
+import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from '../src/upload.ts'
 import path from 'node:path'
 
 let failed = 0

@@ -13,7 +13,7 @@ const UA =
 export const sogouEngine = {
   id: 'sogou',
   available: () => true,
-  async search(query, { maxResults = 5, signal } = {}) {
+  async search(query: string, { maxResults = 5, signal }: { maxResults?: number; signal?: AbortSignal } = {}) {
     const url = `${SOGOU_WEB}?query=${encodeURIComponent(query)}`
     const resp = await fetch(url, {
       headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
@@ -30,11 +30,11 @@ export const sogouEngine = {
     // Resolve the /link?url=... redirects to real URLs (parallel, capped).
     const resolved = await Promise.all(
       blocks.slice(0, maxResults).map(async (b) => {
-        if (!b.redirect) return b
+        if (!b.redirect) return { ...b, url: '' }
         try {
           return { ...b, url: await resolveSogouLink(b.redirect, signal) }
         } catch {
-          return b
+          return { ...b, url: '' }
         }
       }),
     )
@@ -42,27 +42,33 @@ export const sogouEngine = {
   },
 }
 
-function parseResultBlocks(html) {
-  const blocks = []
+interface SogouBlock {
+  title: string
+  snippet: string
+  redirect: string
+}
+
+function parseResultBlocks(html: string): SogouBlock[] {
+  const blocks: SogouBlock[] = []
   const wraps = html.match(/<div class="vrwrap">[\s\S]*?(?=<div class="vrwrap">|$)/g) ?? []
   for (const wrap of wraps) {
     const titleMatch = wrap.match(
       /<h3[^>]*class="[^"]*vr-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/,
     )
     if (!titleMatch) continue
-    const redirect = titleMatch[1]
-    const title = cleanText(titleMatch[2])
+    const redirect = titleMatch[1] ?? ''
+    const title = cleanText(titleMatch[2] ?? '')
     const snippetMatch = wrap.match(
       /<div[^>]*class="[^"]*fz-mid space-txt[^"]*"[^>]*>([\s\S]*?)<\/div>/,
     )
-    const snippet = snippetMatch ? cleanText(snippetMatch[1]) : ''
+    const snippet = snippetMatch ? cleanText(snippetMatch[1] ?? '') : ''
     if (!title && !snippet) continue
     blocks.push({ title, snippet, redirect })
   }
   return blocks
 }
 
-async function resolveSogouLink(redirect, signal) {
+async function resolveSogouLink(redirect: string, signal?: AbortSignal): Promise<string> {
   const resp = await fetch(`https://www.sogou.com${redirect}`, {
     headers: {
       'User-Agent': UA,
@@ -74,10 +80,10 @@ async function resolveSogouLink(redirect, signal) {
   const page = await resp.text()
   const m = page.match(/location\.replace\("([^"]+)"\)/) ?? page.match(/URL='([^']+)'/)
   if (!m) throw new Error('no target')
-  return m[1]
+  return m[1] ?? ''
 }
 
-function cleanText(html) {
+function cleanText(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<[^>]+>/g, '')

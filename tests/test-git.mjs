@@ -1,6 +1,6 @@
-// git 联动纯解析函数单测（src/git.js）。
+// git 联动纯解析函数单测（src/git.ts）。
 // 用法（dsh-kit 根）：node tests\test-git.mjs
-import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack, parseDecoration, LOG_FS } from '../src/git.js'
+import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack, parseDecoration, LOG_FS } from '../src/git.ts'
 
 let failed = 0
 const check = (label, cond) => {

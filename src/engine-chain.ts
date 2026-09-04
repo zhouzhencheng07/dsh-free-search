@@ -5,29 +5,39 @@
 // strongly signals their domain; general engines (Tavily keyless, Bing RSS,
 // Sogou HTML) always participate. All engines are free: Tavily runs in keyless
 // mode unless TAVILY_API_KEY is set, everything else needs no key at all.
-//
-// Engine contract:
-//   {
-//     id: string,
-//     available(): boolean,                 // cheap, offline
-//     match?(query): boolean,               // specialized engines only
-//     search(query, { maxResults, signal }): Promise<{
-//       items: [{ url, title?, snippet?, publishedAt? }],
-//       summary?: string,
-//     }>,
-//   }
 
-import { tavilyEngine } from './engines/tavily.js'
-import { bingEngine } from './engines/bing.js'
-import { sogouEngine } from './engines/sogou.js'
-import { githubEngine } from './engines/github.js'
-import { arxivEngine } from './engines/arxiv.js'
-import { stackExchangeEngine } from './engines/stackexchange.js'
-import { hnEngine } from './engines/hn.js'
+import { tavilyEngine } from './engines/tavily.ts'
+import { bingEngine } from './engines/bing.ts'
+import { sogouEngine } from './engines/sogou.ts'
+import { githubEngine } from './engines/github.ts'
+import { arxivEngine } from './engines/arxiv.ts'
+import { stackExchangeEngine } from './engines/stackexchange.ts'
+import { hnEngine } from './engines/hn.ts'
+
+/** 规范化的单条结果（seam 与工具返回共用这个形状） */
+export interface SearchResultItem {
+  url: string
+  title?: string
+  snippet?: string
+  publishedAt?: string
+}
+
+export interface SearchResult {
+  items: SearchResultItem[]
+  summary?: string
+}
+
+/** 引擎契约：available 廉价离线；match 仅专用引擎有 */
+export interface SearchEngine {
+  id: string
+  available(): boolean
+  match?(query: string): boolean
+  search(query: string, opts: { maxResults?: number; signal?: AbortSignal }): Promise<SearchResult>
+}
 
 // Priority order: specialized first when matched (they are the best fit for
 // their domain), then the general engines by result quality.
-const ENGINES = [
+const ENGINES: SearchEngine[] = [
   githubEngine,
   arxivEngine,
   stackExchangeEngine,
@@ -43,12 +53,15 @@ const ENGINE_TIMEOUT_MS = 12_000
  * Run one search through the chain. Returns the first successful engine's
  * normalized result; throws with a per-engine attempt trail when all fail.
  */
-export async function searchChain(query, { maxResults = 5, signal } = {}) {
+export async function searchChain(
+  query: string,
+  { maxResults = 5, signal }: { maxResults?: number; signal?: AbortSignal } = {},
+): Promise<{ engine: string; attempts: string[]; items: SearchResultItem[]; summary?: string }> {
   const q = typeof query === 'string' ? query.trim() : ''
   if (!q) {
     throw new Error('free-search: query is empty')
   }
-  const attempts = []
+  const attempts: string[] = []
   for (const engine of ENGINES) {
     if (!engine.available()) continue
     if (typeof engine.match === 'function' && !engine.match(q)) continue
@@ -69,7 +82,7 @@ export async function searchChain(query, { maxResults = 5, signal } = {}) {
   )
 }
 
-function runWithTimeout(engine, query, maxResults, signal) {
+function runWithTimeout(engine: SearchEngine, query: string, maxResults: number, signal: AbortSignal | undefined): Promise<SearchResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ENGINE_TIMEOUT_MS)
   timer.unref?.()
@@ -86,7 +99,7 @@ function runWithTimeout(engine, query, maxResults, signal) {
     })
 }
 
-function capItems(items, maxResults) {
+function capItems(items: unknown, maxResults: number): SearchResultItem[] {
   if (!Array.isArray(items)) return []
   return maxResults > 0 ? items.slice(0, maxResults) : items
 }

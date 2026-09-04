@@ -3,7 +3,7 @@
 // 评分取优）尝试恢复——Windows 工具/记事本"Unicode"保存的无 BOM UTF-16
 // 常见，逐字节 NUL 判定会误报二进制，ini 类配置文件的实测问题即源于此。
 //
-// 单独成模块：宿主侧 index.js 消费，tests/test-text-decode.mjs 单测。
+// 单独成模块：宿主侧 index.ts 消费，tests/test-text-decode.mjs 单测。
 
 /** 文本类扩展名集合（含无扩展名的点文件，按完整基名匹配） */
 const TEXT_EXTS = new Set([
@@ -19,7 +19,7 @@ const TEXT_EXTS = new Set([
 ])
 
 /** 取文本扩展名：`a.ini` → ini；点文件 `.gitignore` → gitignore；无点 → 全名小写 */
-export function textExtOf(name) {
+export function textExtOf(name: unknown): string {
   const base = String(name ?? '').split(/[\\/]/).pop() ?? ''
   const dot = base.lastIndexOf('.')
   if (dot > 0) return base.slice(dot + 1).toLowerCase()
@@ -27,12 +27,12 @@ export function textExtOf(name) {
 }
 
 /** 解码 UTF-16BE（Node 无直接解码器，字节交换后按 LE 解） */
-function decodeUtf16be(buf) {
+function decodeUtf16be(buf: Buffer): string {
   const even = buf.length - (buf.length % 2)
   const out = Buffer.allocUnsafe(even)
   for (let i = 0; i < even; i += 2) {
-    out[i] = buf[i + 1]
-    out[i + 1] = buf[i]
+    out[i] = buf[i + 1]!
+    out[i + 1] = buf[i]!
   }
   return out.toString('utf16le')
 }
@@ -44,7 +44,7 @@ function decodeUtf16be(buf) {
  * 像文本的那个（纯 CJK 文本两个方向都 0 分，拒绝——无 BOM 的纯中文
  * UTF-16 罕见，让位给有 BOM 的标准存法）。
  */
-function utf16Score(s) {
+function utf16Score(s: string): number {
   if (s.includes('\uFFFD')) return -1
   const n = Math.min(s.length, 2048)
   if (n === 0) return 0
@@ -58,7 +58,7 @@ function utf16Score(s) {
 }
 
 /** 从 LE/BE 两种解码里挑更像文本的；都不达标返回 null */
-function pickUtf16(le, be) {
+function pickUtf16(le: string, be: string): string | null {
   const ls = utf16Score(le)
   const bs = utf16Score(be)
   if (ls > bs) return ls >= 0.5 ? le : null
@@ -78,7 +78,7 @@ const FORCED_BINARY_EXTS = new Set(['pdf', 'xlsx', 'xlsm', 'xls', 'docx'])
  *   尝试 UTF-16LE 恢复，解码结果无替换符且控制字符占比 <5% 才认定文本；
  * ④其余 → 二进制。
  */
-export function decodePreviewText(buf, name) {
+export function decodePreviewText(buf: unknown, name: unknown): { binary: boolean; content: string | null } {
   if (!Buffer.isBuffer(buf)) return { binary: true, content: null }
   if (FORCED_BINARY_EXTS.has(textExtOf(name))) return { binary: true, content: null }
   const head = buf.subarray(0, 4096)

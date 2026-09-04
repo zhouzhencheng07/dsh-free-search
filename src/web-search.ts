@@ -2,7 +2,7 @@
 //
 // 向 web seam 注册 id 为 'free-search' 的搜索 provider，替换 base 层钉死的
 // `searchProvider: deepseek-official`（付费 DeepSeek 模型调用）——引擎链见
-// ./engine-chain.js（Tavily 免 key 优先，Bing RSS/Sogou/GitHub/arXiv/
+// ./engine-chain.ts（Tavily 免 key 优先，Bing RSS/Sogou/GitHub/arXiv/
 // StackExchange/HN 回退），原生引用卡片照常渲染（seam 直接消费 sources[]）。
 // cordis.patch.yml 负责 patch web 行的 searchProvider 配置，本文件只负责注册。
 //
@@ -17,28 +17,45 @@
 // 成立。registerSearchProvider 对重复 id 抛 WEB_DUPLICATE_PROVIDER，故注册前
 // 查重入、失败降级为告警不炸插件。
 
-import { searchChain } from './engine-chain.js'
+import { searchChain } from './engine-chain.ts'
 
 export const SEARCH_PROVIDER_ID = 'free-search'
 
 // 关闭开关时的转发目标（dsh base 自带 dsh-web-search-deepseek 的注册 id）
 const OFFICIAL_PROVIDER_ID = 'deepseek-official'
 
-export function applyWebSearch(ctx, { getEnabled = () => true, getMaxResults = () => 5 } = {}) {
+/** web seam 的 provider 最小契约（我们注册的与转发目标共用此形状） */
+interface SeamSearchProvider {
+  id: string
+  available?(): boolean
+  search(request: { query: string; maxResults?: number }, signal?: AbortSignal): Promise<{
+    content?: string
+    sources: Array<{ url: string; title?: string; snippet?: string; publishedAt?: string }>
+    truncated: boolean
+  }>
+}
+
+/** cordis ctx 里本层用到的最小面（宿主对象运行时才挂载） */
+interface KitCtx {
+  inject(deps: string[], cb: (webCtx: { web?: { registerSearchProvider?(provider: SeamSearchProvider): unknown; searchProviders?: Map<string, SeamSearchProvider> } }) => void): void
+}
+
+export function applyWebSearch(ctx: KitCtx, { getEnabled = () => true, getMaxResults = () => 5 }: { getEnabled?: () => boolean; getMaxResults?: () => number } = {}): void {
   ctx.inject(['web'], (webCtx) => {
-    if (typeof webCtx.web?.registerSearchProvider !== 'function') {
+    const web = webCtx.web
+    if (!web || typeof web.registerSearchProvider !== 'function') {
       // developer-preview 面挪走了：降级为日志，不让整个插件消失
       console.error('[dsh-kit] web seam 没有 registerSearchProvider，搜索能力跳过')
       return
     }
-    if (webCtx.web.searchProviders?.has(SEARCH_PROVIDER_ID)) {
+    if (web.searchProviders?.has(SEARCH_PROVIDER_ID)) {
       console.error(`[dsh-kit] "${SEARCH_PROVIDER_ID}" 已被注册（旧版独立插件未卸载？），搜索能力跳过`)
       return
     }
 
     /** 找转发目标：优先官方源，退而求其次任一其它可用源；没有回 null */
-    const findFallback = () => {
-      const registry = webCtx.web.searchProviders
+    const findFallback = (): SeamSearchProvider | null => {
+      const registry = web.searchProviders
       if (!registry || typeof registry.values !== 'function') return null
       const preferred = registry.get(OFFICIAL_PROVIDER_ID)
       if (preferred && preferred.available?.() !== false) return preferred
@@ -50,14 +67,14 @@ export function applyWebSearch(ctx, { getEnabled = () => true, getMaxResults = (
     }
 
     /** 本次搜索的条数上限：设置项 searchMaxResults（1-8，默认 5），每次现读 */
-    const resultCap = () => {
+    const resultCap = (): number => {
       const n = getMaxResults()
       return Number.isInteger(n) && n >= 1 && n <= 8 ? n : 5
     }
 
     const enabled = getEnabled()
     try {
-      webCtx.web.registerSearchProvider({
+      web.registerSearchProvider({
         id: SEARCH_PROVIDER_ID,
         available: () => true,
         async search(request, signal) {
@@ -90,7 +107,7 @@ export function applyWebSearch(ctx, { getEnabled = () => true, getMaxResults = (
         },
       })
     } catch (error) {
-      console.error(`[dsh-kit] free-search provider 注册失败：${error?.message ?? error}`)
+      console.error(`[dsh-kit] free-search provider 注册失败：${error instanceof Error ? error.message : error}`)
     }
   })
 }
