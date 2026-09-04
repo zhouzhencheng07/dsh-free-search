@@ -190,6 +190,46 @@ const docHost = callLog.find(
 check("FileContentPane docx ready 渲染无异常", !!out && typeof out === "object");
 check("docx 渲染出文档宿主容器", !!docHost);
 
+// 6.4) 已删除文件（deleted）：仅 diff 预览——⇄ 不出现，渲染删除说明 + diff 体
+// （read 请求被 deleted 守卫跳过，桩环境 effect 不执行、直接验渲染体）
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/gone.js", cwd: "C:/x", deleted: true });
+const deletedNote = callLog.find((c) => (c[0] === "jsx") && c[2] && typeof c[2].children === "string" && (c[2].children.includes("文件已删除") || c[2].children.includes("File deleted")));
+const deletedToggle = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].children === "⇄");
+check("FileContentPane deleted 渲染无异常", !!out && typeof out === "object");
+check("deleted 预览渲染删除说明且无 ⇄ 切换", !!deletedNote && !deletedToggle);
+
+// 6.4.1) 真实时序（effect 已跑）：state 进入 phase:"deleted" 后的渲染体——
+// body 计算块必须兜住该态（曾崩 b.binary，effect 产出的态是桩盲区，须预置验证）
+stateSeq = 0;
+stateStore.clear();
+stateStore.set(0, { phase: "deleted" });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/gone.js", cwd: "C:/x", deleted: true });
+const deletedNote2 = callLog.find((c) => (c[0] === "jsx") && c[2] && typeof c[2].children === "string" && (c[2].children.includes("文件已删除") || c[2].children.includes("File deleted")));
+check("FileContentPane deleted态(body计算块)渲染无异常", !!out && typeof out === "object" && !!deletedNote2);
+stateSeq = 0;
+stateStore.clear();
+
+// 6.4.2) 删除内容纯红展示：pre-seed phase deleted + 删除 diff → 不见 git 元数据
+// （diff --git/index/@@ 等），只余剥掉 `-` 前缀的删除行（dshk-il-del）
+stateSeq = 0;
+stateStore.clear();
+stateStore.set(0, { phase: "deleted" });
+stateStore.set(2, {
+  phase: "ready",
+  xy: " D",
+  text: "diff --git a/f.md b/f.md\ndeleted file mode 100644\nindex 5d7d2f8..0000000\n--- a/f.md\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-name: hello-kit\n-\n-# hello\n",
+});
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/gone.md", cwd: "C:/x", deleted: true });
+const metaNoise = callLog.find((c) => (c[0] === "jsx") && c[2] && typeof c[2].children === "string" && (c[2].children.startsWith("diff --git") || c[2].children.startsWith("deleted file mode") || c[2].children.startsWith("@@")));
+const delRedLines = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-il-del").map((c) => c[2].children);
+check("删除预览纯内容渲染无异常", !!out && typeof out === "object");
+check("删除预览无 git 元数据且为剥前缀红行", !metaNoise && delRedLines.length === 3 && delRedLines[0] === "name: hello-kit" && delRedLines.includes("# hello"));
+stateSeq = 0;
+stateStore.clear();
+
 // 7) 入口按钮 / 浮层宿主顶部渲染（conversation.input.left + shell.overlay 槽位）
 callLog = [];
 out = comps.TerminalEntry({});
@@ -315,6 +355,8 @@ const closed = comps.closePreviewTab({ previews: opened.previews, activePreview:
 check("closePreviewTab 关激活文件激活位顺延邻居", closed.previews.length === 7 && closed.activePreview === "C:/x/f8.js");
 const closedLast = comps.closePreviewTab({ previews: [{ path: "C:/x/only.js", from: "tree", untracked: false, usedAt: 1 }], activePreview: "C:/x/only.js" }, "C:/x/only.js");
 check("closePreviewTab 关最后一个文件预览大标签随之消失", closedLast.previews.length === 0 && closedLast.activePreview === null);
+const delOpen = comps.openPreviewTab({ previews: [], activePreview: null }, "C:/x/gone.js", "scm", false, true);
+check("openPreviewTab 携带 deleted 标记", delOpen.previews.length === 1 && delOpen.previews[0].deleted === true && delOpen.activePreview === "C:/x/gone.js");
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"

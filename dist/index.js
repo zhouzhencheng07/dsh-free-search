@@ -268,6 +268,14 @@ function validateFile(raw) {
         return { ok: false, message: `不是文件：${real}` };
     return { ok: true, path: real, size: stat.size, mtimeMs: stat.mtimeMs };
 }
+/** 仅校验路径形态（非空、规范化为绝对路径），不做存在性检查——供目标是 git 对象
+ *  而非工作区文件的端点用（典型：已删除文件的 diff）；越界由调用方按 git root
+ *  二次把关 */
+function validatePathShape(raw) {
+    if (typeof raw !== 'string' || raw.trim() === '')
+        return { ok: false, message: '缺少文件路径' };
+    return { ok: true, path: path.resolve(raw.trim()) };
+}
 /** 校验浏览器传来的路径：绝对路径 + 存在（文件或目录均可），返回真实路径与 stat */
 function validateAny(raw) {
     if (typeof raw !== 'string' || raw.trim() === '')
@@ -1321,7 +1329,9 @@ export async function apply(ctx) {
             // GET /dsh-kit/git/diff?path=<绝对文件>&cwd=<工作目录> →
             //   {available:true, diff:<原文>}——基线为 git diff HEAD，即相对上次提交的
             //   全部未提交改动（含已暂存）；未跟踪 {available:true, untracked:true}；
-            //   无变更 {available:true, clean:true}
+            //   无变更 {available:true, clean:true}。path 不做存在性校验（validatePathShape）：
+            //   已删除文件的删除 diff 是合法产物（git diff HEAD 支持），预览面板靠它
+            //   展示"仅 diff"视图
             const disposeGitDiff = webCtx.webServer.register({
                 kind: 'exact',
                 path: '/dsh-kit/git/diff',
@@ -1341,7 +1351,7 @@ export async function apply(ctx) {
                     }
                     const url = new URL(req.url ?? '/', 'http://dsh-kit.local');
                     const dir = validateCwd(url.searchParams.get('cwd') ?? '');
-                    const file = validateFile(url.searchParams.get('path') ?? '');
+                    const file = validatePathShape(url.searchParams.get('path') ?? '');
                     if (!dir.ok) {
                         json(400, { error: dir.message });
                         return;

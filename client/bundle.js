@@ -76,14 +76,15 @@ window.__ModuleLoader__.load({
     }
     /** 右侧标签页共存的活性判定（渲染右坞与否） */
     const dockAlive = (ui) => (ui.previews?.length ?? 0) > 0 || ui.jobsOpen === true || ui.browserOpen === true;
-    /** 打开/激活文件预览标签：已存在则置顶激活（usedAt 刷新）；超过上限按 LRU
-     *  逐出最久未用的（绝不含本次）；顺带取消收起态并激活预览大标签 */
-    function openPreviewTab(ui, path, from, untracked) {
+    /** 打开/激活文件预览标签：已存在则置顶激活（usedAt 刷新，deleted/untracked
+     *  同步为本次状态）；超过上限按 LRU 逐出最久未用的（绝不含本次）；顺带取消
+     *  最小化态并激活预览大标签。deleted=已删除文件，预览只承载删除 diff。 */
+    function openPreviewTab(ui, path, from, untracked, deleted) {
       const now = Date.now();
       const items = ui.previews ?? [];
       let list = items.some((x) => x.path === path)
-        ? items.map((x) => (x.path === path ? { ...x, from: from ?? x.from, untracked: untracked === true, usedAt: now } : x))
-        : [...items, { path, from: from ?? "tree", untracked: untracked === true, usedAt: now }];
+        ? items.map((x) => (x.path === path ? { ...x, from: from ?? x.from, untracked: untracked === true, deleted: deleted === true, usedAt: now } : x))
+        : [...items, { path, from: from ?? "tree", untracked: untracked === true, deleted: deleted === true, usedAt: now }];
       const max = previewLimit();
       while (list.length > max) {
         let oldest = null;
@@ -585,6 +586,7 @@ window.__ModuleLoader__.load({
       dockBrowser: "浏览器",
       dockClose: "关闭标签",
       pvCloseTab: "关闭此预览",
+      pvDeletedNote: "文件已删除——此预览仅展示删除 diff；可在源代码管理里 ↩ 恢复文件",
       dockCloseAll: "全部关闭",
       dockMinimize: "最小化面板",
       dockRestore: "展开面板",
@@ -841,6 +843,7 @@ window.__ModuleLoader__.load({
       dockBrowser: "Browser",
       dockClose: "Close tab",
       pvCloseTab: "Close preview",
+      pvDeletedNote: "File deleted — this preview shows the deletion diff only; restore it via ↩ in source control",
       dockCloseAll: "Close all",
       dockMinimize: "Minimize panel",
       dockRestore: "Expand panel",
@@ -3573,12 +3576,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         const name = segs[segs.length - 1];
         const dir = segs.slice(0, -1).join("/");
         const isUntracked = String(item.xy).trim() === "?";
+        // 已删除文件（xy 含 D）：工作区里已无文本可读，点击进「仅删除 diff」预览
+        // （git diff HEAD 能给出被删内容；不做文本预览以免"文件不存在"报错）
+        const isDeleted = !isUntracked && (item.xy[0] === "D" || item.xy[1] === "D");
         return jsxRuntime.jsxs(
           "div",
           {
             className: "dshk-row dshk-chg-row",
             title: item.abs,
-            onClick: () => onOpenFile(item.abs, isUntracked),
+            onClick: () => onOpenFile(item.abs, isUntracked, isDeleted),
             children: [
               jsxRuntime.jsx("span", { className: "dshk-name", children: name }),
               dir !== "" ? jsxRuntime.jsx("span", { className: "dshk-dir", title: rel, children: dir }) : null,
@@ -4072,7 +4078,7 @@ ${line.s ?? ""}` : undefined,
       const dir = fromPath.split(/[\\/]+/).slice(0, -1).join("\\");
       return norm(`${dir}\\${raw}`);
     }
-    function FileContentPane({ path, source, untracked, cwd, onOpenFile }) {
+    function FileContentPane({ path, source, untracked, deleted, cwd, onOpenFile }) {
       const [state, setState] = react.useState({ phase: "loading" });
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
@@ -4084,7 +4090,7 @@ ${line.s ?? ""}` : undefined,
       const isSheet = /\.(xlsx|xlsm|xls)$/i.test(path);
       const isDoc = /\.docx$/i.test(path);
       const binaryPreview = isPdf || isSheet || isDoc;
-      const [mode, setMode] = react.useState(source === "scm" && untracked !== true && !binaryPreview ? "diff" : "text");
+      const [mode, setMode] = react.useState(deleted === true || (source === "scm" && untracked !== true && !binaryPreview) ? "diff" : "text");
       const [diff, setDiff] = react.useState({ phase: "loading" });
       // 编辑态（draft 受控 textarea；reloadNonce 供 409 冲突后重读）
       const [editing, setEditing] = react.useState(false);
@@ -4096,8 +4102,22 @@ ${line.s ?? ""}` : undefined,
       react.useEffect(() => {
         if (sourceRef.current === source) return;
         sourceRef.current = source;
-        setMode(source === "scm" && untracked !== true && !binaryPreview ? "diff" : "text");
+        setMode(deleted === true || (source === "scm" && untracked !== true && !binaryPreview) ? "diff" : "text");
       }, [source]);
+      // deleted 翻转（同一文件先预览后被删 / ↩ 恢复后重开）：实例不重挂（key=path），
+      // 这里手动跟上——进 deleted 强制 diff 视图并置 deleted 态；解除则重读文本
+      const deletedRef = react.useRef(deleted);
+      react.useEffect(() => {
+        if (deletedRef.current === deleted) return;
+        deletedRef.current = deleted;
+        if (deleted === true) {
+          setMode("diff");
+          setState({ phase: "deleted" });
+        } else {
+          setMode(source === "scm" && untracked !== true && !binaryPreview ? "diff" : "text");
+          setReloadNonce((n) => n + 1);
+        }
+      }, [deleted]);
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
       const [reloadNonce, setReloadNonce] = react.useState(0);
@@ -4148,9 +4168,10 @@ ${line.s ?? ""}` : undefined,
           });
       };
       // diff 数据（仅 diff 视图激活时）：进入时拉一次，可见期间低频静默跟随
-      // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询
+      // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询。
+      // 已删除文件即使二进制也拉（删除 diff 是一行 "Binary files differ"，可显示）
       react.useEffect(() => {
-        if (mode !== "diff" || binaryPreview || !cwd) return undefined;
+        if (mode !== "diff" || (binaryPreview && deleted !== true) || !cwd) return undefined;
         setDiff({ phase: "loading" });
         if (diffFetchRef.current) diffFetchRef.current();
         const tick = () => {
@@ -4169,6 +4190,12 @@ ${line.s ?? ""}` : undefined,
       // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
       react.useEffect(() => {
+        // 已删除文件：文本必然读不到（报错无意义），预览只承载删除 diff——
+        // 不发 read 请求，直接进 deleted 态（✎/⇄ 等文本面全部隐藏）
+        if (deleted === true) {
+          setState({ phase: "deleted" });
+          return undefined;
+        }
         const controller = new AbortController();
         setState({ phase: "loading" });
         fetch(`/dsh-kit/read?path=${encodeURIComponent(path)}`, { signal: controller.signal })
@@ -4188,7 +4215,7 @@ ${line.s ?? ""}` : undefined,
             setState({ phase: "error", error: String(error?.message ?? error) });
           });
         return () => controller.abort();
-      }, [path, reloadNonce]);
+      }, [path, reloadNonce, deleted]);
 
       const base = path.split(/[\\/]/).pop() || path;
 
@@ -4434,6 +4461,25 @@ ${line.s ?? ""}` : undefined,
         if (diff.phase === "loading") return jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
         if (diff.phase === "error")
           return jsxRuntime.jsx("div", { className: "dshk-note", title: diff.error, children: `${t("diffFail")}：${diff.error}` });
+        if (deleted === true) {
+          // 已删除文件：不看 raw diff（diff --git/index/--- 等元数据是噪音）——
+          // 只抽删除行、剥掉前缀 `-`，整块按"已删除"红色展示（= 被删文件全文）
+          if (diff.clean || diff.text === null) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffEmpty") });
+          const removed = diff.text
+            .split("\n")
+            .filter((l) => l.startsWith("-") && !l.startsWith("---"))
+            .map((l) => (l.length > 1 ? l.slice(1) : ""));
+          if (removed.length === 0) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentEmpty") });
+          return jsxRuntime.jsx(
+            "div",
+            {
+              className: "dshk-inline",
+              children: removed.map((text, i) =>
+                jsxRuntime.jsx("div", { className: "dshk-il-del", children: text === "" ? " " : text }, i),
+              ),
+            },
+          );
+        }
         if (diff.untracked) {
           // 未跟踪文件没有基线版本：整文件按"新增"着色展示（对齐 git 对未跟踪
           // 文件的 diff 语义，避免只给一行空提示）；内容截断/未就绪时才回落提示
@@ -4565,6 +4611,10 @@ ${line.s ?? ""}` : undefined,
         body = jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
       } else if (state.phase === "error") {
         body = jsxRuntime.jsx("div", { className: "dshk-note", title: state.error, children: `${t("contentFail")}：${state.error}` });
+      } else if (state.phase === "deleted" || !state.body) {
+        // 已删除（或异常无 body）：deleted 的渲染走独立分支（说明行 + diff 视图），
+        // body 只兜占位——严禁在这里读 state.body 的字段（b.binary 崩溃的教训）
+        body = jsxRuntime.jsx("div", { className: "dshk-note", children: state.phase === "deleted" ? t("pvDeletedNote") : t("contentLoading") });
       } else {
         const b = state.body;
         if (isPdf) {
@@ -4671,7 +4721,7 @@ ${line.s ?? ""}` : undefined,
                 : null,
               // 原文 ⇄ diff 双视图切换（同一预览面板，入口只决定默认视图）；
               // PDF 无 diff 视图，不显示
-              !editing && !binaryPreview
+              !editing && !binaryPreview && deleted !== true
                 ? jsxRuntime.jsx("button", {
                     type: "button",
                     className: "dshk-btn",
@@ -4703,11 +4753,18 @@ ${line.s ?? ""}` : undefined,
                 : null,
             ],
           }),
-          editing
-            ? renderEditor()
-            : mode === "diff" && !binaryPreview
-              ? jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() })
-              : body,
+          deleted === true
+            ? jsxRuntime.jsxs(jsxRuntime.Fragment, {
+                children: [
+                  jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("pvDeletedNote") }),
+                  jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() }),
+                ],
+              })
+            : editing
+              ? renderEditor()
+              : mode === "diff" && !binaryPreview
+                ? jsxRuntime.jsx("div", { className: "dshk-pane-body", children: renderDiffView() })
+                : body,
         ],
       });
     }
@@ -6017,6 +6074,7 @@ ${line.s ?? ""}` : undefined,
                     path: pv.path,
                     source: pv.from ?? "tree",
                     untracked: pv.untracked === true,
+                    deleted: pv.deleted === true,
                     cwd,
                     onOpenFile: (p, untracked) => setKitUi(openPreviewTab(kitUi, p, "md-link", untracked === true)),
                   }),
@@ -6135,7 +6193,7 @@ ${line.s ?? ""}` : undefined,
             const side = owner ?? {};
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi(openPreviewTab(kitUi, p, "scm", untracked === true)), ...owner })
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked, deleted) => setKitUi(openPreviewTab(kitUi, p, "scm", untracked === true, deleted === true)), ...owner })
               : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi(openPreviewTab(kitUi, p, "tree", false)), ...owner });
           });
         } catch (error) {
