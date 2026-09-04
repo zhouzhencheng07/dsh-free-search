@@ -62,11 +62,25 @@ window.__ModuleLoader__.load({
       return () => kitUiListeners.delete(listener);
     }
     const useKitUi = () => react.useSyncExternalStore(subscribeKitUi, () => kitUi);
+    const getKitUi = () => kitUi;
 
-    // 浏览器自动打开的人为抑制：人手动切走浏览器标签（或收起面板）后置位（agent
-    // 再导航也不拽回），手动点回浏览器标签/入口按钮解除。关掉整个浏览器标签会卸载
-    // 面板（WS 断、事件源消失），重开（入口按钮）自然解除。
+    // 浏览器自动打开的人为抑制：人手动切走/收起/关闭浏览器标签后置位（agent 再
+    // 导航也不拽回），点回浏览器标签/入口按钮解除。壳层事件源（ShellBrowserEvents）
+    // 常驻后，标签收掉不再断事件源——抑制标志才是「别拽回」的开关。
     let autoOpenSuppressed = false;
+
+    /** agent 动浏览器 → 右坞切到浏览器标签（面板挂载与否都生效：面板挂着时由面板
+     *  的 WS 调用，面板被收掉时由壳层常驻事件源调用）；抑制中/已在浏览器标签则不动 */
+    function maybeAutoOpenBrowser() {
+      if (autoOpenSuppressed || kitUi.dockTab === "browser") return;
+      setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
+    }
+    /** 浏览器没了（优雅关闭/空闲自动关/整只崩溃/页崩光）→ 收掉浏览器面板标签：
+     *  正常浏览器语义「没了就没了」。刻意不置抑制——agent 下次开页面板照常弹回 */
+    function closeBrowserDockForGone() {
+      if (!kitUi.browserOpen) return;
+      setKitUi(closeDockTab(kitUi, "browser"));
+    }
 
     const PREVIEW_MAX_DEFAULT = 8;
     /** 预览标签上限（设置卡可配 1-20；快照未就绪回落默认 8） */
@@ -5454,8 +5468,8 @@ ${line.s ?? ""}` : undefined,
     // 设计定位：面板是 agent 隔离浏览器的「现场直播 + 遥控」——canvas 绘观察页实时
     // 画面；人的点击/滚轮/键入经画布坐标换算回传宿主，派发到观察页（人与 agent 可
     // 各看各页，画面是否跟随 agent 由宿主侧 follow 开关决定）。面板常驻挂在右侧
-    // 标签页容器：WS 一直在，顺带充当「agent 导航自动切到浏览器标签」的事件源；
-    // 标签存在性由 browserOpen 控制，关标签即卸载（WS 断=事件源消失=不再自动打开）。
+    // 标签页容器：WS 管帧流与共驾输入；「agent 导航自动切到浏览器标签」的事件源
+    // 已升级为壳层常驻（ShellBrowserEvents），标签被收掉（0 页自动收/人为关）也能弹回。
     // 生命周期：关标签仅停流不关浏览器（空闲 10 分钟自动优雅关，登录态保留在
     // 专用 profile，重开无损）。
 
@@ -5479,8 +5493,11 @@ ${line.s ?? ""}` : undefined,
           // 标签页语义：确保浏览器标签存在并激活（不清别的标签）；已是激活标签则
           // 关掉。手动点开=解除自动打开抑制 + 取消收起态。
           autoOpenSuppressed = false;
-          if (on) setKitUi(closeDockTab(kitUi, "browser"));
-          else setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
+          if (on) {
+            // 人为关掉浏览器面板：抑制自动弹回（点回来解除）
+            autoOpenSuppressed = true;
+            setKitUi(closeDockTab(kitUi, "browser"));
+          } else setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
         },
         children: jsxRuntime.jsx(BrowserIcon, {}),
       });
@@ -5511,14 +5528,8 @@ ${line.s ?? ""}` : undefined,
 
       // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
-      // agent 导航 → 自动切到浏览器标签（恒定行为，无开关，用户定稿：浏览器就该
-      // 与 agent 同步）。唯一的人为控制：手动切走/收起后本轮不再拽回（点回浏览器
-      // 标签或浏览器入口解除）。抑制只在「标签存在但没激活」时生效——标签关掉
-      // 面板即卸载，WS 断了事件源也断，重开后天然解除。
-      const maybeAutoOpen = () => {
-        if (autoOpenSuppressed || kitUi.dockTab === "browser") return;
-        setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
-      };
+      // agent 导航 → 自动切到浏览器标签：统一走模块级 maybeAutoOpenBrowser（壳层
+      // 常驻事件源与面板共用同一入口，抑制与「已在浏览器标签」的判断都在那边）
 
       // 帧绘制：base64 jpeg → Image 解码 → canvas（尺寸随帧更新，宽 100% 等比）
       const drawFrame = react.useCallback((data) => {
@@ -5585,7 +5596,7 @@ ${line.s ?? ""}` : undefined,
                   );
                   return { ...prev, pages, running: true };
                 });
-                maybeAutoOpen();
+                maybeAutoOpenBrowser();
                 return;
               }
               if (msg.kind === "crashed" || msg.kind === "closed") {
@@ -5985,7 +5996,9 @@ ${line.s ?? ""}` : undefined,
         setKitUi({ dockTab: id });
       };
       const closeTab = (id) => {
-        if (id === "browser") autoOpenSuppressed = false; // 关标签=面板卸载，重开自然解除
+        // 人为关掉浏览器标签：置抑制（壳层事件源常驻，不抑制的话 agent 下一次导航
+        // 就把面板拽回来）；点浏览器图标重开时解除
+        if (id === "browser") autoOpenSuppressed = true;
         setKitUi(closeDockTab(kitUi, id));
       };
 
@@ -6031,7 +6044,11 @@ ${line.s ?? ""}` : undefined,
                     className: "dshk-jobs-close",
                     "aria-label": t("dockCloseAll"),
                     title: t("dockCloseAll"),
-                    onClick: () => setKitUi({ previews: [], activePreview: null, jobsOpen: false, browserOpen: false, dockTab: null }),
+                    onClick: () => {
+                      // 全部关闭=人为清场：抑制浏览器自动弹回（点浏览器图标解除）
+                      autoOpenSuppressed = true;
+                      setKitUi({ previews: [], activePreview: null, jobsOpen: false, browserOpen: false, dockTab: null });
+                    },
                     children: "✕",
                   }),
                   jsxRuntime.jsx("button", {
@@ -6292,6 +6309,7 @@ ${line.s ?? ""}` : undefined,
                 setKitUi(closePreviewTab(kitUi, kitUi.activePreview));
               } else {
                 const tab = kitUi.dockTab ?? ((kitUi.previews?.length ?? 0) > 0 ? "preview" : kitUi.jobsOpen ? "jobs" : "browser");
+                if (tab === "browser") autoOpenSuppressed = true; // 人为关浏览器标签，同 closeTab
                 setKitUi(closeDockTab(kitUi, tab));
               }
             } else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
@@ -6304,6 +6322,55 @@ ${line.s ?? ""}` : undefined,
         // cwd 必须在依赖里：否则闭包缓存首帧（会话未水化时为 null）的工作区，
         // 之后按快捷键开终端永远绑到 null
       }, [cwd, cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.terminalShortcut, cfg.fileTreeShortcut, cfg.scShortcut, cfg.sidebarShortcut, cfg.sidebarShortcutEnabled]);
+
+      // ShellBrowserEvents：壳层常驻浏览器事件源（与面板 WS 并存，不订阅帧流）。
+      // 面板标签会被收掉（0 页自动收/人为关闭），「agent 开页面板弹回」不能依赖
+      // 面板自己活着——壳层恒听宿主广播：navigated → 弹回；浏览器收摊 → 顺手收掉
+      // 面板标签。两者兼得：正常浏览器的「没了就没了」+ agent 干活时画面自动回眼前
+      react.useEffect(() => {
+        if (cfg.browserEnabled === false) return undefined;
+        let disposed = false;
+        let retry = null;
+        let ws = null;
+        const connect = () => {
+          ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/dsh-kit/browser`);
+          ws.onmessage = (e) => {
+            let msg;
+            try {
+              msg = JSON.parse(e.data);
+            } catch {
+              return;
+            }
+            if (!msg || typeof msg !== "object") return;
+            if (msg.t === "event") {
+              if (msg.kind === "navigated") maybeAutoOpenBrowser();
+              else if (msg.kind === "closed") closeBrowserDockForGone();
+              return;
+            }
+            if (msg.t === "state" && msg.launching !== true && msg.running === true && (msg.pages ?? []).length === 0) {
+              // 页崩光残留（running 但 0 页）= 浏览器实质没了，收掉面板标签。
+              // running:false 不作依据——快照无历史，启动失败也会落到这个形状，
+              // 收掉面板会让用户连错误线索都看不到；「曾活着→没了」由 closed 事件负责
+              closeBrowserDockForGone();
+            }
+          };
+          ws.onclose = () => {
+            if (disposed) return;
+            retry = window.setTimeout(connect, 2500);
+          };
+          ws.onerror = () => {};
+        };
+        connect();
+        return () => {
+          disposed = true;
+          if (retry !== null) window.clearTimeout(retry);
+          try {
+            ws?.close();
+          } catch {
+            // 已断
+          }
+        };
+      }, [cfg.browserEnabled]);
 
       return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [

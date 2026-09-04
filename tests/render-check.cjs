@@ -60,7 +60,7 @@ if (!global.location) {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, DockStub, openPreviewTab, closePreviewTab, tabCloseConfirm, dockBounds, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, DockStub, openPreviewTab, closePreviewTab, tabCloseConfirm, maybeAutoOpenBrowser, closeBrowserDockForGone, getKitUi, dockBounds, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -322,6 +322,16 @@ callLog = [];
 out = comps.BrowserPanel({ active: true });
 const noPagesNote = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-brw-note" && typeof c[2].children === "string" && ["没有打开的页面", "No open pages"].some((s) => c[2].children.includes(s)));
 check("BrowserPanel 运行中 0 页渲染空态提示", !!noPagesNote);
+
+// 7.2.7) 壳层事件源语义（模块函数直调，getKitUi 读回）：navigated → 弹回浏览器
+// 标签；浏览器没了 → 收掉面板标签且不置抑制（agent 下次导航照常弹回——抑制的
+// 置/清只发生在人为路径，事件源不碰）
+comps.setKitUi({ browserOpen: false, dockTab: null, dockCollapsed: false });
+comps.maybeAutoOpenBrowser();
+check("maybeAutoOpenBrowser 弹回浏览器标签", comps.getKitUi().browserOpen === true && comps.getKitUi().dockTab === "browser");
+comps.closeBrowserDockForGone();
+check("closeBrowserDockForGone 收掉面板标签（0 页无面板壳）", comps.getKitUi().browserOpen === false && comps.getKitUi().dockTab === null);
+comps.setKitUi({ browserOpen: false, dockTab: null, dockCollapsed: false });
 
 // 7.2.1) 右侧标签页容器：浏览器标签激活态。注意桩环境嵌套组件体不执行
 // （jsx(BrowserPanel) 只建元素），面板内部由上面直接调用 BrowserPanel 的用例覆盖；
