@@ -46,10 +46,12 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    // 右侧标签页容器（ZCode 式）：openFile/jobsOpen/browserOpen 是「标签存在性」
-    // （文件预览有内容/任务面板打开/浏览器面板打开），dockTab 是当前激活标签；
-    // 打开某功能 = 确保标签存在并激活，互斥清场废除（切走不丢状态）。
-    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false, browserOpen: false, dockTab: null };
+    // 右侧标签页容器（ZCode 式）：previews（文件预览标签数组，二级标签——预览大
+    // 标签内套文件小标签）/jobsOpen/browserOpen 是「标签存在性」，dockTab 是当前
+    // 激活大标签，activePreview 是预览内激活的文件；打开某功能 = 确保标签存在并
+    // 激活，互斥清场废除（切走不丢状态）。dockCollapsed = 暂时收起（存在性保留、
+    // 入口按钮恢复；视为人为退出——agent 导航不再弹回）。
+    let kitUi = { treeOpen: false, gitOpen: false, previews: [], activePreview: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false, browserOpen: false, dockTab: null, dockCollapsed: false };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -61,25 +63,61 @@ window.__ModuleLoader__.load({
     }
     const useKitUi = () => react.useSyncExternalStore(subscribeKitUi, () => kitUi);
 
-    // 浏览器自动打开的人为抑制：人手动切走浏览器标签后置位（agent 再导航也不拽回），
-    // 手动点回浏览器标签/入口按钮解除。关掉整个浏览器标签会卸载面板（WS 断、
-    // 事件源消失），重开（入口按钮）自然解除——与「人为关闭后不再自动打开」一致。
+    // 浏览器自动打开的人为抑制：人手动切走浏览器标签（或收起面板）后置位（agent
+    // 再导航也不拽回），手动点回浏览器标签/入口按钮解除。关掉整个浏览器标签会卸载
+    // 面板（WS 断、事件源消失），重开（入口按钮）自然解除。
     let autoOpenSuppressed = false;
 
+    const PREVIEW_MAX_DEFAULT = 8;
+    /** 预览标签上限（设置卡可配 1-20；快照未就绪回落默认 8） */
+    function previewLimit() {
+      const v = cfgFromSnapshot(getCfgSnapshot()).previewMaxTabs;
+      return Math.max(1, Number.isInteger(v) ? v : PREVIEW_MAX_DEFAULT);
+    }
     /** 右侧标签页共存的活性判定（渲染右坞与否） */
-    const dockAlive = (ui) => !!ui.openFile || ui.jobsOpen || ui.browserOpen;
-    /** 关一个右侧标签：清存在性；关的是激活标签时激活位顺延剩余标签，全空收容器 */
+    const dockAlive = (ui) => (ui.previews?.length ?? 0) > 0 || ui.jobsOpen === true || ui.browserOpen === true;
+    /** 打开/激活文件预览标签：已存在则置顶激活（usedAt 刷新）；超过上限按 LRU
+     *  逐出最久未用的（绝不含本次）；顺带取消收起态并激活预览大标签 */
+    function openPreviewTab(ui, path, from, untracked) {
+      const now = Date.now();
+      const items = ui.previews ?? [];
+      let list = items.some((x) => x.path === path)
+        ? items.map((x) => (x.path === path ? { ...x, from: from ?? x.from, untracked: untracked === true, usedAt: now } : x))
+        : [...items, { path, from: from ?? "tree", untracked: untracked === true, usedAt: now }];
+      const max = previewLimit();
+      while (list.length > max) {
+        let oldest = null;
+        for (const x of list) {
+          if (x.path !== path && (oldest === null || x.usedAt < oldest.usedAt)) oldest = x;
+        }
+        if (oldest === null) break;
+        list = list.filter((x) => x.path !== oldest.path);
+      }
+      return { previews: list, activePreview: path, dockCollapsed: false, dockTab: "preview" };
+    }
+    /** 关一个文件预览标签（按 path）：激活位顺延邻居；关完全部文件则预览大标签消失 */
+    function closePreviewTab(ui, path) {
+      const items = ui.previews ?? [];
+      const idx = items.findIndex((x) => x.path === path);
+      if (idx < 0) return {};
+      const rest = items.filter((x) => x.path !== path);
+      const patch = { previews: rest };
+      if (ui.activePreview === path) {
+        patch.activePreview = rest.length > 0 ? rest[Math.min(idx, rest.length - 1)].path : null;
+      }
+      return patch;
+    }
+    /** 关一个右侧大标签：清存在性；关的是激活标签时激活位顺延剩余标签，全空收容器 */
     function closeDockTab(ui, tab) {
       const patch = {};
       if (tab === "preview") {
-        patch.openFile = null;
-        patch.openFrom = null;
-        patch.openUntracked = null;
+        patch.previews = [];
+        patch.activePreview = null;
       } else if (tab === "jobs") patch.jobsOpen = false;
       else patch.browserOpen = false;
       if (ui.dockTab === tab) {
         const remaining = [];
-        if (tab !== "preview" && ui.openFile) remaining.push("preview");
+        if (tab !== "preview" && (ui.previews?.length ?? 0) > 0) remaining.push("preview");
         if (tab !== "jobs" && ui.jobsOpen) remaining.push("jobs");
         if (tab !== "browser" && ui.browserOpen) remaining.push("browser");
         patch.dockTab = remaining[0] ?? null;
@@ -132,6 +170,7 @@ window.__ModuleLoader__.load({
       skillsPageEnabled: true,
       searchEnabled: true,
       searchMaxResults: 5,
+      previewMaxTabs: 8,
       phoneEnabled: false,
       phoneRemoteDomain: "",
       phonePort: 3090,
@@ -196,6 +235,10 @@ window.__ModuleLoader__.load({
         chatOpenFilePreview: v.chatOpenFilePreview === true,
         skillsPageEnabled: v.skillsPageEnabled !== false,
         searchEnabled: v.searchEnabled !== false,
+        previewMaxTabs:
+          Number.isInteger(v.previewMaxTabs) && v.previewMaxTabs >= 1 && v.previewMaxTabs <= 20
+            ? v.previewMaxTabs
+            : CFG_DEFAULTS.previewMaxTabs,
         phoneEnabled: v.phoneEnabled === true,
         phoneRemoteDomain: typeof v.phoneRemoteDomain === "string" ? v.phoneRemoteDomain : "",
         jobsEnabled: v.jobsEnabled !== false,
@@ -523,6 +566,8 @@ window.__ModuleLoader__.load({
       cfgJobsEnabledHint: "输入框旁的任务按钮：查看并结束后台任务",
       cfgBrowserEnabled: "启用内置浏览器",
       cfgBrowserEnabledHint: "输入框旁的浏览器按钮：实时画面查看并操作 agent 的浏览器（重启生效）",
+      cfgPreviewMaxTabs: "文件预览最多标签数",
+      cfgPreviewMaxTabsHint: "预览标签超过该数时，打开新文件自动关掉最久没看的那个（1-20，即时生效）",
       browserTitle: "浏览器",
       browserUrlPh: "输入网址，回车打开",
       browserGo: "打开",
@@ -539,6 +584,10 @@ window.__ModuleLoader__.load({
       dockJobs: "任务",
       dockBrowser: "浏览器",
       dockClose: "关闭标签",
+      pvCloseTab: "关闭此预览",
+      dockCloseAll: "全部关闭",
+      dockMinimize: "最小化面板",
+      dockRestore: "展开面板",
       browserStarting: "正在拉起浏览器…",
       browserErr: "浏览器出错：{error}",
       phoneGateStart: "启动网关",
@@ -773,6 +822,8 @@ window.__ModuleLoader__.load({
       cfgJobsEnabledHint: "Composer-side button to watch and stop background jobs",
       cfgBrowserEnabled: "Enable built-in browser",
       cfgBrowserEnabledHint: "Composer-side browser button: watch and operate the agent's browser (restart to apply)",
+      cfgPreviewMaxTabs: "Max file preview tabs",
+      cfgPreviewMaxTabsHint: "Beyond the limit, opening a new file closes the least-recently-viewed preview tab (1-20, applies immediately)",
       browserTitle: "Browser",
       browserUrlPh: "Type a URL and press Enter",
       browserGo: "Go",
@@ -789,6 +840,10 @@ window.__ModuleLoader__.load({
       dockJobs: "Jobs",
       dockBrowser: "Browser",
       dockClose: "Close tab",
+      pvCloseTab: "Close preview",
+      dockCloseAll: "Close all",
+      dockMinimize: "Minimize panel",
+      dockRestore: "Expand panel",
       browserStarting: "Starting browser…",
       browserErr: "Browser error: {error}",
       phoneGateStart: "Start gateway",
@@ -1156,7 +1211,7 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 /* 内置浏览器面板：右侧停靠（复用 .dshk-pane）；URL 栏 + 实时画面 canvas（人机共驾） */
 /* 右侧标签页容器：内容视图占满（非激活标签 display:none 保挂载） */
 .dshk-pane-view{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
-.dshk-brw-tabrow{flex:none;display:flex;align-items:center;gap:4px;padding:8px 10px 2px;min-width:0;overflow:hidden}
+.dshk-brw-tabrow,.dshk-pv-tabrow{flex:none;display:flex;align-items:center;gap:4px;padding:8px 10px 2px;min-width:0;overflow:hidden}
 .dshk-tab-dot{width:6px;height:6px;border-radius:999px;background:var(--dsw-alias-brand-primary);flex:none}
 .dshk-brw-newtab{padding:0 7px;font-size:13px}
 .dshk-brw-nav{flex:none;min-width:26px}
@@ -1168,6 +1223,9 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 .dshk-brw-canvas{max-width:100%;height:auto;margin:auto 0;display:block;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);outline:none}
 .dshk-brw-canvas:focus-visible{border-color:var(--dsw-alias-brand-primary)}
 .dshk-brw-note{padding:8px 12px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
+/* 最小化状态的右缘竖条：窄、贴边、垂直文字 */
+.dshk-dock-stub{position:fixed;right:0;top:30%;writing-mode:vertical-rl;padding:12px 5px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-right:0;border-radius:8px 0 0 8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1;cursor:pointer;z-index:789;box-shadow:-4px 0 12px rgba(0,0,0,.08);transition:color .12s var(--ds-ease-in-out),background .12s var(--ds-ease-in-out)}
+.dshk-dock-stub:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 /* 透明 IME 输入：只做组合事件宿主，视觉隐形、不拦截点击 */
 .dshk-brw-ime{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;border:0;padding:0;margin:0;outline:none;pointer-events:none;z-index:-1;background:transparent}
 /* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
@@ -2862,12 +2920,17 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         const draft = state && typeof state.draft === "string" ? state.draft : "";
         shell.actions.setDraft(draft === "" ? mention : `${draft} ${mention}`);
       };
-      /** 预览中的文件被改名/删除后关闭预览（含其子路径） */
+      /** 预览中的文件被改名/删除后关掉对应预览标签（含其子路径；激活位顺延） */
       const closeStalePreview = (prefix) => {
-        const f = kitUi.openFile;
-        if (f && (f === prefix || f.startsWith(`${prefix}\\`) || f.startsWith(`${prefix}/`))) {
-          setKitUi({ openFile: null, openFrom: null });
+        const stale = (f) => f === prefix || f.startsWith(`${prefix}\\`) || f.startsWith(`${prefix}/`);
+        const items = kitUi.previews ?? [];
+        const rest = items.filter((pv) => !stale(pv.path));
+        if (rest.length === items.length) return;
+        const patch = { previews: rest };
+        if (kitUi.activePreview && stale(kitUi.activePreview)) {
+          patch.activePreview = rest.length > 0 ? rest[rest.length - 1].path : null;
         }
+        setKitUi(patch);
       };
       const runFsOp = async (payload, confirmText) => {
         if (confirmText && !window.confirm(confirmText)) return false;
@@ -5114,7 +5177,7 @@ ${line.s ?? ""}` : undefined,
       const current = useSessions ? useSessions((s) => s.current) : undefined;
       const jobs = useSessions ? useSessions((s) => (current ? s.jobsBySession[current] : undefined)) : undefined;
       const live = Array.isArray(jobs) ? jobs.filter((j) => j.status === "running" || j.status === "stopping") : [];
-      const on = ui.jobsOpen && ui.dockTab === "jobs";
+      const on = ui.jobsOpen && ui.dockTab === "jobs" && ui.dockCollapsed !== true;
       return jsxRuntime.jsxs("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
@@ -5123,7 +5186,7 @@ ${line.s ?? ""}` : undefined,
         onClick: () => {
           // 标签页语义：确保任务标签存在并激活（不清别的标签）；已是激活标签则关掉
           if (on) setKitUi(closeDockTab(kitUi, "jobs"));
-          else setKitUi({ jobsOpen: true, dockTab: "jobs" });
+          else setKitUi({ jobsOpen: true, dockTab: "jobs", dockCollapsed: false });
         },
         children: [
           jsxRuntime.jsx(JobsIcon, {}),
@@ -5337,7 +5400,7 @@ ${line.s ?? ""}` : undefined,
 
     function BrowserEntry() {
       const ui = useKitUi();
-      const on = ui.browserOpen && ui.dockTab === "browser";
+      const on = ui.browserOpen && ui.dockTab === "browser" && ui.dockCollapsed !== true;
       return jsxRuntime.jsx("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
@@ -5345,10 +5408,10 @@ ${line.s ?? ""}` : undefined,
         title: t("browserTitle"),
         onClick: () => {
           // 标签页语义：确保浏览器标签存在并激活（不清别的标签）；已是激活标签则
-          // 关掉。手动点开=解除自动打开抑制。
+          // 关掉。手动点开=解除自动打开抑制 + 取消收起态。
           autoOpenSuppressed = false;
           if (on) setKitUi(closeDockTab(kitUi, "browser"));
-          else setKitUi({ browserOpen: true, dockTab: "browser" });
+          else setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
         },
         children: jsxRuntime.jsx(BrowserIcon, {}),
       });
@@ -5380,12 +5443,12 @@ ${line.s ?? ""}` : undefined,
       // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
       // agent 导航 → 自动切到浏览器标签（恒定行为，无开关，用户定稿：浏览器就该
-      // 与 agent 同步）。唯一的人为控制：手动切走后本轮不再拽回（点回浏览器标签
-      // 解除）。抑制只在「标签存在但没激活」时生效——标签关掉面板即卸载，WS 断了
-      // 事件源也断，重开后天然解除。读模块级 kitUi/autoOpenSuppressed（恒最新）。
+      // 与 agent 同步）。唯一的人为控制：手动切走/收起后本轮不再拽回（点回浏览器
+      // 标签或浏览器入口解除）。抑制只在「标签存在但没激活」时生效——标签关掉
+      // 面板即卸载，WS 断了事件源也断，重开后天然解除。
       const maybeAutoOpen = () => {
         if (autoOpenSuppressed || kitUi.dockTab === "browser") return;
-        setKitUi({ browserOpen: true, dockTab: "browser" });
+        setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: false });
       };
 
       // 帧绘制：base64 jpeg → Image 解码 → canvas（尺寸随帧更新，宽 100% 等比）
@@ -5742,7 +5805,7 @@ ${line.s ?? ""}` : undefined,
     }
 
     // ─────────── 右侧标签页容器（预览 / 任务 / 浏览器共存切换）───────────
-    // ZCode 式布局：三个面板共居一个右坞，标签存在性（openFile/jobsOpen/
+    // ZCode 式布局：三个面板共居一个右坞，标签存在性（previews/jobsOpen/
     // browserOpen）与激活位（dockTab）分离；打开某功能=确保标签存在并激活，
     // 互斥清场废除——切到浏览器看 agent 干活，文件预览的滚动位置还在。非激活
     // 标签 display:none 保持挂载（切回不丢状态）；让位 body 类/宽度/拖拽由容器
@@ -5754,11 +5817,30 @@ ${line.s ?? ""}` : undefined,
     function dockBounds(tab) {
       return { min: 480, max: Math.min(960, Math.max(560, window.innerWidth - 820)) };
     }
+    /** 最小化状态的右缘竖条：一枚可点的小按钮，点击展开面板（标题=当前激活大标签，
+     *  多文件预览带计数）。存在性状态全部保留，这只是"暂时挪到边上"。 */
+    function DockStub() {
+      const ui = useKitUi();
+      let label = t("dockPreview");
+      if (ui.dockTab === "jobs" && ui.jobsOpen) label = t("dockJobs");
+      else if (ui.dockTab === "browser" && ui.browserOpen) label = t("dockBrowser");
+      else if ((ui.previews?.length ?? 0) > 1) label = `${t("dockPreview")} (${ui.previews.length})`;
+      return jsxRuntime.jsx("button", {
+        type: "button",
+        className: "dshk-dock-stub",
+        title: t("dockRestore"),
+        "aria-label": t("dockRestore"),
+        onClick: () => setKitUi({ dockCollapsed: false }),
+        children: label,
+      });
+    }
+
     function RightDock({ props, cwd }) {
       const ui = useKitUi();
       // 激活位必须指向「仍存在」的标签：dockTab 失效（配置门控清场等）时落回
       // 第一个存在的标签，避免渲染出没有内容的空容器
-      const exists = { preview: !!ui.openFile, jobs: ui.jobsOpen === true, browser: ui.browserOpen === true };
+      const previewCount = ui.previews?.length ?? 0;
+      const exists = { preview: previewCount > 0, jobs: ui.jobsOpen === true, browser: ui.browserOpen === true };
       const tab = ui.dockTab && exists[ui.dockTab]
         ? ui.dockTab
         : exists.preview
@@ -5814,7 +5896,9 @@ ${line.s ?? ""}` : undefined,
       };
 
       const tabDefs = [];
-      if (ui.openFile) tabDefs.push({ id: "preview", label: ui.openFile.split(/[\\/]/).pop() || t("dockPreview"), tip: ui.openFile });
+      if (previewCount > 0) {
+        tabDefs.push({ id: "preview", label: previewCount > 1 ? `${t("dockPreview")} (${previewCount})` : t("dockPreview") });
+      }
       if (ui.jobsOpen) tabDefs.push({ id: "jobs", label: t("dockJobs") });
       if (ui.browserOpen) tabDefs.push({ id: "browser", label: t("dockBrowser") });
       const switchTab = (id) => {
@@ -5835,45 +5919,110 @@ ${line.s ?? ""}` : undefined,
         "aria-label": ({ preview: t("dockPreview"), jobs: t("dockJobs"), browser: t("dockBrowser") })[tab] ?? "",
         children: [
           jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
-          jsxRuntime.jsx("div", {
+          jsxRuntime.jsxs("div", {
             className: "dshk-jobs-head",
-            children: jsxRuntime.jsx("span", {
-              className: "dshk-tabs",
-              children: tabDefs.map((d) =>
-                jsxRuntime.jsxs("span", {
-                  className: `dshk-tab${d.id === tab ? " dshk-tab-on" : ""}`,
-                  title: d.tip ?? "",
-                  onClick: () => switchTab(d.id),
-                  children: [
-                    jsxRuntime.jsx("span", { className: "dshk-tab-label", children: d.label }),
-                    jsxRuntime.jsx("button", {
-                      type: "button",
-                      className: "dshk-tab-x",
-                      "aria-label": t("dockClose"),
-                      title: t("dockClose"),
-                      onClick: (e) => {
-                        e.stopPropagation();
-                        closeTab(d.id);
-                      },
-                      children: "✕",
-                    }),
-                  ],
-                }, d.id),
-              ),
-            }),
+            children: [
+              jsxRuntime.jsx("span", {
+                className: "dshk-tabs",
+                children: tabDefs.map((d) =>
+                  jsxRuntime.jsxs("span", {
+                    className: `dshk-tab${d.id === tab ? " dshk-tab-on" : ""}`,
+                    onClick: () => switchTab(d.id),
+                    children: [
+                      jsxRuntime.jsx("span", { className: "dshk-tab-label", children: d.label }),
+                      jsxRuntime.jsx("button", {
+                        type: "button",
+                        className: "dshk-tab-x",
+                        "aria-label": t("dockClose"),
+                        title: t("dockClose"),
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          closeTab(d.id);
+                        },
+                        children: "✕",
+                      }),
+                    ],
+                  }, d.id),
+                ),
+              }),
+              // 快捷控制：全部关闭 + 暂时收起（存在性保留，入口按钮恢复）
+              jsxRuntime.jsxs("span", {
+                className: "dshk-jobs-headside",
+                children: [
+                  jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-jobs-close",
+                    "aria-label": t("dockCloseAll"),
+                    title: t("dockCloseAll"),
+                    onClick: () => setKitUi({ previews: [], activePreview: null, jobsOpen: false, browserOpen: false, dockTab: null }),
+                    children: "✕",
+                  }),
+                  jsxRuntime.jsx("button", {
+                    type: "button",
+                    className: "dshk-jobs-close",
+                    "aria-label": t("dockMinimize"),
+                    title: t("dockMinimize"),
+                    onClick: () => {
+                      // 最小化 = 人为退出：浏览器标签若存在，agent 导航不再拽回
+                      autoOpenSuppressed = true;
+                      setKitUi({ dockCollapsed: true });
+                    },
+                    children: "»",
+                  }),
+                ],
+              }),
+            ],
           }),
-          jsxRuntime.jsx("div", {
+          // 预览大标签：文件小标签条（二级标签，>1 个文件才显示）+ 多实例内容
+          // （非激活文件 display:none 保挂载——切回滚动位置/编辑草稿不丢）
+          jsxRuntime.jsxs("div", {
             className: "dshk-pane-view",
             style: { display: tab === "preview" ? "flex" : "none" },
-            children: ui.openFile
-              ? jsxRuntime.jsx(FileContentPane, {
-                  path: ui.openFile,
-                  source: ui.openFrom ?? "tree",
-                  untracked: ui.openUntracked === true,
-                  cwd,
-                  onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, dockTab: "preview" }),
-                })
-              : null,
+            children: [
+              previewCount > 1
+                ? jsxRuntime.jsx("div", {
+                    className: "dshk-pv-tabrow",
+                    children: jsxRuntime.jsx("span", {
+                      className: "dshk-tabs",
+                      children: (ui.previews ?? []).map((pv) =>
+                        jsxRuntime.jsxs("span", {
+                          className: `dshk-tab${pv.path === ui.activePreview ? " dshk-tab-on" : ""}`,
+                          title: pv.path,
+                          onClick: () => setKitUi(openPreviewTab(kitUi, pv.path, pv.from, pv.untracked)),
+                          children: [
+                            jsxRuntime.jsx("span", { className: "dshk-tab-label", children: pv.path.split(/[\\/]/).pop() || pv.path }),
+                            jsxRuntime.jsx("button", {
+                              type: "button",
+                              className: "dshk-tab-x",
+                              "aria-label": t("pvCloseTab"),
+                              title: t("pvCloseTab"),
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                setKitUi(closePreviewTab(kitUi, pv.path));
+                              },
+                              children: "✕",
+                            }),
+                          ],
+                        }, pv.path),
+                      ),
+                    }),
+                  })
+                : null,
+              (ui.previews ?? []).map((pv) =>
+                jsxRuntime.jsx("div", {
+                  className: "dshk-pane-view",
+                  style: { display: pv.path === ui.activePreview ? "flex" : "none" },
+                  children: jsxRuntime.jsx(FileContentPane, {
+                    key: pv.path,
+                    path: pv.path,
+                    source: pv.from ?? "tree",
+                    untracked: pv.untracked === true,
+                    cwd,
+                    onOpenFile: (p, untracked) => setKitUi(openPreviewTab(kitUi, p, "md-link", untracked === true)),
+                  }),
+                }, pv.path),
+              ),
+            ],
           }),
           jsxRuntime.jsx("div", {
             className: "dshk-pane-view",
@@ -5904,7 +6053,7 @@ ${line.s ?? ""}` : undefined,
       chatPreviewHook = {
         ready: cfg.chatOpenFilePreview === true && (cfg.fileTreeEnabled || cfg.sourceControlEnabled),
         cwd,
-        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, dockTab: "preview" }),
+        openPreview: (p) => setKitUi(openPreviewTab(kitUi, p, "chat", false)),
       };
 
       // 卸载时清空模块级接管状态，避免拦截器持有失效闭包
@@ -5965,8 +6114,8 @@ ${line.s ?? ""}` : undefined,
         if (!cfg.terminalEnabled && (ui.termDockOpen || ui.terminals.length > 0)) {
           setKitUi({ terminals: [], activeTermId: null, termDockOpen: false });
         }
-        if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
-        if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
+        if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, previews: [], activePreview: null });
+        if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, previews: [], activePreview: null });
         // 配置门控清场走 closeDockTab：清存在性的同时把激活位顺延到剩余标签
         if (!cfg.jobsEnabled && ui.jobsOpen) setKitUi(closeDockTab(kitUi, "jobs"));
         if (!cfg.browserEnabled && ui.browserOpen) setKitUi(closeDockTab(kitUi, "browser"));
@@ -5986,12 +6135,12 @@ ${line.s ?? ""}` : undefined,
             const side = owner ?? {};
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, dockTab: "preview" }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, dockTab: "preview" }), ...owner });
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi(openPreviewTab(kitUi, p, "scm", untracked === true)), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi(openPreviewTab(kitUi, p, "tree", false)), ...owner });
           });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
-          setKitUi({ treeOpen: false, gitOpen: false, openFile: null });
+          setKitUi({ treeOpen: false, gitOpen: false, previews: [], activePreview: null });
           return undefined;
         }
         return () => {
@@ -6057,10 +6206,15 @@ ${line.s ?? ""}` : undefined,
             return;
           }
           if (e.key === "Escape") {
-            // 右侧标签页容器：Esc 关当前激活标签（无激活位则关第一个存在的标签）
-            if (dockAlive(kitUi)) {
-              const tab = kitUi.dockTab ?? (kitUi.openFile ? "preview" : kitUi.jobsOpen ? "jobs" : "browser");
-              setKitUi(closeDockTab(kitUi, tab));
+            // 右侧标签页容器：Esc 关当前激活标签（预览=关当前文件小标签；无激活位
+            // 则关第一个存在的标签）；收起态不吞 Esc（面板本就不可见）
+            if (dockAlive(kitUi) && kitUi.dockCollapsed !== true) {
+              if (kitUi.dockTab === "preview" && kitUi.activePreview) {
+                setKitUi(closePreviewTab(kitUi, kitUi.activePreview));
+              } else {
+                const tab = kitUi.dockTab ?? ((kitUi.previews?.length ?? 0) > 0 ? "preview" : kitUi.jobsOpen ? "jobs" : "browser");
+                setKitUi(closeDockTab(kitUi, tab));
+              }
             } else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
             else if (kitUi.termDockOpen) setKitUi({ termDockOpen: false }); // 只隐藏，不杀会话
@@ -6091,8 +6245,13 @@ ${line.s ?? ""}` : undefined,
                 onKillAll: () => setKitUi({ terminals: [], activeTermId: null, termDockOpen: false }),
               })
             : null,
-          // 右侧标签页容器：预览/任务/浏览器共存切换（存在性/激活位见 closeDockTab）
-          dockAlive(ui) ? jsxRuntime.jsx(RightDock, { props, cwd }) : null,
+          // 右侧标签页容器：预览/任务/浏览器共存切换；最小化时隐藏容器、右缘留
+          // 一枚竖条（DockStub）点击展开——最小化不卸载状态，入口按钮同样可恢复
+          dockAlive(ui)
+            ? ui.dockCollapsed === true
+              ? jsxRuntime.jsx(DockStub, {})
+              : jsxRuntime.jsx(RightDock, { props, cwd })
+            : null,
         ],
       });
     }
@@ -6467,6 +6626,7 @@ ${line.s ?? ""}` : undefined,
     const CFG_FIELDS = [
       { key: "terminalEnabled", kind: "bool" },
       { key: "fileTreeEnabled", kind: "bool" },
+      { key: "previewMaxTabs", kind: "number", max: 20 },
       { key: "sourceControlEnabled", kind: "bool" },
       { key: "chatOpenFilePreview", kind: "bool" },
       { key: "skillsPageEnabled", kind: "bool" },
@@ -6487,7 +6647,7 @@ ${line.s ?? ""}` : undefined,
     // 放最下）。远程域名不在此卡——编辑入口在「手机访问」页面内（PhoneSection）。
     const CFG_GROUPS = [
       { switchKey: "sidebarShortcutEnabled", fields: ["sidebarShortcut"] },
-      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut"] },
+      { switchKey: "fileTreeEnabled", fields: ["fileTreeShortcut", "previewMaxTabs"] },
       { switchKey: "chatOpenFilePreview", fields: [] },
       { switchKey: "sourceControlEnabled", fields: ["scShortcut"] },
       { switchKey: "jobsEnabled", fields: [] },
@@ -6513,7 +6673,8 @@ ${line.s ?? ""}` : undefined,
       if (cfgSpec[field].kind === "number") {
         const trimmed = String(text ?? "").trim();
         const n = Number(trimmed);
-        return Number.isInteger(n) && n >= 1 && n <= 8 ? { kind: "set", value: n } : undefined;
+        const hi = cfgSpec[field].max ?? 8;
+        return Number.isInteger(n) && n >= 1 && n <= hi ? { kind: "set", value: n } : undefined;
       }
       if (cfgSpec[field].kind === "text") return { kind: "set", value: String(text ?? "").trim() };
       const trimmed = String(text ?? "").trim();

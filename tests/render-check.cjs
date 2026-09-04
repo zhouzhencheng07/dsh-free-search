@@ -60,7 +60,7 @@ if (!global.location) {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, dockBounds, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, DockStub, openPreviewTab, closePreviewTab, dockBounds, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -70,7 +70,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel", "RightDock", "dockBounds"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel", "RightDock", "DockStub", "dockBounds"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -265,6 +265,56 @@ const dbP = comps.dockBounds("preview");
 const dbJ = comps.dockBounds("jobs");
 const dbB = comps.dockBounds("browser");
 check("右坞三标签宽度界限同一（切标签不改宽）", dbP.min === dbJ.min && dbP.max === dbJ.max && dbP.min === dbB.min && dbP.max === dbB.max);
+
+// 7.2.2) 多文件预览：二级文件小标签条（>1 个文件才显示）+ 坞头全部关闭/收起按钮
+comps.setKitUi({
+  previews: [
+    { path: "C:/x/a.js", from: "tree", untracked: false, usedAt: 1 },
+    { path: "C:/x/b.md", from: "scm", untracked: true, usedAt: 2 },
+  ],
+  activePreview: "C:/x/b.md",
+  dockTab: "preview",
+});
+callLog = [];
+out = comps.RightDock({ props: {}, cwd: "C:/x" });
+const pvTabrow = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-pv-tabrow");
+const pvChips = callLog.filter((c) => (c[0] === "jsxs") && c[2] && typeof c[2].className === "string" && c[2].className.startsWith("dshk-tab") && typeof c[2].title === "string" && c[2].title.startsWith("C:/x/"));
+// 桩环境 <html lang> 缺失 → t() 走英文兜底（语言跟随设计的正确行为），断言双语匹配
+const closeAllBtn = callLog.find((c) => (c[0] === "jsx") && c[2] && ["全部关闭", "Close all"].includes(c[2]["aria-label"]));
+const minimizeBtn = callLog.find((c) => (c[0] === "jsx") && c[2] && ["最小化面板", "Minimize panel"].includes(c[2]["aria-label"]));
+check("RightDock 多文件预览渲染无异常", !!out && typeof out === "object");
+check("RightDock 渲染出二级文件标签条（2 个文件 chip）", !!pvTabrow && pvChips.length === 2);
+check("RightDock 坞头渲染全部关闭与最小化按钮", !!closeAllBtn && !!minimizeBtn);
+comps.setKitUi({ previews: [], activePreview: null, dockTab: null });
+
+// 7.2.4) 最小化：KitSurfaces 收起态渲染 DockStub 竖条（RightDock 不再出现）；
+// DockStub 直调产出可点击的展开按钮
+comps.setKitUi({ browserOpen: true, dockTab: "browser", dockCollapsed: true });
+callLog = [];
+out = comps.KitSurfaces({});
+const stubElem = callLog.find((c) => c[1] === comps.DockStub);
+const dockElem = callLog.find((c) => c[1] === comps.RightDock);
+check("KitSurfaces 最小化态渲染无异常", !!out && typeof out === "object");
+check("最小化态挂 DockStub 竖条且不挂 RightDock", !!stubElem && !dockElem);
+callLog = [];
+out = comps.DockStub({});
+const stubBtn = callLog.find((c) => (c[0] === "jsx") && c[2] && ["展开面板", "Expand panel"].includes(c[2]["aria-label"]));
+check("DockStub 直调渲染展开按钮", !!out && typeof out === "object" && !!stubBtn);
+comps.setKitUi({ browserOpen: false, dockTab: null, dockCollapsed: false });
+
+// 7.2.3) 预览标签 LRU 纯逻辑：默认上限 8，超限开新文件逐出 usedAt 最小者；
+// 重开已存在文件置顶激活不逐出自身；关闭激活文件激活位顺延邻居
+const lruBase = [];
+for (let i = 1; i <= 8; i++) lruBase.push({ path: `C:/x/f${i}.js`, from: "tree", untracked: false, usedAt: i });
+const opened = comps.openPreviewTab({ previews: lruBase, activePreview: "C:/x/f8.js" }, "C:/x/f9.js", "tree", false);
+check("openPreviewTab 超限 LRU 逐出最久未用", opened.previews.length === 8 && !opened.previews.some((p) => p.path === "C:/x/f1.js") && opened.previews.some((p) => p.path === "C:/x/f9.js") && opened.activePreview === "C:/x/f9.js");
+const reopened = comps.openPreviewTab({ previews: opened.previews, activePreview: "C:/x/f9.js" }, "C:/x/f2.js", "scm", false);
+const reopenedItem = reopened.previews.find((p) => p.path === "C:/x/f2.js");
+check("openPreviewTab 重开已存在文件置顶激活不逐出自身", reopened.previews.length === 8 && reopened.activePreview === "C:/x/f2.js" && !!reopenedItem && reopenedItem.untracked === false && reopenedItem.from === "scm");
+const closed = comps.closePreviewTab({ previews: opened.previews, activePreview: "C:/x/f9.js" }, "C:/x/f9.js");
+check("closePreviewTab 关激活文件激活位顺延邻居", closed.previews.length === 7 && closed.activePreview === "C:/x/f8.js");
+const closedLast = comps.closePreviewTab({ previews: [{ path: "C:/x/only.js", from: "tree", untracked: false, usedAt: 1 }], activePreview: "C:/x/only.js" }, "C:/x/only.js");
+check("closePreviewTab 关最后一个文件预览大标签随之消失", closedLast.previews.length === 0 && closedLast.activePreview === null);
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"

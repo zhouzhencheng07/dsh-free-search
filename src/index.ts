@@ -495,6 +495,9 @@ export async function apply(ctx: KitCtx): Promise<void> {
     skillsPageEnabled: z.boolean().default(true),
     searchEnabled: z.boolean().default(true),
     searchMaxResults: z.number().step(1).min(1).max(8).default(5),
+    // 文件预览标签上限（预览大标签内的文件小标签数）：超过时打开新文件按 LRU
+    // 逐出最久未看的预览（客户端即时生效）
+    previewMaxTabs: z.number().step(1).min(1).max(20).default(8),
     // phoneEnabled = 「手机访问」页入口可见性（配置卡最下，纯显示开关）。
     // 网关启停不走 settings（读取器回填滞后），改由状态文件 + kit 端点直管。
     phoneEnabled: z.boolean().default(false),
