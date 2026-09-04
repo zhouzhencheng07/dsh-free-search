@@ -580,6 +580,7 @@ window.__ModuleLoader__.load({
       browserStarting: "浏览器启动中…",
       browserReconnect: "连接断开，重连中…",
       browserAgentPage: "agent 正在此页操作",
+      browserCloseAgentConfirm: "agent 正在此页面工作，关闭会中断它并丢失页面内状态（表单内容/滚动位置）。确定关闭？",
       browserNotRunning: "浏览器未启动——在上方输入网址回车，或等 agent 首次使用时自动拉起",
       dockPreview: "预览",
       dockJobs: "任务",
@@ -837,6 +838,7 @@ window.__ModuleLoader__.load({
       browserStarting: "Browser starting…",
       browserReconnect: "Reconnecting…",
       browserAgentPage: "agent is working on this page",
+      browserCloseAgentConfirm: "agent is working on this page. Closing it interrupts the agent and loses in-page state (form input/scroll). Close anyway?",
       browserNotRunning: "Browser not started — type a URL above or wait for the agent's first use",
       dockPreview: "Preview",
       dockJobs: "Jobs",
@@ -5455,6 +5457,14 @@ ${line.s ?? ""}` : undefined,
     // 生命周期：关标签仅停流不关浏览器（空闲 10 分钟自动优雅关，登录态保留在
     // 专用 profile，重开无损）。
 
+    // 关页签守卫（纯函数，render-check 直调）：agent 活动页（●）的 ✕ 需人工确认。
+    // 为什么拦：页关闭后页面内状态（表单/SPA 状态/滚动）不可恢复，agent 只能按 URL
+    // 重走；且 agent 无事件通道，被关了也不知是谁关的、为何失败——误触代价不成比例
+    function tabCloseConfirm(page, confirmFn, t) {
+      if (!page || page.active !== true) return true;
+      return confirmFn(t("browserCloseAgentConfirm")) === true;
+    }
+
     function BrowserEntry() {
       const ui = useKitUi();
       const on = ui.browserOpen && ui.dockTab === "browser" && ui.dockCollapsed !== true;
@@ -5768,6 +5778,7 @@ ${line.s ?? ""}` : undefined,
                         title: t("browserCloseTab"),
                         onClick: (e) => {
                           e.stopPropagation();
+                          if (!tabCloseConfirm(p, (msg) => window.confirm(msg), t)) return;
                           sendInput({ t: "closeTab", tabId: p.tabId });
                         },
                         children: "✕",
