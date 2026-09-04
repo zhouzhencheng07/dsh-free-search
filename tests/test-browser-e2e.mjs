@@ -1,5 +1,6 @@
 // dsh-kit 浏览器服务端到端测试：合成 todo 页上跑完整 agent 循环
-// navigate → snapshot → type/click → 断言快照 → check → 负路径 → screenshot → dispose
+// navigate → snapshot → type/click → 断言快照 → check → 负路径 → screenshot →
+// 双指针（agent 活动页/观察页）切换隔离 → history → follow 开关 → dispose
 // 无 Edge/Chrome 环境自动 skip；DSH_HOME 重定向到临时目录（不碰真实 profile）。
 // 运行：node tests/test-browser-e2e.mjs
 import assert from 'node:assert/strict'
@@ -95,30 +96,97 @@ try {
   assert.match(notFound.error, /目标未找到/)
   ok('act 目标未找到给出可恢复错误')
 
-  // 人机共驾：坐标点击（输入派发与 agent 工具落在同一页面）
+  // 人机共驾：坐标点击（输入派发与 agent 工具落在同一页面）。注意 evaluate 的
+  // 返回值已是 JSON 字符串——表达式里再包一层 JSON.stringify 会双重序列化，
+  // rect 字段全变 undefined、坐标 NaN 点到 (0,0)，断言会被输入框旧文本 vacuous
+  // 满足（本用例曾假通过）。断言用「提交后状态行」这种点击后才可能出现的字样。
   const typed2 = await service.act({ action: 'type', role: 'textbox', name: '新待办', value: '人机共驾' })
   assert.equal(typed2.ok, true)
-  const rectJson = await service.evaluate(`JSON.stringify(document.querySelector('#add').getBoundingClientRect())`)
+  const rectJson = await service.evaluate(`document.querySelector('#add').getBoundingClientRect()`)
   assert.equal(rectJson.ok, true)
   const rect = JSON.parse(rectJson.value)
   const cx = Math.round(rect.x + rect.width / 2)
   const cy = Math.round(rect.y + rect.height / 2)
+  assert.ok(Number.isFinite(cx) && cx > 0, `坐标非法：${cx},${cy}`)
   const moved = await service.humanInput({ kind: 'mousemove', x: cx, y: cy })
   assert.equal(moved.ok, true)
   await service.humanInput({ kind: 'mousedown', x: cx, y: cy, button: 0, clicks: 1 })
   await service.humanInput({ kind: 'mouseup', x: cx, y: cy, button: 0, clicks: 1 })
   await new Promise((r) => setTimeout(r, 300))
   const afterInput = await service.snapshot()
-  assert.match(afterInput.snapshot, /人机共驾/)
+  // 此时已由 act 提交过 买牛奶（共 1 项），本次坐标点击提交 人机共驾 → 共 2 项
+  assert.match(afterInput.snapshot, /共 2 项/, `提交后状态行未出现（点击未生效）：\n${afterInput.snapshot}`)
   ok('humanInput 坐标点击与工具层同页生效')
+
+  // 键盘键入路径：点击聚焦远程输入框后，humanInput key 组合逐键入文
+  const addRectJson = await service.evaluate(`document.querySelector('#inp').getBoundingClientRect()`)
+  assert.equal(addRectJson.ok, true)
+  const addRect = JSON.parse(addRectJson.value)
+  const ix = Math.round(addRect.x + addRect.width / 2)
+  const iy = Math.round(addRect.y + addRect.height / 2)
+  assert.ok(Number.isFinite(ix) && ix > 0, `坐标非法：${ix},${iy}`)
+  await service.humanInput({ kind: 'mousedown', x: ix, y: iy, button: 0, clicks: 1 })
+  await service.humanInput({ kind: 'mouseup', x: ix, y: iy, button: 0, clicks: 1 })
+  await new Promise((r) => setTimeout(r, 200))
+  const focusedInp = await service.evaluate(`document.activeElement && document.activeElement.id`)
+  assert.equal(focusedInp.value, '"inp"', `点击后焦点应在输入框：${focusedInp.value}`)
+  for (const ch of 'kb') await service.humanInput({ kind: 'key', combo: ch })
+  // 文本块路径（IME 组合提交的宿主形态）：一次性插入中文
+  await service.humanInput({ kind: 'text', text: '键盘输入' })
+  await new Promise((r) => setTimeout(r, 300))
+  const afterKeys = await service.evaluate(`document.querySelector('#inp').value`)
+  assert.equal(JSON.parse(afterKeys.value), 'kb键盘输入', `键入值不符：${afterKeys.value}`)
+  ok('humanInput key 组合逐键入文 + text 块插入（IME 形态）')
 
   // 未运行时不误拉起：新建服务实例（未 launch）输入应被拒绝
   const cold = new BrowserService({ log: () => {} })
   const rejected = await cold.humanInput({ kind: 'mousemove', x: 1, y: 1 })
   assert.equal(rejected.ok, false)
   assert.match(rejected.error, /未运行/)
+  const coldState = await cold.state()
+  assert.equal(coldState.running, false)
+  assert.equal(coldState.launching, false, '未启动且未在启动中时 launching=false')
   await cold.dispose()
-  ok('humanInput 未运行时拒绝（不误拉起）')
+  ok('humanInput 未运行时拒绝（不误拉起）+ state 带 launching 字段')
+
+  // ── 双指针（agent 活动页 / 面板观察页）与页签条操作 ──
+  const st0 = await service.state()
+  assert.equal(st0.running, true)
+  assert.ok(typeof st0.viewId === 'number' && st0.viewId !== null, 'state 应带 viewId')
+  assert.ok(st0.pages.every((p) => typeof p.viewed === 'boolean'), 'pages 应带 viewed 标记')
+  ok('state 带 viewId/viewed 字段')
+
+  const t1 = (await service.listPages()).pages[0].tabId
+  const navTab = await service.navigate(`${base}?tab=2`, { newTab: true, snapshot: false })
+  assert.equal(navTab.ok, true, `开新页签失败：${navTab.error}`)
+  const st1 = await service.state()
+  assert.equal(st1.activeId, navTab.tabId, '新页签成为 agent 活动页')
+  assert.equal(st1.viewId, navTab.tabId, 'follow 开启时观察页跟随新页签')
+  ok('agent 开新页签：活动页+观察页到位')
+
+  // 人切观察页 → 只动观察指针，agent 活动页不动
+  await service.activatePage(t1)
+  const st2 = await service.state()
+  assert.equal(st2.viewId, t1, '观察页切回第一页')
+  assert.equal(st2.activeId, navTab.tabId, 'agent 活动页不受人切换影响')
+  ok('activatePage 只切观察页（agent 隔离）')
+
+  // 面板 URL 栏 / 历史按钮作用于观察页
+  const open2 = await service.humanOpen(`${base}?from=panel`)
+  assert.equal(open2.ok, true)
+  assert.equal(open2.tabId, t1, 'humanOpen 作用于观察页')
+  const back = await service.history('back')
+  assert.equal(back.ok, true)
+  assert.ok(!back.url.includes('from=panel'), 'back 回到上一地址')
+  const fwd = await service.history('forward')
+  assert.equal(fwd.ok, true)
+  assert.ok(fwd.url.includes('from=panel'), 'forward 回到面板导航地址')
+  const reload = await service.history('reload')
+  assert.equal(reload.ok, true)
+  ok('history back/forward/reload 作用于观察页')
+  const st3 = await service.state()
+  assert.equal(st3.activeId, navTab.tabId, '历史操作不动 agent 活动页')
+  ok('history back/forward/reload 作用于观察页（不动 agent 活动页）')
 
   const shot = await service.screenshot({})
   assert.equal(shot.ok, true, `screenshot 失败：${shot.error}`)

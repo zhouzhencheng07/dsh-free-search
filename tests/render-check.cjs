@@ -60,7 +60,7 @@ if (!global.location) {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, dockBounds, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -70,7 +70,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel", "RightDock", "dockBounds"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -247,6 +247,24 @@ const hasInputHandlers = canvasHost && canvasHost[2].onPointerDown && canvasHost
 check("BrowserPanel 未运行态渲染无异常", !!out && typeof out === "object");
 check("BrowserPanel 渲染出带共驾输入处理器的 canvas", !!canvasHost && !!hasInputHandlers);
 comps.setKitUi({ browserOpen: false });
+
+// 7.2.1) 右侧标签页容器：浏览器标签激活态。注意桩环境嵌套组件体不执行
+// （jsx(BrowserPanel) 只建元素），面板内部由上面直接调用 BrowserPanel 的用例覆盖；
+// 这里验证 dock 页签条高亮与面板挂载元素
+comps.setKitUi({ browserOpen: true, dockTab: "browser" });
+callLog = [];
+out = comps.RightDock({ props: {}, cwd: "C:/x" });
+const dockOnTab = callLog.find((c) => (c[0] === "jsxs") && c[2] && c[2].className === "dshk-tab dshk-tab-on");
+const bpElem = callLog.find((c) => c[1] === comps.BrowserPanel && c[2] && c[2].active === true);
+check("RightDock 浏览器标签渲染无异常", !!out && typeof out === "object");
+check("RightDock 渲染出激活浏览器标签与面板挂载元素", !!dockOnTab && !!bpElem);
+comps.setKitUi({ browserOpen: false, dockTab: null });
+// 右坞宽度：三标签界限必须同一（宽度共享单值，界限分档会让切标签改宽——
+// 曾 jobs 上限 560 窄于预览 720，用户实测切后台任务面板变窄）
+const dbP = comps.dockBounds("preview");
+const dbJ = comps.dockBounds("jobs");
+const dbB = comps.dockBounds("browser");
+check("右坞三标签宽度界限同一（切标签不改宽）", dbP.min === dbJ.min && dbP.max === dbJ.max && dbP.min === dbB.min && dbP.max === dbB.max);
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"

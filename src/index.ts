@@ -504,6 +504,8 @@ export async function apply(ctx: KitCtx): Promise<void> {
     jobsEnabled: z.boolean().default(true),
     // 内置浏览器总开关（默认开）：关=不注册 browser_* 工具（重启生效）；浏览器
     // 半边入口按钮与面板同步隐藏。execute 内另有守卫兜底（注册期竞态时挡调用）。
+    // 自动切面板与画面跟随 agent 是恒定行为（用户定稿，无开关）——人为切走浏览器
+    // 标签后的"不再拽回"抑制在客户端侧实现。
     browserEnabled: z.boolean().default(true),
     sidebarShortcut: z.string().default('Ctrl+B'),
     sidebarShortcutEnabled: z.boolean().default(true),
@@ -1906,8 +1908,11 @@ export async function apply(ctx: KitCtx): Promise<void> {
 
       // ── 浏览器面板 WebSocket 端点（src/browser.ts 的面板面）──
       // 协议：hello（连接即回 state）→ 浏览器端；watch {on}（帧流订阅引用计数，
-      // 0 时停流）/ open {url}（URL 栏手动导航）→ 宿主。服务事件（state/navigated/
-      // crashed/closed）广播给所有连接，帧 {t:'frame', data(jpeg base64)} 同通道。
+      // 0 时停流）/ open {url}（URL 栏导航）/ activate {tabId}（切观察页）/
+      // closeTab {tabId}（关页）/ nav {op}（back/forward/reload）/ newTab（＋）
+      // → 宿主。服务事件（state/navigated/crashed/closed）广播给所有连接，
+      // 帧 {t:'frame', data(jpeg base64)} 同通道。面板常驻挂载（右侧标签页容器），
+      // 关闭标签即断 WS——顺带就是「agent 导航自动打开」的事件源与抑制开关。
       // 同源校验同终端；开关关闭时面板入口在浏览器端已隐藏，此处不再重复门控。
       if (browserService.available) {
         const browserSockets = new Set<any>()
@@ -1956,6 +1961,30 @@ export async function apply(ctx: KitCtx): Promise<void> {
             }
             if (msg.t === 'open' && typeof msg.url === 'string') {
               void browserService.humanOpen(msg.url).then((r) => {
+                if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
+              })
+              return
+            }
+            if (msg.t === 'activate' && msg.tabId !== undefined) {
+              void browserService.activatePage(Number(msg.tabId)).then((r) => {
+                if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
+              })
+              return
+            }
+            if (msg.t === 'closeTab' && msg.tabId !== undefined) {
+              void browserService.closePage(Number(msg.tabId)).then((r) => {
+                if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
+              })
+              return
+            }
+            if (msg.t === 'newTab') {
+              void browserService.humanNewTab().then((r) => {
+                if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
+              })
+              return
+            }
+            if (msg.t === 'nav' && (msg.op === 'back' || msg.op === 'forward' || msg.op === 'reload')) {
+              void browserService.history(msg.op).then((r) => {
                 if (!r.ok) sendTo(ws, { t: 'event', kind: 'error', message: r.error })
               })
               return

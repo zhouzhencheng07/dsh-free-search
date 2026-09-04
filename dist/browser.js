@@ -2,9 +2,10 @@
 //
 // 职责：vendored playwright-core（host-vendor/，钉 1.62.1）驱动系统 Edge（channel
 // 方式，失败退 executablePath 探测链），管理持久化上下文（专用 profile，登录态跨
-// 会话保留）、页面集、帧流中继；对工具层（browser-tools.ts）与面板 ws（index.ts）
-// 提供同一套操作面。TS 源码（tsc 构建出 dist 运行）、零运行时依赖声明；ws 服务器
-// 与 node-pty 同款多锚点解析在 index.ts 完成，这里不重复。
+// 会话保留）、页面集（agent 活动页 / 面板观察页双指针，见 _viewId 注释）、帧流中继；
+// 对工具层（browser-tools.ts）与面板 ws（index.ts）提供同一套操作面。TS 源码（tsc
+// 构建出 dist 运行）、零运行时依赖声明；ws 服务器与 node-pty 同款多锚点解析在
+// index.ts 完成，这里不重复。
 //
 // 生命周期语义：
 //   懒启动（首次工具调用/面板 watch 时 launchPersistentContext）；
@@ -129,6 +130,11 @@ export class BrowserService {
     _titles;
     _nextId;
     _activeId;
+    /** 面板观察页：帧流、人机共驾输入、面板 URL 栏都作用于它；agent 的默认目标页是
+     *  _activeId。两者分离（人看 A 页、agent 干 B 页互不干扰）。观察页跟随 agent 是
+     *  恒定语义（用户定稿：浏览器就该与 agent 同步），保守跟随：只有"状态改变"类
+     *  agent 操作（navigate/act/新页）才拽画面，snapshot/截图/eval 等观察类不打扰。 */
+    _viewId;
     _listeners;
     _lastActivity;
     _idleTimer;
@@ -147,6 +153,7 @@ export class BrowserService {
         this._titles = new Map(); // tabId → title
         this._nextId = 1;
         this._activeId = null;
+        this._viewId = null;
         this._listeners = new Set();
         this._lastActivity = Date.now();
         this._idleTimer = null;
@@ -268,6 +275,8 @@ export class BrowserService {
             return { ok: false, error: this._launchError };
         }
         this._cleanupOrphan();
+        // 启动即广播：面板拿到 launching 状态可提示「启动中」而不是空白等待
+        this._emit({ kind: 'state' });
         const userDataDir = path.join(dshHomeDir(), 'dsh-kit', 'browser-profile');
         fs.mkdirSync(userDataDir, { recursive: true });
         const common = {
@@ -303,6 +312,7 @@ export class BrowserService {
         }
         if (!context) {
             this._launchError = `无法启动系统浏览器（Edge/Chrome）：${lastError instanceof Error ? lastError.message : lastError}`;
+            this._emit({ kind: 'state' });
             return { ok: false, error: this._launchError };
         }
         this._context = context;
@@ -334,15 +344,17 @@ export class BrowserService {
     /** 纳管一页（幂等）：缓存标题、监听导航与崩溃；返回 tabId */
     _adopt(page) {
         if (page.__dshTabId !== undefined) {
-            // 已纳管（newPage 与 'page' 事件都会走到这里）：只提升为活动页
+            // 已纳管（newPage 与 'page' 事件都会走到这里）：提升为 agent 活动页，
+            // 观察页恒跟随（浏览器与 agent 同步）
             this._activeId = page.__dshTabId;
-            this._emit({ kind: 'state' });
+            this._setView(page.__dshTabId);
             return page.__dshTabId;
         }
         const tabId = this._nextId++;
         this._pages.set(tabId, page);
         this._activeId = tabId;
         page.__dshTabId = tabId;
+        this._setView(tabId);
         page.title().then((t) => {
             this._titles.set(tabId, t);
             this._emit({ kind: 'navigated', tabId, url: page.url(), title: t });
@@ -367,8 +379,7 @@ export class BrowserService {
             this._emit({ kind: 'crashed', tabId: id });
             this._pages.delete(id);
             this._titles.delete(id);
-            if (this._activeId === id)
-                this._activeId = this._pages.keys().next().value ?? null;
+            this._pageGone(id);
         });
         page.on('close', () => {
             const id = page.__dshTabId;
@@ -376,12 +387,29 @@ export class BrowserService {
                 return;
             this._pages.delete(id);
             this._titles.delete(id);
-            if (this._activeId === id)
-                this._activeId = this._pages.keys().next().value ?? null;
+            this._pageGone(id);
             this._emit({ kind: 'state' });
         });
         this._emit({ kind: 'state' });
         return tabId;
+    }
+    /** 切观察页（幂等）：帧流重挂到新页；每次都广播 state（面板页签条高亮要跟随） */
+    _setView(tabId) {
+        if (this._viewId === tabId)
+            return;
+        this._viewId = tabId;
+        this._emit({ kind: 'state' });
+        void this._resyncStream(tabId);
+    }
+    /** 页面消失（关闭/崩溃）后两个指针的回退：agent 活动页取剩余首页；观察页优先跟随活动页 */
+    _pageGone(id) {
+        if (this._activeId === id)
+            this._activeId = this._pages.keys().next().value ?? null;
+        if (this._viewId === id) {
+            this._viewId = this._activeId ?? this._pages.keys().next().value ?? null;
+            if (this._viewId !== null)
+                void this._resyncStream(this._viewId);
+        }
     }
     /** 无页则建一页（about:blank） */
     async ensurePage() {
@@ -410,42 +438,47 @@ export class BrowserService {
             return { ok: false, error: ensureResult.error };
         const pages = [];
         for (const [tabId, page] of this._pages) {
-            pages.push({ tabId, url: page.url(), title: this._titles.get(tabId) ?? '', active: tabId === this._activeId });
+            pages.push({ tabId, url: page.url(), title: this._titles.get(tabId) ?? '', active: tabId === this._activeId, viewed: tabId === this._viewId });
         }
-        return { ok: true, pages, activeId: this._activeId };
+        return { ok: true, pages, activeId: this._activeId, viewId: this._viewId };
     }
     async state() {
         if (!this._pw)
             return { available: false, error: this._launchError ?? 'playwright-core vendor 不可用' };
         if (!this._context)
-            return { available: true, running: false, error: this._launchError };
+            return { available: true, running: false, launching: this._launching !== null, error: this._launchError };
         const listed = await this.listPages();
         if (!listed.ok)
-            return { available: true, running: true, pages: [], activeId: null };
+            return { available: true, running: true, launching: false, pages: [], activeId: null, viewId: null };
         return {
             available: true,
             running: true,
+            launching: false,
             pages: listed.pages,
             activeId: listed.activeId,
+            viewId: listed.viewId,
         };
     }
-    /** 导航（工具与面板共用）：返回 { tabId, title, url, snapshot? } */
-    async navigate(url, { newTab = false, snapshot = true } = {}) {
+    /** 导航（工具与面板共用）：返回 { tabId, title, url, snapshot? }。
+     *  agent 路径作用于 agent 活动页（成功后按 follow 开关把观察页拽过去）；
+     *  forHuman（面板 URL 栏）作用于观察页、不动 agent 活动页。 */
+    async navigate(url, { newTab = false, snapshot = true, forHuman = false } = {}) {
         if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
             return { ok: false, error: '仅支持 http/https URL' };
         }
         const ensured = await this.ensure();
         if (!ensured.ok)
             return ensured;
+        const anchorId = forHuman ? this._viewId : this._activeId;
         let page;
-        if (newTab || this._activeId === null || !this._pages.has(this._activeId)) {
+        if (newTab || anchorId === null || !this._pages.has(anchorId)) {
             page = await this._context.newPage();
             // newPage 与 'page' 事件都会走 _adopt（幂等），显式 adopt 一次拿稳 tabId
             this._adopt(page);
             page = this._pages.get(this._activeId);
         }
         else {
-            page = this._pages.get(this._activeId);
+            page = this._pages.get(anchorId);
         }
         const tabId = page.__dshTabId;
         try {
@@ -460,6 +493,8 @@ export class BrowserService {
         const result = { ok: true, tabId, url: page.url(), title };
         if (snapshot)
             result.snapshot = capText(await this._snapshotOf(page));
+        // 观察页跟随（恒定语义）：agent 导航与人的 URL 栏导航都作用于观察页
+        this._setView(tabId);
         this._emit({ kind: 'navigated', tabId, url: result.url, title });
         return result;
     }
@@ -569,6 +604,8 @@ export class BrowserService {
             title: await page.title().catch(() => ''),
             matched,
         };
+        // act 是 agent 的状态改变操作：观察页恒跟随（与 navigate 同规则）
+        this._setView(page.__dshTabId);
         if (matched !== null && matched > 1)
             result.warning = `目标不唯一（${matched} 个匹配），已作用于第一个——可加 name/text 收窄`;
         if (args.snapshot !== false)
@@ -634,6 +671,51 @@ export class BrowserService {
         }
         return { ok: true };
     }
+    /** 人切观察页（面板页签条）：只动观察指针，agent 的默认目标页不受影响 */
+    async activatePage(tabId) {
+        const id = Number(tabId);
+        if (!this._pages.has(id))
+            return { ok: false, error: `页不存在：${tabId}` };
+        this._touch();
+        this._setView(id);
+        return { ok: true };
+    }
+    /** 面板「＋」新建页签：新页即观察页（adopt 会把它提为 agent 活动页，保持既有
+     *  语义）；无页时的首建走 ensurePage 兜底 */
+    async humanNewTab() {
+        const ensureResult = await this.ensure();
+        if (!ensureResult.ok)
+            return ensureResult;
+        if (this._activeId === null || !this._pages.has(this._activeId))
+            return this.ensurePage();
+        await this._context.newPage();
+        // newPage 触发 'page' 事件 → _adopt（活动页 + follow 观察页）
+        return { ok: true, tabId: this._viewId ?? undefined };
+    }
+    /** 面板历史按钮（作用于观察页）：back/forward/reload。无历史可退/超时不视为
+     *  故障（页面维持原状），仍回报当前位置 */
+    async history(op) {
+        const page = this._viewId !== null ? this._pages.get(this._viewId) ?? null : null;
+        if (!page)
+            return { ok: false, error: '无观察页（浏览器未运行或页签已关）' };
+        this._touch();
+        try {
+            if (op === 'back')
+                await page.goBack({ timeout: GOTO_TIMEOUT });
+            else if (op === 'forward')
+                await page.goForward({ timeout: GOTO_TIMEOUT });
+            else
+                await page.reload({ timeout: GOTO_TIMEOUT });
+        }
+        catch (error) {
+            this._log(`browser: history ${op}：${error instanceof Error ? error.message : error}`);
+        }
+        const tabId = page.__dshTabId;
+        const title = await page.title().catch(() => '');
+        this._titles.set(tabId, title);
+        this._emit({ kind: 'navigated', tabId, url: page.url(), title });
+        return { ok: true, tabId, url: page.url(), title };
+    }
     // ── 面板帧流 ──
     /** 面板订阅帧流（引用计数；复路：同一活动页只挂一条 CDP 会话） */
     async watcherOpen(onFrame) {
@@ -654,7 +736,7 @@ export class BrowserService {
         }
     }
     async _attachStream() {
-        const page = this._page(this._activeId);
+        const page = this._viewId !== null ? this._pages.get(this._viewId) ?? null : null;
         if (!page || !this._context)
             return;
         try {
@@ -675,6 +757,15 @@ export class BrowserService {
                 everyNthFrame: 1,
             });
             this._stream = { cdp, tabId: page.__dshTabId };
+            // 首帧兜底：screencast 只在重绘时推帧，静态页面可能长时间没有首帧（面板
+            // 空白）。attach 后立即抓一帧推给面板，之后帧流自然接管。
+            try {
+                const shot = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
+                const data = shot?.data;
+                if (data && this._onFrame)
+                    this._onFrame(data, null);
+            }
+            catch { }
         }
         catch (error) {
             this._log(`browser: 帧流启动失败：${error instanceof Error ? error.message : error}`);
@@ -702,13 +793,14 @@ export class BrowserService {
         if (this._watchers > 0)
             await this._attachStream();
     }
-    /** 面板 URL 栏手动导航（与工具共用 navigate，不取快照） */
+    /** 面板 URL 栏手动导航（作用于观察页，不动 agent 活动页；不取快照） */
     async humanOpen(url) {
-        return this.navigate(url, { snapshot: false });
+        return this.navigate(url, { snapshot: false, forHuman: true });
     }
-    /** 活动页切换后的帧流重挂（index.ts 在收到 state 事件时调用） */
+    /** 观察页切换后的帧流重挂（index.ts 在收到 state 事件时调用；幂等兜底——
+     *  _setView 内部已重挂，这里覆盖事件驱动的路径） */
     async resyncStream() {
-        if (this._stream && this._activeId !== null && this._stream.tabId !== this._activeId) {
+        if (this._stream && this._viewId !== null && this._stream.tabId !== this._viewId) {
             await this._detachStream();
             if (this._watchers > 0)
                 await this._attachStream();
@@ -721,16 +813,16 @@ export class BrowserService {
         return { ok: true };
     }
     /**
-     * 人机共驾输入派发：面板画布的鼠标/滚轮/键盘 → 活动页面。
+     * 人机共驾输入派发：面板画布的鼠标/滚轮/键盘 → 观察页。
      * 设计约束：不自动拉起浏览器（未运行即拒绝，避免悬停误启动）；事件进顺序队列
      * 串行派发（鼠标移动高频，乱序会拖拽断裂）；坐标由面板按帧原始尺寸换算好。
      */
     async humanInput(msg) {
         if (!this._context)
             return { ok: false, error: '浏览器未运行' };
-        const page = this._page(this._activeId);
+        const page = this._viewId !== null ? this._pages.get(this._viewId) ?? null : null;
         if (!page)
-            return { ok: false, error: '无活动页面' };
+            return { ok: false, error: '无观察页面' };
         const buttonName = (b) => (b === 1 ? 'middle' : b === 2 ? 'right' : 'left');
         const coord = (v) => {
             const n = Math.round(Number(v));
@@ -756,6 +848,14 @@ export class BrowserService {
                         await page.keyboard.press(msg.combo.trim());
                     }
                     break;
+                case 'text':
+                    // IME 组合提交的整段文本：insertText 只派发文本输入（无 key 事件），
+                    // 在远程光标处插入；限长防面板侧异常把宿主当管道灌爆
+                    if (typeof msg.text === 'string' && msg.text !== '') {
+                        const text = msg.text.length > 2000 ? msg.text.slice(0, 2000) : msg.text;
+                        await page.keyboard.insertText(text);
+                    }
+                    break;
                 default:
                     return;
             }
@@ -774,6 +874,7 @@ export class BrowserService {
         this._pages.clear();
         this._titles.clear();
         this._activeId = null;
+        this._viewId = null;
         await this._detachStream();
         try {
             await context.close();

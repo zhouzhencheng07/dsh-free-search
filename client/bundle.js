@@ -46,7 +46,10 @@ window.__ModuleLoader__.load({
     // 入口按钮（conversation.input.left）与面板宿主（shell.overlay）是两个独立
     // 槽位组件，状态必须跨槽共享：模块级不可变快照 + useSyncExternalStore 订阅
     // （getSnapshot 返回模块绑定值，恒定引用直到 set 替换）。
-    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false, browserOpen: false };
+    // 右侧标签页容器（ZCode 式）：openFile/jobsOpen/browserOpen 是「标签存在性」
+    // （文件预览有内容/任务面板打开/浏览器面板打开），dockTab 是当前激活标签；
+    // 打开某功能 = 确保标签存在并激活，互斥清场废除（切走不丢状态）。
+    let kitUi = { treeOpen: false, gitOpen: false, openFile: null, openFrom: null, terminals: [], activeTermId: null, termDockOpen: false, jobsOpen: false, browserOpen: false, dockTab: null };
     const kitUiListeners = new Set();
     function setKitUi(patch) {
       kitUi = { ...kitUi, ...patch };
@@ -57,6 +60,32 @@ window.__ModuleLoader__.load({
       return () => kitUiListeners.delete(listener);
     }
     const useKitUi = () => react.useSyncExternalStore(subscribeKitUi, () => kitUi);
+
+    // 浏览器自动打开的人为抑制：人手动切走浏览器标签后置位（agent 再导航也不拽回），
+    // 手动点回浏览器标签/入口按钮解除。关掉整个浏览器标签会卸载面板（WS 断、
+    // 事件源消失），重开（入口按钮）自然解除——与「人为关闭后不再自动打开」一致。
+    let autoOpenSuppressed = false;
+
+    /** 右侧标签页共存的活性判定（渲染右坞与否） */
+    const dockAlive = (ui) => !!ui.openFile || ui.jobsOpen || ui.browserOpen;
+    /** 关一个右侧标签：清存在性；关的是激活标签时激活位顺延剩余标签，全空收容器 */
+    function closeDockTab(ui, tab) {
+      const patch = {};
+      if (tab === "preview") {
+        patch.openFile = null;
+        patch.openFrom = null;
+        patch.openUntracked = null;
+      } else if (tab === "jobs") patch.jobsOpen = false;
+      else patch.browserOpen = false;
+      if (ui.dockTab === tab) {
+        const remaining = [];
+        if (tab !== "preview" && ui.openFile) remaining.push("preview");
+        if (tab !== "jobs" && ui.jobsOpen) remaining.push("jobs");
+        if (tab !== "browser" && ui.browserOpen) remaining.push("browser");
+        patch.dockTab = remaining[0] ?? null;
+      }
+      return patch;
+    }
 
     // ── 多终端会话模型 ──
     // terminals:[{id,cwd}] 创建顺序即标签顺序；每个终端在创建那一刻绑定当时的
@@ -495,10 +524,21 @@ window.__ModuleLoader__.load({
       cfgBrowserEnabled: "启用内置浏览器",
       cfgBrowserEnabledHint: "输入框旁的浏览器按钮：实时画面查看并操作 agent 的浏览器（重启生效）",
       browserTitle: "浏览器",
-      browserClose: "关闭浏览器面板",
       browserUrlPh: "输入网址，回车打开",
       browserGo: "打开",
+      browserBack: "后退",
+      browserForward: "前进",
+      browserReload: "刷新",
+      browserNewTab: "新建页签",
+      browserCloseTab: "关闭页签",
+      browserStarting: "浏览器启动中…",
+      browserReconnect: "连接断开，重连中…",
+      browserAgentPage: "agent 正在此页操作",
       browserNotRunning: "浏览器未启动——在上方输入网址回车，或等 agent 首次使用时自动拉起",
+      dockPreview: "预览",
+      dockJobs: "任务",
+      dockBrowser: "浏览器",
+      dockClose: "关闭标签",
       browserStarting: "正在拉起浏览器…",
       browserErr: "浏览器出错：{error}",
       phoneGateStart: "启动网关",
@@ -734,10 +774,21 @@ window.__ModuleLoader__.load({
       cfgBrowserEnabled: "Enable built-in browser",
       cfgBrowserEnabledHint: "Composer-side browser button: watch and operate the agent's browser (restart to apply)",
       browserTitle: "Browser",
-      browserClose: "Close browser panel",
       browserUrlPh: "Type a URL and press Enter",
       browserGo: "Go",
+      browserBack: "Back",
+      browserForward: "Forward",
+      browserReload: "Reload",
+      browserNewTab: "New tab",
+      browserCloseTab: "Close tab",
+      browserStarting: "Browser starting…",
+      browserReconnect: "Reconnecting…",
+      browserAgentPage: "agent is working on this page",
       browserNotRunning: "Browser not started — type a URL above or wait for the agent's first use",
+      dockPreview: "Preview",
+      dockJobs: "Jobs",
+      dockBrowser: "Browser",
+      dockClose: "Close tab",
       browserStarting: "Starting browser…",
       browserErr: "Browser error: {error}",
       phoneGateStart: "Start gateway",
@@ -1103,6 +1154,13 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 .dshk-jobs-output{margin-top:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto;user-select:text}
 .dshk-jobs-empty{padding:10px 8px;font-size:12px;color:var(--dsw-alias-label-tertiary);text-align:center}
 /* 内置浏览器面板：右侧停靠（复用 .dshk-pane）；URL 栏 + 实时画面 canvas（人机共驾） */
+/* 右侧标签页容器：内容视图占满（非激活标签 display:none 保挂载） */
+.dshk-pane-view{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.dshk-brw-tabrow{flex:none;display:flex;align-items:center;gap:4px;padding:8px 10px 2px;min-width:0;overflow:hidden}
+.dshk-tab-dot{width:6px;height:6px;border-radius:999px;background:var(--dsw-alias-brand-primary);flex:none}
+.dshk-brw-newtab{padding:0 7px;font-size:13px}
+.dshk-brw-nav{flex:none;min-width:26px}
+.dshk-jobs-btn:disabled{opacity:.4;cursor:default}
 .dshk-brw-bar{display:flex;gap:6px;padding:0 12px 8px}
 .dshk-brw-url{flex:1;min-width:0;font-size:12px;font-family:ui-monospace,Consolas,monospace;padding:6px 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}
 .dshk-brw-url:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
@@ -1110,6 +1168,8 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 .dshk-brw-canvas{max-width:100%;height:auto;margin:auto 0;display:block;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);outline:none}
 .dshk-brw-canvas:focus-visible{border-color:var(--dsw-alias-brand-primary)}
 .dshk-brw-note{padding:8px 12px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
+/* 透明 IME 输入：只做组合事件宿主，视觉隐形、不拦截点击 */
+.dshk-brw-ime{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;border:0;padding:0;margin:0;outline:none;pointer-events:none;z-index:-1;background:transparent}
 /* 手机触控增强：斜杠菜单（input-trigger）在触屏上滚不动/悬停粘滞的兜底。
    类名是前端构建哈希（_3e4SsG_*），升级换哈希后本段静默失效——需跟随维护。 */
 @media (hover: none) {
@@ -3949,9 +4009,8 @@ ${line.s ?? ""}` : undefined,
       const dir = fromPath.split(/[\\/]+/).slice(0, -1).join("\\");
       return norm(`${dir}\\${raw}`);
     }
-    function FileContentPane({ path, source, untracked, cwd, onClose, onOpenFile }) {
+    function FileContentPane({ path, source, untracked, cwd, onOpenFile }) {
       const [state, setState] = react.useState({ phase: "loading" });
-      const [dragging, setDragging] = react.useState(false);
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
       // 基线，即便从 SCM 进入也默认原文），头部 ⇄ 随时互切；
@@ -3979,9 +4038,6 @@ ${line.s ?? ""}` : undefined,
       const [draft, setDraft] = react.useState("");
       const [saving, setSaving] = react.useState(false);
       const [reloadNonce, setReloadNonce] = react.useState(0);
-      // 拖过的宽度（px）；0 = 未拖过，用 CSS fallback 默认宽度
-      const widthRef = react.useRef(0);
-      const dragRef = react.useRef(null);
       // 预览增强：md 渲染 + CodeMirror 读写高亮。库懒加载；md 只读默认渲染，
       // 需要源码时进编辑即是源码（无独立「切源码」按钮）。
       const [cmReady, setCmReady] = react.useState(false);
@@ -4047,50 +4103,7 @@ ${line.s ?? ""}` : undefined,
         };
       }, [mode, path, cwd]);
 
-      // 挂让位类 + 初始宽度直接拉满（左移到底）；卸载复原。
-      // useLayoutEffect：变量在绘制前就位，避免打开瞬间先画 fallback 宽度再过渡。
-      react.useLayoutEffect(() => {
-        document.body.classList.add("dshk-pane-open");
-        const maxW = Math.min(720, Math.max(520, window.innerWidth - 880));
-        widthRef.current = maxW;
-        document.documentElement.style.setProperty("--dshk-pane-w", `${maxW}px`);
-        return () => {
-          document.body.classList.remove("dshk-pane-open");
-          document.documentElement.style.removeProperty("--dshk-pane-w");
-        };
-      }, []);
-
-      // 拖拽：window 级 pointermove/up，更新 --dshk-pane-w（对话让位同步）
-      react.useEffect(() => {
-        if (!dragging) return undefined;
-        const onMove = (e) => {
-          const d = dragRef.current;
-          if (!d) return;
-          const dx = d.startX - e.clientX; // 往左拖 → 面板变宽
-          const maxW = Math.min(720, Math.max(520, window.innerWidth - 880));
-          const w = Math.min(maxW, Math.max(320, d.startW + dx));
-          widthRef.current = w;
-          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
-        };
-        const onUp = () => {
-          dragRef.current = null;
-          setDragging(false);
-        };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
-        return () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onUp);
-        };
-      }, [dragging]);
-
-      const onHandleDown = (e) => {
-        e.preventDefault();
-        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 560 };
-        setDragging(true);
-      };
+      // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
       react.useEffect(() => {
         const controller = new AbortController();
@@ -4580,14 +4593,8 @@ ${line.s ?? ""}` : undefined,
         }
       }
 
-      return jsxRuntime.jsxs("div", {
-        className: "dshk-pane",
-        "data-dragging": dragging || undefined,
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
-          jsxRuntime.jsx("div", {
-            className: "dshk-pane-handle",
-            onPointerDown: onHandleDown,
-          }),
           jsxRuntime.jsxs("div", {
             className: "dshk-head",
             children: [
@@ -4631,13 +4638,6 @@ ${line.s ?? ""}` : undefined,
                     children: "✎",
                   })
                 : null,
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-btn",
-                title: t("contentClose"),
-                onClick: onClose,
-                children: "✕",
-              }),
             ],
           }),
           editing
@@ -5114,16 +5114,16 @@ ${line.s ?? ""}` : undefined,
       const current = useSessions ? useSessions((s) => s.current) : undefined;
       const jobs = useSessions ? useSessions((s) => (current ? s.jobsBySession[current] : undefined)) : undefined;
       const live = Array.isArray(jobs) ? jobs.filter((j) => j.status === "running" || j.status === "stopping") : [];
-      const on = ui.jobsOpen;
+      const on = ui.jobsOpen && ui.dockTab === "jobs";
       return jsxRuntime.jsxs("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
         "aria-pressed": on,
         title: live.length > 0 ? `${t("jobsTitle")} (${live.length})` : t("jobsTitle"),
         onClick: () => {
-          // 打开时关掉文件预览——两者共用右侧停靠位（互斥）；关闭只收自己
-          if (on) setKitUi({ jobsOpen: false });
-          else setKitUi({ jobsOpen: true, openFile: null, openFrom: null, openUntracked: null });
+          // 标签页语义：确保任务标签存在并激活（不清别的标签）；已是激活标签则关掉
+          if (on) setKitUi(closeDockTab(kitUi, "jobs"));
+          else setKitUi({ jobsOpen: true, dockTab: "jobs" });
         },
         children: [
           jsxRuntime.jsx(JobsIcon, {}),
@@ -5223,51 +5223,7 @@ ${line.s ?? ""}` : undefined,
         }
       };
 
-      // 右停靠（与文件预览共用停靠位，入口互斥打开）：挂让位类 + 宽度变量。
-      // 宽度独立于预览，默认 min(560, innerWidth-880)，拖左缘 320~560 调整；
-      // useLayoutEffect 让变量在绘制前就位，避免打开瞬间闪 fallback 宽度
-      const widthRef = react.useRef(0);
-      const dragRef = react.useRef(null);
-      const [dragging, setDragging] = react.useState(false);
-      react.useLayoutEffect(() => {
-        document.body.classList.add("dshk-pane-open");
-        const maxW = Math.min(560, Math.max(360, window.innerWidth - 880));
-        widthRef.current = maxW;
-        document.documentElement.style.setProperty("--dshk-pane-w", `${maxW}px`);
-        return () => {
-          document.body.classList.remove("dshk-pane-open");
-          document.documentElement.style.removeProperty("--dshk-pane-w");
-        };
-      }, []);
-      react.useEffect(() => {
-        if (!dragging) return undefined;
-        const onMove = (e) => {
-          const d = dragRef.current;
-          if (!d) return;
-          const dx = d.startX - e.clientX; // 往左拖 → 面板变宽
-          const maxW = Math.min(560, Math.max(360, window.innerWidth - 880));
-          const w = Math.min(maxW, Math.max(320, d.startW + dx));
-          widthRef.current = w;
-          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
-        };
-        const onUp = () => {
-          dragRef.current = null;
-          setDragging(false);
-        };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
-        return () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onUp);
-        };
-      }, [dragging]);
-      const onHandleDown = (e) => {
-        e.preventDefault();
-        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 440 };
-        setDragging(true);
-      };
+      // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
       const statusWord = (job) => {
         switch (job.status) {
@@ -5280,13 +5236,8 @@ ${line.s ?? ""}` : undefined,
         }
       };
 
-      return jsxRuntime.jsxs("div", {
-        className: "dshk-pane",
-        "data-dragging": dragging || undefined,
-        role: "dialog",
-        "aria-label": t("jobsTitle"),
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
-          jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
           jsxRuntime.jsxs("div", {
             className: "dshk-jobs-head",
             children: [
@@ -5296,14 +5247,6 @@ ${line.s ?? ""}` : undefined,
                   jsxRuntime.jsx("span", { children: t("jobsTitle") }),
                   jsxRuntime.jsx("span", { className: "dshk-jobs-count", children: String(live.length) }),
                 ],
-              }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-jobs-close",
-                "aria-label": t("jobsClose"),
-                title: t("jobsClose"),
-                onClick: () => setKitUi({ jobsOpen: false }),
-                children: "\u2715",
               }),
             ],
           }),
@@ -5383,90 +5326,67 @@ ${line.s ?? ""}` : undefined,
 
     // ─────────── 内置浏览器面板（右侧停靠，复用 .dshk-pane 停靠位）───────────
     // 数据走宿主半边 /dsh-kit/browser WS：state/event 广播 + frame 帧流（jpeg）+
-    // watch 引用计数 + open（URL 栏导航）+ input（人机共驾输入回传）。
-    // 设计定位：面板是 agent 隔离浏览器的「现场直播 + 遥控」——canvas 绘实时画面
-    // （agent 所见即所播）；人的点击/滚轮/键入经画布坐标换算回传宿主，由 Playwright
-    // 派发到 agent 正在操作的同一页面，agent 与人对同一实例双向操作。
-    // 生命周期：面板关闭仅停流不关浏览器（空闲 10 分钟自动优雅关，登录态保留在
+    // watch 引用计数 + open/activate/closeTab/nav/newTab（人操作）+ input（人机共驾）。
+    // 设计定位：面板是 agent 隔离浏览器的「现场直播 + 遥控」——canvas 绘观察页实时
+    // 画面；人的点击/滚轮/键入经画布坐标换算回传宿主，派发到观察页（人与 agent 可
+    // 各看各页，画面是否跟随 agent 由宿主侧 follow 开关决定）。面板常驻挂在右侧
+    // 标签页容器：WS 一直在，顺带充当「agent 导航自动切到浏览器标签」的事件源；
+    // 标签存在性由 browserOpen 控制，关标签即卸载（WS 断=事件源消失=不再自动打开）。
+    // 生命周期：关标签仅停流不关浏览器（空闲 10 分钟自动优雅关，登录态保留在
     // 专用 profile，重开无损）。
 
     function BrowserEntry() {
       const ui = useKitUi();
+      const on = ui.browserOpen && ui.dockTab === "browser";
       return jsxRuntime.jsx("button", {
         type: "button",
         className: "dshk-btn dshk-enbtn",
-        "aria-pressed": ui.browserOpen,
+        "aria-pressed": on,
         title: t("browserTitle"),
         onClick: () => {
-          // 与任务面板同语义：共用右侧停靠位，打开时收起文件预览；关闭只收自己
-          if (ui.browserOpen) setKitUi({ browserOpen: false });
-          else setKitUi({ browserOpen: true, openFile: null, openFrom: null, openUntracked: null, jobsOpen: false });
+          // 标签页语义：确保浏览器标签存在并激活（不清别的标签）；已是激活标签则
+          // 关掉。手动点开=解除自动打开抑制。
+          autoOpenSuppressed = false;
+          if (on) setKitUi(closeDockTab(kitUi, "browser"));
+          else setKitUi({ browserOpen: true, dockTab: "browser" });
         },
         children: jsxRuntime.jsx(BrowserIcon, {}),
       });
     }
 
-    function BrowserPanel() {
-      const [state, setState] = react.useState({ running: false, pages: [], activeId: null });
+    function BrowserPanel({ active }) {
+      const [state, setState] = react.useState({ running: false, launching: false, pages: [], activeId: null, viewId: null });
       const [draft, setDraft] = react.useState("");
       const [visible, setVisible] = react.useState(document.visibilityState === "visible");
       const [connLost, setConnLost] = react.useState(false);
       const canvasRef = react.useRef(null);
+      const imeRef = react.useRef(null); // 透明输入：IME 组合事件宿主（canvas 不可编辑，组合起不来）
       const wsRef = react.useRef(null);
       const frameRef = react.useRef(null); // 最新帧（绘制去抖：只画最新）
       const rafRef = react.useRef(0);
       const moveRef = react.useRef(0); // 输入节流（~30/s）
       const downRef = react.useRef(null); // 双击判定（时间+距离窗）
+      // watch 门控与事件回调里要读「最新」的激活/可见态，走 ref（闭包会停在创建帧）
+      const activeRef = react.useRef(active);
+      activeRef.current = active;
+      const visibleRef = react.useRef(visible);
+      visibleRef.current = visible;
 
-      // 右停靠让位 + 拖宽（默认更宽：浏览器内容需要横向空间）
-      const widthRef = react.useRef(0);
-      const dragRef = react.useRef(null);
-      const [dragging, setDragging] = react.useState(false);
-      const paneBounds = () => ({ min: 480, max: Math.min(960, Math.max(560, window.innerWidth - 820)) });
-      react.useLayoutEffect(() => {
-        document.body.classList.add("dshk-pane-open");
-        const b = paneBounds();
-        const w = Math.min(b.max, Math.max(b.min, window.innerWidth - 880));
-        widthRef.current = w;
-        document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
-        return () => {
-          document.body.classList.remove("dshk-pane-open");
-          document.documentElement.style.removeProperty("--dshk-pane-w");
-        };
-      }, []);
-      react.useEffect(() => {
-        if (!dragging) return undefined;
-        const onMove = (e) => {
-          const d = dragRef.current;
-          if (!d) return;
-          const b = paneBounds();
-          const w = Math.min(b.max, Math.max(b.min, d.startW + (d.startX - e.clientX)));
-          widthRef.current = w;
-          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
-        };
-        const onUp = () => {
-          dragRef.current = null;
-          setDragging(false);
-        };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onUp);
-        return () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onUp);
-        };
-      }, [dragging]);
-      const onHandleDown = (e) => {
-        e.preventDefault();
-        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 640 };
-        setDragging(true);
-      };
-
-      // 活动页（面板语义跟随 active 页）：URL 栏数据源
-      const activePage = (state.pages ?? []).find((p) => p.active) ?? null;
-      const activeUrl = activePage?.url ?? "";
+      // 观察页（页签条/URL 栏数据源；URL 栏与导航按钮都作用于它）
+      const viewPage = (state.pages ?? []).find((p) => p.viewed) ?? null;
+      const viewUrl = viewPage?.url ?? "";
       const live = state.running === true;
+
+      // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
+
+      // agent 导航 → 自动切到浏览器标签（恒定行为，无开关，用户定稿：浏览器就该
+      // 与 agent 同步）。唯一的人为控制：手动切走后本轮不再拽回（点回浏览器标签
+      // 解除）。抑制只在「标签存在但没激活」时生效——标签关掉面板即卸载，WS 断了
+      // 事件源也断，重开后天然解除。读模块级 kitUi/autoOpenSuppressed（恒最新）。
+      const maybeAutoOpen = () => {
+        if (autoOpenSuppressed || kitUi.dockTab === "browser") return;
+        setKitUi({ browserOpen: true, dockTab: "browser" });
+      };
 
       // 帧绘制：base64 jpeg → Image 解码 → canvas（尺寸随帧更新，宽 100% 等比）
       const drawFrame = react.useCallback((data) => {
@@ -5494,6 +5414,7 @@ ${line.s ?? ""}` : undefined,
           ws.onopen = () => {
             if (disposed) return;
             setConnLost(false);
+            sendWatch(); // 首连补发：effect 里那次检查时握手未完成，会被 readyState 挡掉
           };
           ws.onmessage = (e) => {
             let msg;
@@ -5527,6 +5448,7 @@ ${line.s ?? ""}` : undefined,
                   );
                   return { ...prev, pages, running: true };
                 });
+                maybeAutoOpen();
                 return;
               }
               if (msg.kind === "crashed" || msg.kind === "closed") {
@@ -5547,11 +5469,8 @@ ${line.s ?? ""}` : undefined,
           ws.onerror = () => {};
         };
         connect();
-        const onVis = () => setVisible(document.visibilityState === "visible");
-        document.addEventListener("visibilitychange", onVis);
         return () => {
           disposed = true;
-          document.removeEventListener("visibilitychange", onVis);
           if (retry !== null) window.clearTimeout(retry);
           try {
             wsRef.current?.close();
@@ -5561,21 +5480,32 @@ ${line.s ?? ""}` : undefined,
         };
       }, [drawFrame]);
 
-      // watch 开关：页面可见才要帧（隐藏即停流，回可见自动续）
-      react.useEffect(() => {
+      // watch 开关：「浏览器标签激活 + 页面可见」才要帧（切走/隐藏即停流，回来自动
+      // 续）；WS 本身保持连接（自动打开的事件源）。onopen 另有补发——首次连接建立
+      // 时本 effect 已跑过（握手未完成被 readyState 挡掉），不补发首连收不到帧。
+      const sendWatch = () => {
         const ws = wsRef.current;
-        if (!ws || ws.readyState !== 1) return undefined;
-        ws.send(JSON.stringify({ t: "watch", on: visible }));
+        if (!ws || ws.readyState !== 1) return;
+        try {
+          ws.send(JSON.stringify({ t: "watch", on: visibleRef.current === true && activeRef.current === true }));
+        } catch {
+          // 已断
+        }
+      };
+      react.useEffect(() => {
+        sendWatch();
+      }, [visible, active, connLost]);
+      react.useEffect(() => {
         const onVis = () => {
-          try {
-            ws.send(JSON.stringify({ t: "watch", on: document.visibilityState === "visible" }));
-          } catch {
-            // 已断
-          }
+          // 事件回调先于重渲染：先同步 ref 再发，避免 watch 带着过期的可见态
+          const vis = document.visibilityState === "visible";
+          visibleRef.current = vis;
+          setVisible(vis);
+          sendWatch();
         };
         document.addEventListener("visibilitychange", onVis);
         return () => document.removeEventListener("visibilitychange", onVis);
-      }, [visible, connLost]);
+      }, []);
 
       // ── 人机共驾：画布输入 → 页面坐标 → 宿主派发（仅运行中；未运行不误拉起）──
       const sendInput = (obj) => {
@@ -5613,6 +5543,18 @@ ${line.s ?? ""}` : undefined,
           Math.abs(p.y - downRef.current.y) < 12;
         downRef.current = { t: now, x: p.x, y: p.y };
         sendInput({ t: "input", kind: "mousedown", x: p.x, y: p.y, button: e.button, clicks: dbl ? 2 : 1 });
+        // 键入目标：透明输入钉在按下点并接管焦点——它的组合事件（中文输入法）
+        // 与 keydown（英文逐键/快捷键）两条路都从这里出去
+        const ime = imeRef.current;
+        if (ime) {
+          ime.style.left = `${e.clientX}px`;
+          ime.style.top = `${e.clientY}px`;
+          try {
+            ime.focus({ preventScroll: true });
+          } catch {
+            ime.focus();
+          }
+        }
       };
       const onCanvasPointerMove = (e) => {
         if (!live) return;
@@ -5636,6 +5578,9 @@ ${line.s ?? ""}` : undefined,
       };
       const onCanvasKeyDown = (e) => {
         if (!live) return;
+        // IME 组合中的 keydown（key=Process / keyCode 229）合成不出任何字，跳过；
+        // 组合文本由透明输入的 compositionend → kind:'text' 整段出
+        if (e.isComposing === true || e.keyCode === 229) return;
         // 纯修饰键不单独转发（并入下一个键的组合串）
         if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
         e.preventDefault(); // 焦点留在画布，Tab 等也透传给页面
@@ -5653,11 +5598,11 @@ ${line.s ?? ""}` : undefined,
         if (text === "") return;
         const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `http://${text}`;
         setDraft(withScheme);
-        // 先本地反馈（宿主 navigated 事件随后校正）；humanOpen 会在宿主侧懒启动浏览器
+        // 先本地反馈（宿主 navigated 事件随后校正）；humanOpen 作用于观察页
         setState((prev) => ({
           ...prev,
           running: true,
-          pages: (prev.pages ?? []).map((p) => (p.active ? { ...p, url: withScheme, title: "" } : p)),
+          pages: (prev.pages ?? []).map((p) => (p.viewed ? { ...p, url: withScheme, title: "" } : p)),
         }));
         try {
           wsRef.current?.send(JSON.stringify({ t: "open", url: withScheme }));
@@ -5666,33 +5611,62 @@ ${line.s ?? ""}` : undefined,
         }
       };
 
-      return jsxRuntime.jsxs("div", {
-        className: "dshk-pane",
-        "data-dragging": dragging || undefined,
-        role: "dialog",
-        "aria-label": t("browserTitle"),
+      // URL 栏跟随观察页：切页签/导航事件（宿主侧校正）都把地址栏对到观察页
+      react.useEffect(() => {
+        setDraft(viewUrl);
+      }, [viewPage?.tabId, viewUrl]);
+
+      const tabLabel = (p) => {
+        if (typeof p.title === "string" && p.title.trim() !== "") return p.title;
+        try {
+          return new URL(p.url).host || p.url;
+        } catch {
+          return p.url || `#${p.tabId}`;
+        }
+      };
+
+      return jsxRuntime.jsxs(jsxRuntime.Fragment, {
         children: [
-          jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
-          jsxRuntime.jsxs("div", {
-            className: "dshk-jobs-head",
-            children: [
-              jsxRuntime.jsxs("span", {
-                className: "dshk-jobs-headside",
-                children: [
-                  jsxRuntime.jsx("span", { children: t("browserTitle") }),
-                  connLost ? jsxRuntime.jsx("span", { className: "dshk-jobs-count", children: "…" }) : null,
-                ],
-              }),
-              jsxRuntime.jsx("button", {
-                type: "button",
-                className: "dshk-jobs-close",
-                "aria-label": t("browserClose"),
-                title: t("browserClose"),
-                onClick: () => setKitUi({ browserOpen: false }),
-                children: "\u2715",
-              }),
-            ],
+          // 页签条：高亮=观察页；●=agent 正在此页操作；× 关页签；＋ 新页签
+          jsxRuntime.jsx("div", {
+            className: "dshk-brw-tabrow",
+            children: jsxRuntime.jsxs("span", {
+              className: "dshk-tabs",
+              children: [
+                (state.pages ?? []).map((p) =>
+                  jsxRuntime.jsxs("span", {
+                    className: `dshk-tab${p.viewed ? " dshk-tab-on" : ""}`,
+                    title: `${p.url}${p.active ? ` · ${t("browserAgentPage")}` : ""}`,
+                    onClick: () => sendInput({ t: "activate", tabId: p.tabId }),
+                    children: [
+                      p.active ? jsxRuntime.jsx("span", { className: "dshk-tab-dot", title: t("browserAgentPage") }) : null,
+                      jsxRuntime.jsx("span", { className: "dshk-tab-label", children: tabLabel(p) }),
+                      jsxRuntime.jsx("button", {
+                        type: "button",
+                        className: "dshk-tab-x",
+                        "aria-label": t("browserCloseTab"),
+                        title: t("browserCloseTab"),
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          sendInput({ t: "closeTab", tabId: p.tabId });
+                        },
+                        children: "✕",
+                      }),
+                    ],
+                  }, p.tabId),
+                ),
+                jsxRuntime.jsx("button", {
+                  type: "button",
+                  className: "dshk-tab dshk-brw-newtab",
+                  title: t("browserNewTab"),
+                  "aria-label": t("browserNewTab"),
+                  onClick: () => sendInput({ t: "newTab" }),
+                  children: "＋",
+                }),
+              ],
+            }),
           }),
+          // URL 栏 + 前进/后退/刷新（都作用于观察页）
           jsxRuntime.jsxs("form", {
             className: "dshk-brw-bar",
             onSubmit: (e) => {
@@ -5700,6 +5674,9 @@ ${line.s ?? ""}` : undefined,
               go(draft);
             },
             children: [
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-jobs-btn dshk-brw-nav", title: t("browserBack"), "aria-label": t("browserBack"), disabled: !live, onClick: () => sendInput({ t: "nav", op: "back" }), children: "◀" }),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-jobs-btn dshk-brw-nav", title: t("browserForward"), "aria-label": t("browserForward"), disabled: !live, onClick: () => sendInput({ t: "nav", op: "forward" }), children: "▶" }),
+              jsxRuntime.jsx("button", { type: "button", className: "dshk-jobs-btn dshk-brw-nav", title: t("browserReload"), "aria-label": t("browserReload"), disabled: !live, onClick: () => sendInput({ t: "nav", op: "reload" }), children: "⟳" }),
               jsxRuntime.jsx("input", {
                 className: "dshk-brw-url",
                 value: draft,
@@ -5724,9 +5701,190 @@ ${line.s ?? ""}` : undefined,
               onContextMenu: (e) => e.preventDefault(), // 右键菜单交给远端页面
             }),
           }),
-          state.running === false && activeUrl === ""
-            ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserNotRunning") })
-            : null,
+          // 透明输入：IME 组合事件宿主（画布不可编辑，中文组合事件起不来）。
+          // 点击画布后焦点在此（见 onCanvasPointerDown）——keydown 必须也挂它，
+          // 否则英文逐键/快捷键的 keydown 冒泡不到处理器（键盘输入全断的根因）。
+          // 组合中 value 只累积不发送；compositionend 把提交文本整段发宿主
+          // （kind:'text' → 远端 keyboard.insertText）。非组合的 input（英文
+          // 逐键已被 keydown preventDefault 拦下，不入 value）只清 value 不发，
+          // 防残字混入下次组合。
+          jsxRuntime.jsx("input", {
+            ref: imeRef,
+            className: "dshk-brw-ime",
+            autoComplete: "off",
+            tabIndex: -1,
+            onKeyDown: onCanvasKeyDown,
+            onInput: (e) => {
+              const el = e.currentTarget;
+              if (el.dataset.composing === "1" || e.isComposing === true) return;
+              el.value = "";
+            },
+            onCompositionStart: (e) => {
+              e.currentTarget.dataset.composing = "1";
+            },
+            onCompositionEnd: (e) => {
+              const el = e.currentTarget;
+              el.dataset.composing = "0";
+              const text = typeof e.data === "string" && e.data !== "" ? e.data : el.value;
+              el.value = "";
+              if (text !== "") sendInput({ t: "input", kind: "text", text });
+            },
+          }),
+          connLost
+            ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserReconnect") })
+            : state.running === false && state.launching === true
+              ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserStarting") })
+              : state.running === false && viewUrl === ""
+                ? jsxRuntime.jsx("div", { className: "dshk-brw-note", children: t("browserNotRunning") })
+                : null,
+        ],
+      });
+    }
+
+    // ─────────── 右侧标签页容器（预览 / 任务 / 浏览器共存切换）───────────
+    // ZCode 式布局：三个面板共居一个右坞，标签存在性（openFile/jobsOpen/
+    // browserOpen）与激活位（dockTab）分离；打开某功能=确保标签存在并激活，
+    // 互斥清场废除——切到浏览器看 agent 干活，文件预览的滚动位置还在。非激活
+    // 标签 display:none 保持挂载（切回不丢状态）；让位 body 类/宽度/拖拽由容器
+    // 统一持有（原三面板各自的壳已拆除）。宽度是三标签共享单值，界限必须同一：
+    // 用户定稿 2026-09-05——曾按标签各定界限，jobs 上限窄一档，切过去面板被
+    // 夹窄与预览/浏览器不一致；现三标签同一界限，切标签绝不改宽。tab 参数仅为
+    // render-check 逐一比对防回归保留。下限取三者最大需求（浏览器画布 480）。
+    const DOCK_TABS = ["preview", "jobs", "browser"];
+    function dockBounds(tab) {
+      return { min: 480, max: Math.min(960, Math.max(560, window.innerWidth - 820)) };
+    }
+    function RightDock({ props, cwd }) {
+      const ui = useKitUi();
+      // 激活位必须指向「仍存在」的标签：dockTab 失效（配置门控清场等）时落回
+      // 第一个存在的标签，避免渲染出没有内容的空容器
+      const exists = { preview: !!ui.openFile, jobs: ui.jobsOpen === true, browser: ui.browserOpen === true };
+      const tab = ui.dockTab && exists[ui.dockTab]
+        ? ui.dockTab
+        : exists.preview
+          ? "preview"
+          : exists.jobs
+            ? "jobs"
+            : exists.browser
+              ? "browser"
+              : null;
+      const widthRef = react.useRef(0);
+      const dragRef = react.useRef(null);
+      const [dragging, setDragging] = react.useState(false);
+
+      // 让位类跟随容器存在；宽度初始/切标签时对齐激活标签的界限
+      react.useLayoutEffect(() => {
+        document.body.classList.add("dshk-pane-open");
+        const b = dockBounds(tab);
+        const w = Math.min(b.max, Math.max(b.min, widthRef.current > 0 ? widthRef.current : Math.min(720, window.innerWidth - 880)));
+        widthRef.current = w;
+        document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        return () => {
+          document.body.classList.remove("dshk-pane-open");
+          document.documentElement.style.removeProperty("--dshk-pane-w");
+        };
+      }, [tab]);
+      react.useEffect(() => {
+        if (!dragging) return undefined;
+        const onMove = (e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const b = dockBounds(tab);
+          const w = Math.min(b.max, Math.max(b.min, d.startW + (d.startX - e.clientX)));
+          widthRef.current = w;
+          document.documentElement.style.setProperty("--dshk-pane-w", `${w}px`);
+        };
+        const onUp = () => {
+          dragRef.current = null;
+          setDragging(false);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+        };
+      }, [dragging, tab]);
+      const onHandleDown = (e) => {
+        e.preventDefault();
+        dragRef.current = { startX: e.clientX, startW: widthRef.current > 0 ? widthRef.current : 560 };
+        setDragging(true);
+      };
+
+      const tabDefs = [];
+      if (ui.openFile) tabDefs.push({ id: "preview", label: ui.openFile.split(/[\\/]/).pop() || t("dockPreview"), tip: ui.openFile });
+      if (ui.jobsOpen) tabDefs.push({ id: "jobs", label: t("dockJobs") });
+      if (ui.browserOpen) tabDefs.push({ id: "browser", label: t("dockBrowser") });
+      const switchTab = (id) => {
+        // 人为离开浏览器标签 → 抑制自动拽回；点回浏览器标签 → 解除
+        if (kitUi.dockTab === "browser" && id !== "browser") autoOpenSuppressed = true;
+        if (id === "browser") autoOpenSuppressed = false;
+        setKitUi({ dockTab: id });
+      };
+      const closeTab = (id) => {
+        if (id === "browser") autoOpenSuppressed = false; // 关标签=面板卸载，重开自然解除
+        setKitUi(closeDockTab(kitUi, id));
+      };
+
+      return jsxRuntime.jsxs("div", {
+        className: "dshk-pane",
+        "data-dragging": dragging || undefined,
+        role: "dialog",
+        "aria-label": ({ preview: t("dockPreview"), jobs: t("dockJobs"), browser: t("dockBrowser") })[tab] ?? "",
+        children: [
+          jsxRuntime.jsx("div", { className: "dshk-pane-handle", onPointerDown: onHandleDown }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-jobs-head",
+            children: jsxRuntime.jsx("span", {
+              className: "dshk-tabs",
+              children: tabDefs.map((d) =>
+                jsxRuntime.jsxs("span", {
+                  className: `dshk-tab${d.id === tab ? " dshk-tab-on" : ""}`,
+                  title: d.tip ?? "",
+                  onClick: () => switchTab(d.id),
+                  children: [
+                    jsxRuntime.jsx("span", { className: "dshk-tab-label", children: d.label }),
+                    jsxRuntime.jsx("button", {
+                      type: "button",
+                      className: "dshk-tab-x",
+                      "aria-label": t("dockClose"),
+                      title: t("dockClose"),
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        closeTab(d.id);
+                      },
+                      children: "✕",
+                    }),
+                  ],
+                }, d.id),
+              ),
+            }),
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-pane-view",
+            style: { display: tab === "preview" ? "flex" : "none" },
+            children: ui.openFile
+              ? jsxRuntime.jsx(FileContentPane, {
+                  path: ui.openFile,
+                  source: ui.openFrom ?? "tree",
+                  untracked: ui.openUntracked === true,
+                  cwd,
+                  onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, dockTab: "preview" }),
+                })
+              : null,
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-pane-view",
+            style: { display: tab === "jobs" ? "flex" : "none" },
+            children: ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
+          }),
+          jsxRuntime.jsx("div", {
+            className: "dshk-pane-view",
+            style: { display: tab === "browser" ? "flex" : "none" },
+            children: ui.browserOpen ? jsxRuntime.jsx(BrowserPanel, { active: tab === "browser" }) : null,
+          }),
         ],
       });
     }
@@ -5746,7 +5904,7 @@ ${line.s ?? ""}` : undefined,
       chatPreviewHook = {
         ready: cfg.chatOpenFilePreview === true && (cfg.fileTreeEnabled || cfg.sourceControlEnabled),
         cwd,
-        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, jobsOpen: false, browserOpen: false }),
+        openPreview: (p) => setKitUi({ openFile: p, openFrom: "chat", openUntracked: false, dockTab: "preview" }),
       };
 
       // 卸载时清空模块级接管状态，避免拦截器持有失效闭包
@@ -5809,8 +5967,9 @@ ${line.s ?? ""}` : undefined,
         }
         if (!cfg.fileTreeEnabled && ui.treeOpen) setKitUi({ treeOpen: false, openFile: null, openFrom: null });
         if (!cfg.sourceControlEnabled && ui.gitOpen) setKitUi({ gitOpen: false, openFile: null, openFrom: null });
-        if (!cfg.jobsEnabled && ui.jobsOpen) setKitUi({ jobsOpen: false });
-        if (!cfg.browserEnabled && ui.browserOpen) setKitUi({ browserOpen: false });
+        // 配置门控清场走 closeDockTab：清存在性的同时把激活位顺延到剩余标签
+        if (!cfg.jobsEnabled && ui.jobsOpen) setKitUi(closeDockTab(kitUi, "jobs"));
+        if (!cfg.browserEnabled && ui.browserOpen) setKitUi(closeDockTab(kitUi, "browser"));
       }, [cfg.terminalEnabled, cfg.fileTreeEnabled, cfg.sourceControlEnabled, cfg.jobsEnabled, cfg.browserEnabled]);
 
       // 侧边栏浏览区占用：文件树与「更改」视图互斥共享 sidebar.workspaces 单槽
@@ -5827,8 +5986,8 @@ ${line.s ?? ""}` : undefined,
             const side = owner ?? {};
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, jobsOpen: false, browserOpen: false }), ...owner })
-              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, jobsOpen: false, browserOpen: false }), ...owner });
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "scm", openUntracked: untracked === true, dockTab: "preview" }), ...owner })
+              : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi({ openFile: p, openFrom: "tree", openUntracked: false, dockTab: "preview" }), ...owner });
           });
         } catch (error) {
           console.error("[dsh-kit] 注册 sidebar.workspaces 面板失败：", error);
@@ -5898,11 +6057,12 @@ ${line.s ?? ""}` : undefined,
             return;
           }
           if (e.key === "Escape") {
-            if (kitUi.openFile) setKitUi({ openFile: null, openFrom: null });
-            else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
+            // 右侧标签页容器：Esc 关当前激活标签（无激活位则关第一个存在的标签）
+            if (dockAlive(kitUi)) {
+              const tab = kitUi.dockTab ?? (kitUi.openFile ? "preview" : kitUi.jobsOpen ? "jobs" : "browser");
+              setKitUi(closeDockTab(kitUi, tab));
+            } else if (kitUi.gitOpen) setKitUi({ gitOpen: false });
             else if (kitUi.treeOpen) setKitUi({ treeOpen: false });
-            else if (kitUi.jobsOpen) setKitUi({ jobsOpen: false });
-            else if (kitUi.browserOpen) setKitUi({ browserOpen: false });
             else if (kitUi.termDockOpen) setKitUi({ termDockOpen: false }); // 只隐藏，不杀会话
           }
         };
@@ -5931,18 +6091,8 @@ ${line.s ?? ""}` : undefined,
                 onKillAll: () => setKitUi({ terminals: [], activeTermId: null, termDockOpen: false }),
               })
             : null,
-          ui.openFile && (cfg.fileTreeEnabled || cfg.sourceControlEnabled)
-            ? jsxRuntime.jsx(FileContentPane, {
-                path: ui.openFile,
-                source: ui.openFrom ?? "tree",
-                untracked: ui.openUntracked === true,
-                cwd,
-                onClose: () => setKitUi({ openFile: null, openFrom: null, openUntracked: null }),
-                onOpenFile: (p, untracked) => setKitUi({ openFile: p, openFrom: "md-link", openUntracked: untracked === true, jobsOpen: false, browserOpen: false }),
-              })
-            : null,
-          cfg.jobsEnabled && ui.jobsOpen ? jsxRuntime.jsx(JobsPanel, { ...props }) : null,
-          cfg.browserEnabled && ui.browserOpen ? jsxRuntime.jsx(BrowserPanel, {}) : null,
+          // 右侧标签页容器：预览/任务/浏览器共存切换（存在性/激活位见 closeDockTab）
+          dockAlive(ui) ? jsxRuntime.jsx(RightDock, { props, cwd }) : null,
         ],
       });
     }
