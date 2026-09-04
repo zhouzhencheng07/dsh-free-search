@@ -198,6 +198,22 @@ try {
   assert.ok(listed.pages.length >= 1)
   ok(`listPages 列出 ${listed.pages.length} 页`)
 
+  // ── 关掉最后一页 = 整个浏览器优雅关闭；下次导航必须能重新拉起。回归：
+  // _launching 落定后若不清，context 事后关闭会让 ensure 误报 ok，
+  // 调用方拿 null context 去 newPage 崩掉（正式环境 0.4.3 踩中过）──
+  const remaining = (await service.listPages()).pages
+  assert.ok(remaining.length >= 1)
+  for (const p of remaining) await service.closePage(p.tabId)
+  await new Promise((r) => setTimeout(r, 500))
+  const closedState = await service.state()
+  assert.equal(closedState.running, false, '关掉最后一页后浏览器应已收摊')
+  assert.ok(events.includes('closed'), '应广播 closed 事件（面板收标签联动源）')
+  const renavigated = await service.navigate(`${base}?relaunch`, { snapshot: false })
+  assert.equal(renavigated.ok, true, `收摊后重新导航失败：${renavigated.error}`)
+  const restate = await service.state()
+  assert.equal(restate.running, true, '重新导航后浏览器应已重新拉起')
+  ok('close-on-last 收摊 → 再次导航重新拉起（_launching 落定即清）')
+
   assert.ok(events.includes('navigated'), '应收到 navigated 事件（面板联动源）')
   ok('事件流包含 navigated（面板联动）')
 } finally {

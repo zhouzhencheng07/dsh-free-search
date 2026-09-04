@@ -372,11 +372,16 @@ export class BrowserService {
   }
 
   /** 懒启动持久化上下文（幂等；并发调用共享同一次启动） */
-  async ensure(): Promise<{ ok: true } | { ok: false; error: string }> {
+  async ensure(): Promise<{ ok: true } | { ok: false, error: string }> {
     this._touch()
     if (this._context) return { ok: true }
     if (this._launchError) return { ok: false, error: this._launchError }
-    if (!this._launching) this._launching = this._launch()
+    if (!this._launching) {
+      // 落定即清：context 事后关闭（关最后一页/空闲关闭/崩溃）后 _launching 若残留
+      // 已落定的旧 promise，这里会误报 ok，调用方拿 null context 去 newPage 直接崩，
+      // 服务从此砖死到重启——正式环境 0.4.3 实际踩中过
+      this._launching = this._launch().finally(() => { this._launching = null })
+    }
     return this._launching
   }
 
