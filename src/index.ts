@@ -57,7 +57,7 @@ import path from 'node:path'
 
 import { applySkillPool, findProjectRoot } from './skill-pool.ts'
 import { applyWebSearch } from './web-search.ts'
-import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack } from './git.ts'
+import { parseStatusBranch, parseLogRecords, parseBranchList, parseTrack } from './git.ts'
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from './phone-gateway.ts'
 import type { PhoneGatewayHandle } from './phone-gateway.ts'
 import { decodePreviewText } from './text-decode.ts'
@@ -1603,10 +1603,12 @@ export async function apply(ctx: KitCtx): Promise<void> {
         },
       })
 
-      // GET /dsh-kit/git/log?cwd=<绝对目录>&n=<条数> → 提交图谱
-      //   {available:true, root, lines:[{g,H,h,an,ad,s,d}]} | {available:false}
-      //   g=图谱 ASCII 前缀（来自 git log --graph；纯连线续行只有 g），
-      //   d=%D 引用装饰原文；n 默认 120、上限 500；空库（尚无提交）→ lines:[]。
+      // GET /dsh-kit/git/log?cwd=<绝对目录>&n=<条数>&skip=<偏移> → 提交图谱
+      //   {available:true, root, records:[{H,h,p,an,at,s,d}], hasMore} | {available:false}
+      //   结构化提交记录（p=父哈希数组，图谱 lane 由前端从 p 计算，宿主不做几何）；
+      //   refs 面=HEAD+分支+标签+远端（不含 stash，噪声线少）；--topo-order 保证
+      //   子先于父（前端 lane 分配依赖该顺序）；n 默认 120、上限 500；skip 翻页；
+      //   hasMore=max-count 取 n+1 条探得（截到 n 返回）。空库 → records:[]。
       const LOG_DEFAULT = 120
       const LOG_MAX = 500
       const disposeGitLog = webCtx.webServer.register({
@@ -1640,21 +1642,27 @@ export async function apply(ctx: KitCtx): Promise<void> {
           let n = Number(url.searchParams.get('n') ?? LOG_DEFAULT)
           if (!Number.isInteger(n) || n < 1) n = LOG_DEFAULT
           if (n > LOG_MAX) n = LOG_MAX
+          let skip = Number(url.searchParams.get('skip') ?? 0)
+          if (!Number.isInteger(skip) || skip < 0) skip = 0
+          if (skip > 100000) skip = 100000
           runGit(
-            ['-c', 'core.quotePath=false', 'log', '--all', '--date-order', '--graph', `--max-count=${n}`,
-              '--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%D', '--date=format:%Y-%m-%d %H:%M'],
+            ['-c', 'core.quotePath=false', 'log', 'HEAD', '--branches', '--tags', '--remotes', '--topo-order',
+              `--skip=${skip}`, `--max-count=${n + 1}`,
+              '--pretty=format:%H%x1f%P%x1f%h%x1f%an%x1f%at%x1f%s%x1f%D%x1e'],
             root,
           ).then((r) => {
             if (!r.ok) {
               // 空库不是错误：git log 报 "does not have any commits yet"
               if (/does not have any commits/i.test(r.err + r.out)) {
-                json(200, { available: true, root, lines: [] })
+                json(200, { available: true, root, records: [], hasMore: false })
                 return
               }
               json(200, { available: false })
               return
             }
-            json(200, { available: true, root, lines: parseLogGraph(r.out) })
+            const all = parseLogRecords(r.out)
+            const hasMore = all.length > n
+            json(200, { available: true, root, records: all.slice(0, n), hasMore })
           })
         },
       })

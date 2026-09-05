@@ -497,6 +497,7 @@ window.__ModuleLoader__.load({
       scGraph: "提交图谱",
       scGraphEmpty: "（尚无提交）",
       scGraphFail: "图谱加载失败",
+      scGraphMore: "加载更多",
       scCommitDetail: "提交详情",
       scBack: "返回",
       scMergedCommit: "合并提交",
@@ -756,6 +757,7 @@ window.__ModuleLoader__.load({
       scGraph: "Commit graph",
       scGraphEmpty: "(no commits yet)",
       scGraphFail: "Failed to load graph",
+      scGraphMore: "Load more",
       scCommitDetail: "Commit detail",
       scBack: "Back",
       scMergedCommit: "Merge commit",
@@ -1372,25 +1374,25 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 /* ⋯ 菜单禁用项 */
 .dshk-menu > button[disabled]{opacity:.5;cursor:default}
 .dshk-menu > button[disabled]:hover{background:none}
-/* 提交图谱（等宽行，横向滚动） */
-.dshk-graph{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;overflow-x:auto;user-select:text;padding:2px 0}
+/* 提交图谱（结构化 lane + SVG 绘制，横向滚动；窄容器隐藏作者/时间列） */
+.dshk-graph{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;overflow-x:auto;user-select:text;padding:2px 0;container-type:inline-size}
 .dshk-grow{display:flex;align-items:center;white-space:pre;padding:0 8px;min-height:24px}
 .dshk-grow-click{cursor:pointer}
 .dshk-grow-click:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dshk-graph-g{flex:none;color:var(--dsw-alias-label-tertiary);line-height:1.5}
-.dshk-gglyph{flex:none;width:14px;height:24px;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;color:var(--dsw-alias-label-tertiary)}
-.dshk-gdot{width:10px;height:10px;border-radius:50%;background:currentColor;box-shadow:0 0 0 1px color-mix(in srgb, currentColor 35%, transparent)}
-.dshk-godot{width:10px;height:10px;border-radius:50%;border:2px solid currentColor;box-sizing:border-box}
-.dshk-gvline{flex:none;width:2px;height:24px;background:currentColor;border-radius:1px;opacity:.8}
-.dshk-gslash{flex:none;width:2px;height:38px;background:currentColor;border-radius:1px;opacity:.8;transform:rotate(37deg);transform-origin:center}
-.dshk-gbslash{flex:none;width:2px;height:38px;background:currentColor;border-radius:1px;opacity:.8;transform:rotate(-37deg);transform-origin:center}
+.dshk-gsvg{flex:none;display:block}
 .dshk-gref{flex:none;font-size:10px;line-height:1.4;margin-right:4px;padding:0 5px;border-radius:5px;border:1px solid currentColor;white-space:nowrap}
 .dshk-gref[data-k="head"]{color:#e2c08d}
 .dshk-gref[data-k="branch"]{color:#4daafc}
 .dshk-gref[data-k="tag"]{color:#b088e0}
 .dshk-gref[data-k="remote"]{color:#73c991}
 .dshk-ghash{flex:none;color:var(--dsw-alias-label-tertiary);width:62px;display:inline-block;margin-right:6px}
-.dshk-gsubj{color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis}
+.dshk-gsubj{flex:1;min-width:0;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis}
+.dshk-gauthor{flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px;margin-left:8px}
+.dshk-gdate{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px;margin-left:8px;white-space:nowrap}
+.dshk-gmore{display:block;margin:6px auto;padding:5px 14px;appearance:none;background:none;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);border-radius:6px;font:inherit;font-size:12px;cursor:pointer}
+.dshk-gmore:hover{color:var(--dsw-alias-label-primary)}
+.dshk-gmore[disabled]{opacity:.55;cursor:default}
+@container (max-width: 520px){.dshk-gauthor,.dshk-gdate{display:none}}
 .dshk-gdetail-head{display:flex;align-items:center;gap:8px;padding:6px 10px}
 .dshk-gdetail-title{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshk-gmeta{padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}
@@ -2281,9 +2283,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return body;
       });
     }
-    /** git 图谱：available:false = 非 git 目录/失败；lines 空数组 = 尚无提交 */
-    function fetchGitLog(cwd, n, signal) {
-      const url = `/dsh-kit/git/log?cwd=${encodeURIComponent(cwd)}&n=${Number(n) || 120}`;
+    /** git 图谱：available:false = 非 git 目录/失败；records 空数组 = 尚无提交；
+        hasMore = 还有更早提交（load more 用 skip=已取条数续传） */
+    function fetchGitLog(cwd, n, skip, signal) {
+      const url = `/dsh-kit/git/log?cwd=${encodeURIComponent(cwd)}&n=${Number(n) || 120}&skip=${Number(skip) || 0}`;
       return fetch(url, { signal }).then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || typeof body.available !== "boolean") {
@@ -3849,45 +3852,134 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     }
 
     // ─────────── 提交图谱（源代码管理面板的 graph 视图）───────────
-    // 数据走 GET /dsh-kit/git/log（git log --all --graph 的 ASCII 图谱 + 结构化
-    // 字段），等宽渲染：图谱前缀 → 引用装饰 chip → 短哈希 → 提交说明；纯连线续行
-    // 只画前缀。点提交行进详情（/dsh-kit/git/show）：作者/时间/说明/文件清单，
-    // 清单行可点开进右侧预览面板（A 类按未跟踪语义进原文视图）。
+    // 数据走 GET /dsh-kit/git/log（结构化提交记录：完整/短哈希、父哈希、作者、
+    // 时间戳、说明、引用装饰），lane 几何由前端从父哈希计算后 SVG 绘制——同一
+    // 分支线全程一色、分叉合并处曲线平滑（旧 ASCII 方案按字符列着色，分叉后同线
+    // 中途变色、拐角碎裂）。行布局：图谱列 → 引用装饰 chip → 短哈希 → 说明 →
+    // 作者 → 相对时间。点提交行进详情（/dsh-kit/git/show）：作者/时间/说明/文件
+    // 清单，清单行可点开进右侧预览面板（A 类按未跟踪语义进原文视图）。
     // refreshRef：头部 ⟳ 一并刷新的句柄（由 GitChangesPanel 传入并回填）。
-    /** 图谱 ASCII 前缀 → 图元（* 实心点 / o 空心点 / | 竖线 / \\ 斜线）。
-     * 每个图元占一列定宽轨道；按轨道列（lane）循环分色，分支结构一眼可辨。
-     * 空格原样占位（pre 保留列位）。工厂顶层函数，render-check 直接导出渲染。 */
+    /** 图谱 lane 配色（按 lane 生命周期循环取用，同一条线颜色恒定） */
     const LANE_COLORS = ["#4daafc", "#73c991", "#e2c08d", "#b088e0"];
-    function GraphGlyph({ g }) {
-      const out = [];
-      const glyph = (i, cls) =>
-        jsxRuntime.jsx(
-          "span",
-          { className: "dshk-gglyph", style: { color: LANE_COLORS[i % LANE_COLORS.length] }, children: jsxRuntime.jsx("span", { className: cls }) },
-          "g" + i,
-        );
-      for (let i = 0; i < g.length; i++) {
-        const ch = g[i];
-        if (ch === "*") out.push(glyph(i, "dshk-gdot"));
-        else if (ch === "o") out.push(glyph(i, "dshk-godot"));
-        else if (ch === "|") out.push(glyph(i, "dshk-gvline"));
-        else if (ch === "/") out.push(glyph(i, "dshk-gslash"));
-        else if (ch === "\\") out.push(glyph(i, "dshk-gbslash"));
-        else out.push(ch); // 空格等原样（pre 保留列位）
+    const GRAPH_ROW_H = 22;
+    const GRAPH_GAP = 14;
+    const GRAPH_R = 4;
+
+    /** 提交记录 → 图谱几何（纯函数，render-check 直调）。
+     * records 按 --topo-order 到达（子先于父，宿主端点保证）。算法：槽位数组持有
+     * 「期待到达的哈希+颜色」；每行先并拢所有指向本提交的槽位（合并线收进主槽位
+     * 色），无来源则取首个空槽/追加；首父继承本行槽位（线穿过节点延续），次父取
+     * 空槽/追加（新色，同父去重）。输出每行：rec、节点 lane/颜色、进边（被消费
+     * 的线）、出边（父边）、直通竖线；x 单位=槽位序号，渲染层乘 GRAPH_GAP。窗口
+     * 末仍未消费的槽位由各行画到自身行底，load more 续传后自然延续。 */
+    function computeCommitGraph(records) {
+      const rows = [];
+      let slots = []; // Array<{hash, color} | null>
+      let colorSeq = 0;
+      let laneCount = 1;
+      const newColor = () => colorSeq++ % LANE_COLORS.length;
+      for (const rec of records ?? []) {
+        if (!rec || typeof rec.H !== "string" || rec.H === "") continue;
+        const prev = slots.slice();
+        const ins = [];
+        let lane = -1;
+        let laneColor = -1;
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i] && prev[i].hash === rec.H) {
+            ins.push({ x: i, color: prev[i].color });
+            if (lane < 0) {
+              lane = i;
+              laneColor = prev[i].color;
+            }
+          }
+        }
+        if (lane < 0) {
+          lane = prev.findIndex((s) => s === null);
+          if (lane < 0) lane = prev.length;
+          laneColor = newColor();
+        }
+        const next = prev.slice();
+        for (const e of ins) next[e.x] = null; // 被消费的线终结于本节点
+        const outs = [];
+        const parents = Array.isArray(rec.p) ? rec.p.filter((x) => typeof x === "string" && x !== "") : [];
+        parents.forEach((ph, pi) => {
+          let idx;
+          let color;
+          if (pi === 0) {
+            // 首父必须占节点槽位（线穿过节点延续）；父已被别的槽位等待也照建——
+            // 到时多线并拢进父节点，正是分叉的画法
+            idx = lane;
+            color = laneColor;
+          } else {
+            if (next.some((s) => s && s.hash === ph)) return;
+            idx = next.findIndex((s) => s === null);
+            if (idx < 0) {
+              idx = next.length;
+              next.push(null);
+            }
+            color = newColor();
+          }
+          next[idx] = { hash: ph, color };
+          outs.push({ x: idx, color });
+        });
+        const consumed = new Set(ins.map((e) => e.x));
+        const passes = [];
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i] && !consumed.has(i)) passes.push({ x: i, color: prev[i].color });
+        }
+        rows.push({ rec, lane, color: laneColor, ins, outs, passes });
+        slots = next;
+        while (slots.length > 0 && slots[slots.length - 1] === null) slots.pop(); // 尾部空槽回收
+        laneCount = Math.max(laneCount, slots.length);
       }
-      return jsxRuntime.jsx("span", { className: "dshk-graph-g", children: out });
+      return { rows, laneCount };
+    }
+
+    /** 单行图谱 SVG：进边（top→节点）/出边（节点→bottom）三次曲线（竖直切出、
+     *  竖直切入），直通槽位画竖线，节点实心圆。行盒高 GRAPH_ROW_H，
+     *  x(i)=i*GRAPH_GAP+GAP/2+2 */
+    function CommitGraphSvg({ row, laneCount }) {
+      const x = (i) => GRAPH_GAP / 2 + 2 + i * GRAPH_GAP;
+      const w = Math.max(1, laneCount) * GRAPH_GAP + 4;
+      const mid = GRAPH_ROW_H / 2;
+      const nx = x(row.lane);
+      const parts = [];
+      row.passes.forEach((p, i) =>
+        parts.push(
+          jsxRuntime.jsx("path", { d: `M ${x(p.x)} 0 L ${x(p.x)} ${GRAPH_ROW_H}`, stroke: p.color, strokeWidth: 2, fill: "none", opacity: 0.9 }, "p" + i),
+        ),
+      );
+      row.ins.forEach((e, i) => {
+        const ex = x(e.x);
+        const d =
+          ex === nx
+            ? `M ${ex} 0 L ${ex} ${mid}`
+            : `M ${ex} 0 C ${ex} ${mid}, ${nx} ${mid - GRAPH_R - 1}, ${nx} ${mid}`;
+        parts.push(jsxRuntime.jsx("path", { d, stroke: e.color, strokeWidth: 2, fill: "none", opacity: 0.9 }, "i" + i));
+      });
+      row.outs.forEach((e, i) => {
+        const ex = x(e.x);
+        const d =
+          ex === nx
+            ? `M ${nx} ${mid} L ${ex} ${GRAPH_ROW_H}`
+            : `M ${nx} ${mid} C ${nx} ${mid + GRAPH_R + 1}, ${ex} ${mid}, ${ex} ${GRAPH_ROW_H}`;
+        parts.push(jsxRuntime.jsx("path", { d, stroke: e.color, strokeWidth: 2, fill: "none", opacity: 0.9 }, "o" + i));
+      });
+      parts.push(jsxRuntime.jsx("circle", { cx: nx, cy: mid, r: GRAPH_R, fill: LANE_COLORS[row.color % LANE_COLORS.length] ?? "#888" }, "n"));
+      return jsxRuntime.jsx("svg", { className: "dshk-gsvg", width: w, height: GRAPH_ROW_H, viewBox: `0 0 ${w} ${GRAPH_ROW_H}`, children: parts });
     }
 
     function GitGraphPanel({ cwd, root, refreshRef, onOpenFile }) {
-      const [data, setData] = react.useState(null); // null=加载中；{available, lines?}
+      const [data, setData] = react.useState(null); // null=加载中；{available, records?, hasMore?}
       const [error, setError] = react.useState(null);
       const [sel, setSel] = react.useState(null); // null=列表；否则为选中的提交哈希
       const [detail, setDetail] = react.useState(null); // null | {phase, meta?, files?}
+      const [more, setMore] = react.useState(false); // load more 在途
       const fetchRef = react.useRef(null);
       fetchRef.current = () => {
         if (!cwd) return;
         const c = new AbortController();
-        fetchGitLog(cwd, 200, c.signal)
+        fetchGitLog(cwd, 200, 0, c.signal)
           .then((b) => {
             if (c.signal.aborted) return;
             setError(null);
@@ -3896,6 +3988,26 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           .catch((e) => {
             if (!c.signal.aborted && e?.name !== "AbortError") setError(String(e?.message ?? e));
           });
+      };
+      // load more：skip=已取条数续传，追加到已加载记录后（lane 几何对追加稳定——
+      // 新记录只会消费/延续已有槽位，不改变前面行的画法）
+      const loadMore = () => {
+        if (!cwd || more || !data || data.available !== true || data.hasMore !== true) return;
+        const c = new AbortController();
+        setMore(true);
+        fetchGitLog(cwd, 200, Array.isArray(data.records) ? data.records.length : 0, c.signal)
+          .then((b) => {
+            if (c.signal.aborted) return;
+            if (b.available !== true) throw new Error("unavailable");
+            setData((prev) => ({
+              available: true,
+              root: prev && prev.root,
+              records: [...(prev && Array.isArray(prev.records) ? prev.records : []), ...(Array.isArray(b.records) ? b.records : [])],
+              hasMore: b.hasMore === true,
+            }));
+          })
+          .catch(() => {})
+          .finally(() => setMore(false));
       };
       // 把本面板的刷新函数暴露给父级的 ⟳
       if (refreshRef) refreshRef.current = () => fetchRef.current();
@@ -4029,37 +4141,56 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       if (data.available !== true) {
         return jsxRuntime.jsx("div", { className: "dshk-note", children: error ? `${t("scGraphFail")}：${error}` : t("scGraphFail") });
       }
-      const lines = Array.isArray(data.lines) ? data.lines : [];
-      if (lines.length === 0) {
+      const records = Array.isArray(data.records) ? data.records : [];
+      if (records.length === 0) {
         return jsxRuntime.jsx("div", { className: "dshk-note", children: t("scGraphEmpty") });
       }
+      const geo = computeCommitGraph(records);
+      const fmtDate = (at) => {
+        if (!Number.isFinite(at) || at <= 0) return "";
+        const d = new Date(at * 1000);
+        const p2 = (v) => String(v).padStart(2, "0");
+        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+      };
+      const relTime = (at) => {
+        if (!Number.isFinite(at) || at <= 0) return "";
+        const diff = Date.now() / 1000 - at;
+        if (diff < 90) return resolveZh() ? "刚刚" : "just now";
+        if (diff < 3600) return resolveZh() ? `${Math.round(diff / 60)} 分钟前` : `${Math.round(diff / 60)}m ago`;
+        if (diff < 86400) return resolveZh() ? `${Math.round(diff / 3600)} 小时前` : `${Math.round(diff / 3600)}h ago`;
+        if (diff < 86400 * 30) return resolveZh() ? `${Math.round(diff / 86400)} 天前` : `${Math.round(diff / 86400)}d ago`;
+        return fmtDate(at).slice(0, 10);
+      };
       return jsxRuntime.jsx("div", {
         className: "dshk-graph",
-        children: lines.map((line, i) => {
-          // 纯连线行（无 %H 字段）不可点：必须判非空字符串，否则 undefined !== ""
-          // 会把连线行误判成提交行（悬浮 undefined tooltip、点击 commit=undefined → 400）
-          const clickable = typeof line.H === "string" && line.H !== "";
-          return jsxRuntime.jsxs(
-            "div",
-            {
-              className: clickable ? "dshk-grow dshk-grow-click" : "dshk-grow",
-              title: clickable ? `${line.an ?? ""} · ${line.ad ?? ""}
-${line.s ?? ""}` : undefined,
-              onClick: clickable ? () => openDetail(line.H) : undefined,
-              children: [
-                jsxRuntime.jsx(GraphGlyph, { g: line.g }),
-                clickable
-                  ? jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
-                      renderRefChips(line.d),
-                      jsxRuntime.jsx("span", { className: "dshk-ghash", children: line.h }),
-                      jsxRuntime.jsx("span", { className: "dshk-gsubj", children: line.s }),
-                    ] })
-                  : null,
-              ],
-            },
-            i,
-          );
-        }),
+        children: [
+          ...geo.rows.map((row, i) =>
+            jsxRuntime.jsxs(
+              "div",
+              {
+                className: "dshk-grow dshk-grow-click",
+                title: `${row.rec.an} · ${fmtDate(row.rec.at)}\n${row.rec.s}`,
+                onClick: () => openDetail(row.rec.H),
+                children: [
+                  jsxRuntime.jsx(CommitGraphSvg, { row, laneCount: geo.laneCount }),
+                  renderRefChips(row.rec.d),
+                  jsxRuntime.jsx("span", { className: "dshk-ghash", children: row.rec.h }),
+                  jsxRuntime.jsx("span", { className: "dshk-gsubj", children: row.rec.s }),
+                  jsxRuntime.jsx("span", { className: "dshk-gauthor", children: row.rec.an }),
+                  jsxRuntime.jsx("span", { className: "dshk-gdate", title: fmtDate(row.rec.at), children: relTime(row.rec.at) }),
+                ],
+              },
+              `${row.rec.H}-${i}`,
+            ),
+          ),
+          data.hasMore === true
+            ? jsxRuntime.jsx(
+                "button",
+                { type: "button", className: "dshk-gmore", disabled: more === true, onClick: loadMore, children: more ? t("contentLoading") : t("scGraphMore") },
+                "more",
+              )
+            : null,
+        ],
       });
     }
 

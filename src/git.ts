@@ -70,51 +70,47 @@ export function parseStatusBranch(line: unknown): GitBranchStatus {
   return out
 }
 
-/** 图谱行字段分隔符（与 src/index.ts 的 git log --pretty=format 约定一致，0x1F） */
+/** 记录/字段分隔符（0x1E / 0x1F）：与 src/index.ts 的 git log --pretty=format 约定一致 */
+export const LOG_RS = String.fromCharCode(30)
 export const LOG_FS = String.fromCharCode(31)
 
-export interface LogGraphLine {
-  g: string
+export interface LogRecord {
   H: string
   h: string
+  /** 父提交哈希（merge 提交多个；根提交为空数组）——图谱 lane 由前端从它计算 */
+  p: string[]
   an: string
-  ad: string
+  /** 作者时间 unix 秒（%at，前端做相对时间/绝对时间展示） */
+  at: number
   s: string
   d: string
 }
 
 /**
- * 解析 `git log --all --graph --pretty=format:...` 输出 → 行数组。
- *
- * 每行 = 图谱 ASCII 前缀 + 可选字段段（首个分隔符之后、按 %H %h %an %ad %s %D
- * 顺序）。纯连线续行（只有图谱前缀、没有提交）无字段段，返回 {g} 单要素行，
- * 前端照画竖线即可；%b 类多行字段在端点侧已约定放末尾，此处不再 join 兜底。
+ * 解析 `git log --pretty=format:%H%x1f%P%x1f%h%x1f%an%x1f%at%x1f%s%x1f%D%x1e` 输出
+ * → 结构化提交记录。记录按 %x1e 分隔、字段按 %x1f 分隔（git 在记录间还会补 \n，
+ * 这里一并剥掉）；解析失败一律返回安全默认值而非抛错。宿主不做任何图谱几何，
+ * lane 分配在浏览器半边（bundle.js computeCommitGraph）从 p 计算。
  */
-export function parseLogGraph(out: unknown): LogGraphLine[] {
-  const lines: LogGraphLine[] = []
-  if (typeof out !== 'string') return lines
-  for (const raw of out.split('\n')) {
-    const line = raw.replace(/\r$/, '')
+export function parseLogRecords(out: unknown): LogRecord[] {
+  const records: LogRecord[] = []
+  if (typeof out !== 'string') return records
+  for (const raw of out.split(LOG_RS)) {
+    const line = raw.replace(/^[\r\n]+/, '').replace(/[\r\n]+$/, '')
     if (line === '') continue
-    const i = line.indexOf(LOG_FS)
-    if (i < 0) {
-      // 纯连线续行没有字段段：补全空字段，保证 JSON 结构一致（前端靠
-      // H 是否非空字符串判断可点；缺字段会被 undefined !== '' 误判成提交行）
-      lines.push({ g: line, H: '', h: '', an: '', ad: '', s: '', d: '' })
-      continue
-    }
-    const f = line.slice(i + 1).split(LOG_FS)
-    lines.push({
-      g: line.slice(0, i),
-      H: f[0] || '',
-      h: f[1] || '',
-      an: f[2] || '',
-      ad: f[3] || '',
-      s: f[4] || '',
-      d: f[5] || '',
+    const f = line.split(LOG_FS)
+    const parents = (f[1] ?? '').trim()
+    records.push({
+      H: f[0] ?? '',
+      p: parents === '' ? [] : parents.split(' ').filter((x) => x !== ''),
+      h: f[2] ?? '',
+      an: f[3] ?? '',
+      at: Number(f[4]) || 0,
+      s: f[5] ?? '',
+      d: f[6] ?? '',
     })
   }
-  return lines
+  return records
 }
 
 export interface GitBranchInfo {

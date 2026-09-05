@@ -60,7 +60,7 @@ if (!global.location) {
 //    setKitUi/makeTerm 用于预置终端坞等依赖状态的渲染分支
 const wrapper = body.replace(
   "return module.exports;",
-  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, GraphGlyph, BrowserEntry, BrowserPanel, RightDock, DockStub, openPreviewTab, closePreviewTab, tabCloseConfirm, maybeAutoOpenBrowser, closeBrowserDockForGone, getKitUi, dockBounds, setKitUi, makeTerm };",
+  "return { TreeNode, FileTreePanel, FileContentPane, TerminalEntry, FileTreeEntry, ScmEntry, JobsEntry, JobsPanel, PhoneSection, KitSurfaces, KitConfigCard, GitChangesPanel, GitGraphPanel, GitBranchMenu, GitActionsMenu, SkillsManager, TerminalDock, TerminalPane, TreeRowMenu, CommitGraphSvg, computeCommitGraph, BrowserEntry, BrowserPanel, RightDock, DockStub, openPreviewTab, closePreviewTab, tabCloseConfirm, maybeAutoOpenBrowser, closeBrowserDockForGone, getKitUi, dockBounds, setKitUi, makeTerm };",
 );
 const harness = new Function("require", wrapper);
 const comps = harness((name) => {
@@ -70,7 +70,7 @@ const comps = harness((name) => {
 });
 
 if (!comps || typeof comps !== "object") { console.log("FATAL: no components returned"); process.exit(2); }
-const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "GraphGlyph", "BrowserEntry", "BrowserPanel", "RightDock", "DockStub", "dockBounds"];
+const names = ["TreeNode", "FileTreePanel", "FileContentPane", "TerminalEntry", "FileTreeEntry", "ScmEntry", "JobsEntry", "JobsPanel", "PhoneSection", "KitSurfaces", "KitConfigCard", "GitChangesPanel", "GitGraphPanel", "GitBranchMenu", "GitActionsMenu", "SkillsManager", "TerminalDock", "TerminalPane", "CommitGraphSvg", "BrowserEntry", "BrowserPanel", "RightDock", "DockStub", "dockBounds"];
 for (const n of names) {
   if (typeof comps[n] !== "function") { console.log("FAIL: missing/not function:", n); process.exitCode = 1; return; }
 }
@@ -442,12 +442,60 @@ check("GitChangesPanel noCwd 渲染无异常", !!out && typeof out === "object")
 callLog = [];
 out = comps.GitGraphPanel({ cwd: null, onOpenFile: () => {} });
 check("GitGraphPanel noCwd 渲染无异常", !!out && typeof out === "object");
+// 图谱 lane 几何纯函数：线性链 / 分叉（兄弟提交并拢进父）/ 合并（多线收进主槽位）/ 窗口悬挂
+const geoLinear = comps.computeCommitGraph([
+  { H: "c3", h: "c3", p: ["c2"], an: "a", at: 1, s: "s3", d: "" },
+  { H: "c2", h: "c2", p: ["c1"], an: "a", at: 2, s: "s2", d: "" },
+  { H: "c1", h: "c1", p: [], an: "a", at: 3, s: "s1", d: "main" },
+]);
+check("lane 几何：线性链单 lane 且逐行消费", geoLinear.rows.length === 3 && geoLinear.laneCount === 1 && geoLinear.rows[0].outs.length === 1 && geoLinear.rows[0].ins.length === 0 && geoLinear.rows[1].ins.length === 1 && geoLinear.rows[2].ins.length === 1 && geoLinear.rows[2].outs.length === 0);
+const geoFork = comps.computeCommitGraph([
+  { H: "a1", h: "a1", p: ["p0"], an: "a", at: 1, s: "feat", d: "HEAD -> main" },
+  { H: "b1", h: "b1", p: ["p0"], an: "b", at: 2, s: "fix", d: "" },
+  { H: "p0", h: "p0", p: [], an: "a", at: 3, s: "base", d: "main" },
+]);
+check("lane 几何：兄弟分叉各占 lane 并拢进父（颜色恒定）", geoFork.rows.length === 3 && geoFork.rows[0].lane === 0 && geoFork.rows[1].lane === 1 && geoFork.rows[1].color === 1 && geoFork.rows[2].ins.length === 2 && geoFork.laneCount === 2 && geoFork.rows[0].color === 0);
+const geoMerge = comps.computeCommitGraph([
+  { H: "m1", h: "m1", p: ["ma", "mb"], an: "a", at: 1, s: "merge", d: "" },
+  { H: "ma", h: "ma", p: ["base"], an: "a", at: 2, s: "a", d: "" },
+  { H: "mb", h: "mb", p: ["base"], an: "b", at: 3, s: "b", d: "" },
+  { H: "base", h: "base", p: [], an: "a", at: 4, s: "base", d: "main" },
+]);
+check("lane 几何：合并提交双父两 lane 汇入", geoMerge.rows.length === 4 && geoMerge.rows[0].outs.length === 2 && geoMerge.rows[0].outs[0].x === 0 && geoMerge.rows[0].outs[1].x === 1 && geoMerge.rows[3].ins.length === 2);
+const geoHang = comps.computeCommitGraph([{ H: "x1", h: "x1", p: ["gone"], an: "a", at: 1, s: "s", d: "" }]);
+check("lane 几何：窗口截断的父槽位悬挂延续", geoHang.rows.length === 1 && geoHang.rows[0].outs.length === 1 && geoHang.rows[0].outs[0].x === 0);
+const geoEmpty = comps.computeCommitGraph([]);
+check("lane 几何：空输入安全默认", geoEmpty.rows.length === 0 && geoEmpty.laneCount === 1);
+
+// 图谱面板：预置结构化 records（stub effect 不跑、fetch 不会覆盖预置态）→
+// 行渲染出 SVG/作者/相对时间列 + load more 按钮
+stateStore.clear();
+stateSeq = 0;
+const nowSec = Math.floor(Date.now() / 1000);
+stateStore.set(0, {
+  available: true,
+  hasMore: true,
+  records: [
+    { H: "a1", h: "a1aa", p: ["p0"], an: "张三", at: nowSec - 3600, s: "feat: 图谱", d: "HEAD -> main" },
+    { H: "b1", h: "b1bb", p: ["p0"], an: "李四", at: nowSec - 7200, s: "fix: 分支", d: "" },
+    { H: "p0", h: "p000", p: [], an: "张三", at: nowSec - 86400, s: "初始提交", d: "main" },
+  ],
+});
 callLog = [];
-out = comps.GraphGlyph({ g: "|\\  " });
-check("GraphGlyph 连线前缀渲染无异常(竖线+斜线)", !!out && typeof out === "object");
+out = comps.GitGraphPanel({ cwd: "C:/x", root: "C:/x", onOpenFile: () => {} });
+const graphRows = callLog.filter((c) => (c[0] === "jsxs") && c[2] && c[2].className === "dshk-grow dshk-grow-click");
+const graphAuthors = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-gauthor");
+const graphDates = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-gdate");
+const moreBtn = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-gmore");
+// 注意：CommitGraphSvg 是嵌套组件，桩只记录元素不执行组件体（已知盲区）——
+// SVG 的 path/circle 产出用下面直调用例覆盖，面板级断言只数行与列
+check("GitGraphPanel 结构化行渲染（3 行+作者+时间列）", graphRows.length === 3 && graphAuthors.length === 3 && graphDates.length === 3);
+check("GitGraphPanel hasMore 渲染 load more 按钮", !!moreBtn && typeof moreBtn[2].onClick === "function");
 callLog = [];
-out = comps.GraphGlyph({ g: "* | " });
-check("GraphGlyph 圆点前缀渲染无异常(实心点+竖线)", !!out && typeof out === "object");
+const svgRow = comps.CommitGraphSvg({ row: geoFork.rows[0], laneCount: 2 });
+const svgParts = callLog.filter((c) => (c[0] === "jsx") && (c[1] === "path" || c[1] === "circle"));
+const svgNode = callLog.find((c) => (c[0] === "jsx") && c[1] === "circle");
+check("CommitGraphSvg 直调渲染出边/点（父边+circle）", !!svgRow && svgParts.length >= 2 && !!svgNode && svgNode[2].cy === 11);
 // 分支浮层：空态 + 列表态（无 hooks 依赖，直接渲染）
 callLog = [];
 out = comps.GitBranchMenu({ rect: { left: 20, top: 40 }, branches: null, busy: false, name: "", onName: () => {}, onCreate: () => {}, onSwitch: () => {}, onDelete: () => {}, onClose: () => {} });

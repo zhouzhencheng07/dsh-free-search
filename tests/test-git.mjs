@@ -1,6 +1,6 @@
 // git 联动纯解析函数单测（src/git.ts）。
 // 用法（dsh-kit 根）：node tests\test-git.mjs
-import { parseStatusBranch, parseLogGraph, parseBranchList, parseTrack, parseDecoration, LOG_FS } from '../src/git.ts'
+import { parseStatusBranch, parseLogRecords, parseBranchList, parseTrack, parseDecoration, LOG_FS, LOG_RS } from '../src/git.ts'
 
 let failed = 0
 const check = (label, cond) => {
@@ -32,25 +32,27 @@ check('非法输入不抛错', r.branch === '')
 r = parseStatusBranch('##  ')
 check('空分支名', r.branch === '')
 
-// 2) parseLogGraph
+// 2) parseLogRecords（结构化提交记录：%x1e 分记录、%x1f 分字段，git 会在记录间补 \n）
+const rs = LOG_RS
 const fs = LOG_FS
-const gLine = (g, H, h, an, ad, s, d) => g + fs + H + fs + h + fs + an + fs + ad + fs + s + fs + d
-const out = [
-  gLine('* ', 'aaa111aaa111aaa111aaa111aaa111aaa111aaa111', 'aaa111a', '张三', '2026-08-24 10:00', 'feat: 图谱', 'HEAD -> main, origin/main, tag: v0.3.0'),
-  gLine('* | ', 'bbb222bbb222bbb222bbb222bbb222bbb222bbb222', 'bbb222b', '李四', '2026-08-24 09:00', 'fix: 分支', ''),
-  '|/  ', // 纯连线续行：git 只输出图谱前缀、无字段分隔符
-  gLine('* ', 'ccc333ccc333ccc333ccc333ccc333ccc333ccc333', 'ccc333c', '张三', '2026-08-24 08:00', '初始提交', 'main'),
-].join('\n')
-const lines = parseLogGraph(out)
-check('图谱行数', lines.length === 4)
-check('首行字段切分', lines[0].g === '* ' && lines[0].h === 'aaa111a' && lines[0].an === '张三' && lines[0].ad === '2026-08-24 10:00' && lines[0].s === 'feat: 图谱')
-check('装饰保留原文', lines[0].d === 'HEAD -> main, origin/main, tag: v0.3.0')
-check('空装饰', lines[1].d === '')
-check('纯连线续行字段补全（g 保留、提交字段为空字符串）', lines[2].g === '|/  ' && lines[2].H === '' && lines[2].h === '' && lines[2].an === '' && lines[2].ad === '' && lines[2].s === '' && lines[2].d === '')
-check('单分支行', lines[3].s === '初始提交' && lines[3].d === 'main')
-check('空输入', parseLogGraph('').length === 0)
-check('非字符串输入', parseLogGraph(null).length === 0)
-check('CRLF 行尾剥离', parseLogGraph('* a\r\n').length === 1)
+const rec = (H, P, h, an, at, s, d) => H + fs + P + fs + h + fs + an + fs + at + fs + s + fs + d + rs
+const out = (
+  rec('aaa111aaa111aaa111aaa111aaa111aaa111aaa111', 'bbb222bbb222bbb222bbb222bbb222bbb222bbb222', 'aaa111a', '张三', 1756000000, 'feat: 图谱', 'HEAD -> main, origin/main')
+  + '\n' + rec('bbb222bbb222bbb222bbb222bbb222bbb222bbb222', '', 'bbb222b', '李四', 1755990000, 'fix: 分支', '')
+  + '\n' + rec('ccc333ccc333ccc333ccc333ccc333ccc333ccc333', 'ddd444 ddd555', 'ccc333c', '王五', 1755980000, 'merge: 合并', 'tag: v0.3.0')
+)
+const records = parseLogRecords(out)
+check('记录条数', records.length === 3)
+check('首记录字段切分', records[0].H === 'aaa111aaa111aaa111aaa111aaa111aaa111aaa111' && records[0].h === 'aaa111a' && records[0].an === '张三' && records[0].s === 'feat: 图谱')
+check('父哈希数组（含跨记录 \\n 剥离）', records[0].p.length === 1 && records[0].p[0] === 'bbb222bbb222bbb222bbb222bbb222bbb222bbb222')
+check('时间戳数值化', records[0].at === 1756000000)
+check('空父（根提交）→ 空数组', records[1].p.length === 0)
+check('合并提交多父拆分', records[2].p.length === 2 && records[2].p[0] === 'ddd444' && records[2].p[1] === 'ddd555')
+check('装饰保留原文', records[2].d === 'tag: v0.3.0')
+check('缺字段安全默认', parseLogRecords('x' + fs + rs).length === 1 && parseLogRecords('x' + fs)[0].at === 0)
+check('空输入', parseLogRecords('').length === 0)
+check('非字符串输入', parseLogRecords(null).length === 0)
+check('CRLF 剥离', parseLogRecords('h' + fs + '' + fs + 'h' + fs + 'a' + fs + '1' + fs + 's' + fs + '' + rs + '\r\n').length === 1)
 
 // 3) parseTrack
 let tr = parseTrack('[ahead 1, behind 2]')
