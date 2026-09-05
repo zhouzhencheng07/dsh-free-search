@@ -653,8 +653,6 @@ window.__ModuleLoader__.load({
       jobsKillDone: "已请求结束",
       jobsKillFail: "结束失败：{error}",
       jobsClose: "关闭任务面板",
-      jobsOutput: "输出",
-      jobsOutputHint: "查看此任务的实时输出（与 job_output 共享读取游标）",
       jobsOutputEmpty: "（暂无输出）",
       jobsOutputTransient: "输出读取失败：{error}",
       cfgTerminalShortcut: "终端快捷键",
@@ -936,8 +934,6 @@ window.__ModuleLoader__.load({
       jobsKillDone: "Stop requested",
       jobsKillFail: "Failed to stop: {error}",
       jobsClose: "Close tasks panel",
-      jobsOutput: "Output",
-      jobsOutputHint: "View live output (shares the read cursor with job_output)",
       jobsOutputEmpty: "(no output yet)",
       jobsOutputTransient: "Failed to read output: {error}",
     };
@@ -5423,8 +5419,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // shell.overlay 渲染——右侧停靠（复用 .dshk-pane，与文件预览共用停靠位、
     // 互斥打开），对话可继续。任务数据源与官方
     // JobListAction 相同——useSessions 的 jobsBySession（session/jobs 推送）。
-    // 「结束」与「输出」走 dsh-kit 宿主端点（/dsh-kit/jobs/kill|output，权限按
-    // session 隔离，与 job_kill/job_output 同一套 caller 语义）。
+    // 「结束」走 dsh-kit 宿主端点（/dsh-kit/jobs/kill，权限按 session 隔离，
+    // 与 job_kill 同一套 caller 语义）；输出常显，每个任务各走 /dsh-kit/jobs/
+    // output 增量轮询。
     function JobsEntry(props) {
       const ui = useKitUi();
       const useSessions = props && typeof props.useSessions === "function" ? props.useSessions : null;
@@ -5468,7 +5465,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const current = useSessions ? useSessions((s) => s.current) : undefined;
       const jobs = useSessions ? useSessions((s) => (current ? s.jobsBySession[current] : undefined)) : undefined;
       const live = Array.isArray(jobs) ? jobs.filter((j) => j.status === "running" || j.status === "stopping") : [];
-      const [expandedId, setExpandedId] = react.useState(null);
       const [outputs, setOutputs] = react.useState({});
       const [killing, setKilling] = react.useState(null);
       const [now, setNow] = react.useState(() => Date.now());
@@ -5481,45 +5477,49 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return () => clearInterval(timer);
       }, [live.length]);
 
-      // 输出增量轮询：展开且任务仍 live 时每秒拉一次；拉到终态即停。
-      // 注意 read 与 job_output 共享读取游标——面板打开期间模型侧读到的是
-      // 面板尚未读走的增量（官方语义，无法并行两份）。
+      // 输出增量轮询：每个 live 任务各每秒拉一次（用户定稿 2026-09-05：输出
+      // 常显不再要「输出」按钮）。任务进入终态即不再拉——终态行随 session/jobs
+      // 推送从列表消失，liveIdsKey 随之变化重挂本 effect。注意 read 与
+      // job_output 共享读取游标——面板打开期间模型侧 job_output 读到的是面板
+      // 尚未读走的增量（官方语义，无法并行两份）；页面隐藏时暂停，回前台下一秒续上。
+      const liveIdsKey = live.map((j) => j.id).join("\n");
       react.useEffect(() => {
-        if (!expandedId || !current) return undefined;
+        if (!current || liveIdsKey === "") return undefined;
         let disposed = false;
-        let timer = null;
-        const load = () => {
+        const pollOne = (id) => {
           fetch(
-            `/dsh-kit/jobs/output?sessionId=${encodeURIComponent(current)}&jobId=${encodeURIComponent(expandedId)}`,
+            `/dsh-kit/jobs/output?sessionId=${encodeURIComponent(current)}&jobId=${encodeURIComponent(id)}`,
           )
             .then((res) => res.json().catch(() => null))
             .then((body) => {
               if (disposed) return;
               if (!body || !body.job) {
-                setOutputs((prev) => ({ ...prev, [expandedId]: { text: "", error: "HTTP" } }));
+                setOutputs((prev) => ({ ...prev, [id]: { text: "", error: "HTTP" } }));
                 return;
               }
               setOutputs((prev) => ({
                 ...prev,
-                [expandedId]: {
-                  text: (prev[expandedId]?.text ?? "") + (typeof body.text === "string" ? body.text : ""),
+                [id]: {
+                  text: (prev[id]?.text ?? "") + (typeof body.text === "string" ? body.text : ""),
                   error: null,
                 },
               }));
-              const done = body.job.status === "completed" || body.job.status === "killed" || body.job.status === "failed";
-              if (done && timer !== null) clearInterval(timer);
             })
             .catch(() => {
-              if (!disposed) setOutputs((prev) => ({ ...prev, [expandedId]: { text: prev[expandedId]?.text ?? "", error: "network" } }));
+              if (!disposed) setOutputs((prev) => ({ ...prev, [id]: { text: prev[id]?.text ?? "", error: "network" } }));
             });
         };
-        load();
-        timer = setInterval(load, 1000);
+        const tick = () => {
+          if (document.visibilityState === "hidden") return;
+          for (const id of liveIdsKey.split("\n")) pollOne(id);
+        };
+        tick();
+        const timer = setInterval(tick, 1000);
         return () => {
           disposed = true;
-          if (timer !== null) clearInterval(timer);
+          clearInterval(timer);
         };
-      }, [expandedId, current]);
+      }, [current, liveIdsKey]);
 
       const killJob = async (job) => {
         setKilling(job.id);
@@ -5532,7 +5532,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           const body = await res.json().catch(() => null);
           if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
           flashToast(t("jobsKillDone"));
-          if (expandedId === job.id) setExpandedId(null);
         } catch (error) {
           flashToast(tf("jobsKillFail", { error: String(error?.message ?? error) }));
         } finally {
@@ -5572,7 +5571,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             : jsxRuntime.jsx("div", {
                 className: "dshk-jobs-list",
                 children: live.map((job) => {
-                  const isExpanded = expandedId === job.id;
                   const out = outputs[job.id];
                   const stopBusy = killing === job.id || job.status === "stopping";
                   return jsxRuntime.jsxs("div", {
@@ -5597,21 +5595,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                             children: [
                               jsxRuntime.jsx("button", {
                                 type: "button",
-                                className: "dshk-jobs-btn",
-                                disabled: stopBusy,
-                                title: t("jobsOutputHint"),
-                                onClick: () => {
-                                  if (isExpanded) {
-                                    setExpandedId(null);
-                                  } else {
-                                    setOutputs((prev) => ({ ...prev, [job.id]: { text: "", error: null } }));
-                                    setExpandedId(job.id);
-                                  }
-                                },
-                                children: t("jobsOutput"),
-                              }),
-                              jsxRuntime.jsx("button", {
-                                type: "button",
                                 className: "dshk-jobs-btn dshk-jobs-btn-kill",
                                 disabled: stopBusy,
                                 title: t("jobsKillHint"),
@@ -5622,17 +5605,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           }),
                         ],
                       }),
-                      isExpanded
-                        ? jsxRuntime.jsx("div", {
-                            className: "dshk-jobs-output",
-                            children:
-                              out && out.error
-                                ? tf("jobsOutputTransient", { error: out.error })
-                                : out && out.text && out.text.length > 0
-                                  ? out.text
-                                  : t("jobsOutputEmpty"),
-                          })
-                        : null,
+                      jsxRuntime.jsx("div", {
+                        className: "dshk-jobs-output",
+                        children:
+                          out && out.error
+                            ? tf("jobsOutputTransient", { error: out.error })
+                            : out && out.text && out.text.length > 0
+                              ? out.text
+                              : t("jobsOutputEmpty"),
+                      }),
                     ],
                   }, job.id);
                 }),

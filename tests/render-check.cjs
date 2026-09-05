@@ -266,6 +266,11 @@ check("JobsEntry 带运行中任务渲染无异常", !!out && typeof out === "ob
 callLog = [];
 out = comps.JobsPanel(jobsHooks);
 check("JobsPanel 带运行中任务渲染无异常", !!out && typeof out === "object");
+// 输出常显（用户定稿 2026-09-05）：每个任务行自带输出块，不再有「输出」按钮
+const jobRows = callLog.filter((c) => (c[0] === "jsxs") && c[2] && c[2].className === "dshk-jobs-row");
+const jobOutBlocks = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-jobs-output");
+check("JobsPanel 输出块每任务常显（2 行 2 输出块）", jobRows.length === 2 && jobOutBlocks.length === 2);
+check("JobsPanel 不再渲染「输出」按钮", !callLog.some((c) => (c[0] === "jsx") && c[2] && (c[2].children === "Output" || c[2].children === "输出")));
 comps.setKitUi({ jobsOpen: true });
 out = comps.KitSurfaces({ ...jobsHooks });
 check("KitSurfaces 带jobsOpen渲染无异常", !!out && typeof out === "object");
