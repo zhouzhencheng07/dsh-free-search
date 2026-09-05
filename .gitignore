@@ -3,3 +3,4 @@ release/
 *.tgz
 # 本地开发约定，不进公共仓库
 AGENTS.md
+.agents/
