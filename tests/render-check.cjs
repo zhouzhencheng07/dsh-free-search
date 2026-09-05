@@ -25,7 +25,8 @@ let stateSeq = 0;
 const reactStub = {
   useState: (init) => {
     const id = stateSeq++;
-    if (!stateStore.has(id)) stateStore.set(id, init);
+    // 惰性初始化器与 React 同语义（函数参 = 惰性求值；存函数状态需包一层）
+    if (!stateStore.has(id)) stateStore.set(id, typeof init === "function" ? init() : init);
     const set = (v) => stateStore.set(id, typeof v === "function" ? v(stateStore.get(id)) : v);
     return [stateStore.get(id), set];
   },
@@ -271,6 +272,31 @@ const jobRows = callLog.filter((c) => (c[0] === "jsxs") && c[2] && c[2].classNam
 const jobOutBlocks = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-jobs-output");
 check("JobsPanel 输出块每任务常显（2 行 2 输出块）", jobRows.length === 2 && jobOutBlocks.length === 2);
 check("JobsPanel 不再渲染「输出」按钮", !callLog.some((c) => (c[0] === "jsx") && c[2] && (c[2].children === "Output" || c[2].children === "输出")));
+// 终态保留在列（用户定稿 2026-09-05）：终态行仍在（data-done 淡化），动作变「关闭」，
+// 运行中行保持「结束」；输出块每行都在
+const doneHooks = {
+  useSessions: (sel) =>
+    sel({
+      current: "s1",
+      byId: { s1: { cwd: "C:/x" } },
+      jobsBySession: {
+        s1: [
+          { id: "pwsh-9", kind: "pwsh", label: "npm run build", status: "running", startedAt: Date.now() - 5000 },
+          { id: "pwsh-8", kind: "pwsh", label: "npm test", status: "completed", startedAt: Date.now() - 60000, finishedAt: Date.now() - 30000 },
+        ],
+      },
+    }),
+  useWorkspaces: () => undefined,
+};
+callLog = [];
+out = comps.JobsPanel(doneHooks);
+const doneRows = callLog.filter((c) => (c[0] === "jsxs") && c[2] && c[2].className === "dshk-jobs-row" && c[2]["data-done"] === true).length;
+const closeBtn = callLog.some((c) => (c[0] === "jsx") && c[2] && (c[2].children === "Close" || c[2].children === "关闭"));
+const killBtns = callLog.filter((c) => (c[0] === "jsx") && c[2] && (c[2].children === "Stop" || c[2].children === "结束")).length;
+const doneOutBlocks = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-jobs-output").length;
+check("JobsPanel 终态行保留在列且标 data-done（1 行）", doneRows === 1);
+check("JobsPanel 终态动作是关闭、运行中仍是结束", closeBtn && killBtns === 1);
+check("JobsPanel 终态行输出块仍在（2 行 2 输出块）", doneOutBlocks === 2);
 comps.setKitUi({ jobsOpen: true });
 out = comps.KitSurfaces({ ...jobsHooks });
 check("KitSurfaces 带jobsOpen渲染无异常", !!out && typeof out === "object");

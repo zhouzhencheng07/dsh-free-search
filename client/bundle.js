@@ -650,6 +650,8 @@ window.__ModuleLoader__.load({
       jobsDuration: "已运行 {duration}",
       jobsKill: "结束",
       jobsKillHint: "结束此任务（等同 job_kill）",
+      jobsRowClose: "关闭",
+      jobsRowCloseHint: "从列表移除（任务已结束，仅收起显示）",
       jobsKillDone: "已请求结束",
       jobsKillFail: "结束失败：{error}",
       jobsClose: "关闭任务面板",
@@ -931,6 +933,8 @@ window.__ModuleLoader__.load({
       jobsDuration: "Running for {duration}",
       jobsKill: "Stop",
       jobsKillHint: "Stop this job (same as job_kill)",
+      jobsRowClose: "Close",
+      jobsRowCloseHint: "Remove from list (job has finished; display only)",
       jobsKillDone: "Stop requested",
       jobsKillFail: "Failed to stop: {error}",
       jobsClose: "Close tasks panel",
@@ -1224,6 +1228,7 @@ body.dshk-pane-open [class*="_scroll"] > [class*="_slot"]{display:block!importan
 .dshk-jobs-list{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:1px;overflow:auto;padding:0 10px 10px}
 .dshk-jobs-row{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border-radius:8px;background:var(--dsw-alias-fill-l2,transparent)}
 .dshk-jobs-row[data-live="true"]{background:var(--dsw-alias-interactive-bg-hover,transparent)}
+.dshk-jobs-row[data-done="true"]{opacity:.55}
 .dshk-jobs-rowline{display:flex;align-items:center;gap:8px;min-width:0}
 .dshk-jobs-kind{flex:none;background:var(--dsw-alias-fill-l2);color:var(--dsw-alias-label-secondary);border-radius:5px;padding:0 6px;font-size:11px;line-height:18px}
 .dshk-jobs-label{flex:1;min-width:0;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dsw-alias-label-primary);white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
@@ -5421,7 +5426,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
     // JobListAction 相同——useSessions 的 jobsBySession（session/jobs 推送）。
     // 「结束」走 dsh-kit 宿主端点（/dsh-kit/jobs/kill，权限按 session 隔离，
     // 与 job_kill 同一套 caller 语义）；输出常显，每个任务各走 /dsh-kit/jobs/
-    // output 增量轮询。
+    // output 增量轮询。终态任务保留在列（session/jobs 推送本就含终态，此前是
+    // 面板自己滤掉的），行动作变「关闭」=仅从显示移除，不持久化。
     function JobsEntry(props) {
       const ui = useKitUi();
       const useSessions = props && typeof props.useSessions === "function" ? props.useSessions : null;
@@ -5468,6 +5474,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const [outputs, setOutputs] = react.useState({});
       const [killing, setKilling] = react.useState(null);
       const [now, setNow] = react.useState(() => Date.now());
+      // 用户定稿 2026-09-05：终态任务保留在列（运行中在前、终态在后淡化显示），
+      // 行动作从「结束」变「关闭」=仅从显示移除；关闭记录与终态清单都是页面
+      // 会话内存态——刷新/重启不保留（终态任务本来就只活在宿主进程内存里）。
+      const [dismissed, setDismissed] = react.useState(() => new Set());
+      const doneFetched = react.useRef(new Set()); // 终态且已成功拉过输出 → 不再轮询（终态无新量）
+      const isLive = (j) => j.status === "running" || j.status === "stopping";
+      const shownOrdered = Array.isArray(jobs)
+        ? [...jobs.filter((j) => !dismissed.has(j.id) && isLive(j)), ...jobs.filter((j) => !dismissed.has(j.id) && !isLive(j))]
+        : [];
 
       // 时长随秒更新（有 live 任务才计时）
       react.useEffect(() => {
@@ -5477,14 +5492,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return () => clearInterval(timer);
       }, [live.length]);
 
-      // 输出增量轮询：每个 live 任务各每秒拉一次（用户定稿 2026-09-05：输出
-      // 常显不再要「输出」按钮）。任务进入终态即不再拉——终态行随 session/jobs
-      // 推送从列表消失，liveIdsKey 随之变化重挂本 effect。面板读取走宿主
+      // 输出增量轮询：显示中且未拉到终态的任务各每秒拉一次（用户定稿：输出
+      // 常显不再要「输出」按钮）。拉到终态即标记 doneFetched 停拉——终态没有
+      // 新量，且无 readOutput 的终态任务每次都返回全量 output，重复拉会重复
+      // 追加。终态行保留在列（见上），输出冻结在最后一拉。面板读取走宿主
       // job-tee 的独立游标（src/job-tee.ts），与模型侧 job_output 互不抢量，
       // 两边都能看到全量输出；页面隐藏时暂停，回前台下一秒续上。
-      const liveIdsKey = live.map((j) => j.id).join("\n");
+      const shownIdsKey = shownOrdered.map((j) => j.id).join("\n");
       react.useEffect(() => {
-        if (!current || liveIdsKey === "") return undefined;
+        if (!current || shownIdsKey === "") return undefined;
         let disposed = false;
         const pollOne = (id) => {
           fetch(
@@ -5504,6 +5520,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                   error: null,
                 },
               }));
+              const st = body.job.status;
+              if (st === "completed" || st === "killed" || st === "failed") doneFetched.current.add(id);
             })
             .catch(() => {
               if (!disposed) setOutputs((prev) => ({ ...prev, [id]: { text: prev[id]?.text ?? "", error: "network" } }));
@@ -5511,7 +5529,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         };
         const tick = () => {
           if (document.visibilityState === "hidden") return;
-          for (const id of liveIdsKey.split("\n")) pollOne(id);
+          for (const id of shownIdsKey.split("\n")) {
+            if (doneFetched.current.has(id)) continue;
+            pollOne(id);
+          }
         };
         tick();
         const timer = setInterval(tick, 1000);
@@ -5519,7 +5540,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           disposed = true;
           clearInterval(timer);
         };
-      }, [current, liveIdsKey]);
+      }, [current, shownIdsKey]);
 
       const killJob = async (job) => {
         setKilling(job.id);
@@ -5566,16 +5587,18 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
               }),
             ],
           }),
-          live.length === 0
+          shownOrdered.length === 0
             ? jsxRuntime.jsx("div", { className: "dshk-jobs-empty", children: t("jobsEmpty") })
             : jsxRuntime.jsx("div", {
                 className: "dshk-jobs-list",
-                children: live.map((job) => {
+                children: shownOrdered.map((job) => {
                   const out = outputs[job.id];
                   const stopBusy = killing === job.id || job.status === "stopping";
+                  const done = !isLive(job);
                   return jsxRuntime.jsxs("div", {
                     className: "dshk-jobs-row",
                     "data-live": job.status === "running" || undefined,
+                    "data-done": done || undefined,
                     children: [
                       jsxRuntime.jsxs("div", {
                         className: "dshk-jobs-rowline",
@@ -5586,21 +5609,31 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                             className: "dshk-jobs-status",
                             title: job.detail ?? statusWord(job),
                             children:
-                              job.status === "running" || job.status === "stopping"
+                              !done
                                 ? `${statusWord(job)} · ${tf("jobsDuration", { duration: fmtJobDuration(now - job.startedAt) })}`
-                                : statusWord(job),
+                                : job.finishedAt !== undefined
+                                  ? `${statusWord(job)} · ${tf("jobsDuration", { duration: fmtJobDuration(job.finishedAt - job.startedAt) })}`
+                                  : statusWord(job),
                           }),
                           jsxRuntime.jsxs("span", {
                             className: "dshk-jobs-actions",
                             children: [
-                              jsxRuntime.jsx("button", {
-                                type: "button",
-                                className: "dshk-jobs-btn dshk-jobs-btn-kill",
-                                disabled: stopBusy,
-                                title: t("jobsKillHint"),
-                                onClick: () => killJob(job),
-                                children: t("jobsKill"),
-                              }),
+                              done
+                                ? jsxRuntime.jsx("button", {
+                                    type: "button",
+                                    className: "dshk-jobs-btn",
+                                    title: t("jobsRowCloseHint"),
+                                    onClick: () => setDismissed((prev) => new Set(prev).add(job.id)),
+                                    children: t("jobsRowClose"),
+                                  })
+                                : jsxRuntime.jsx("button", {
+                                    type: "button",
+                                    className: "dshk-jobs-btn dshk-jobs-btn-kill",
+                                    disabled: stopBusy,
+                                    title: t("jobsKillHint"),
+                                    onClick: () => killJob(job),
+                                    children: t("jobsKill"),
+                                  }),
                             ],
                           }),
                         ],
