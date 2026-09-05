@@ -5479,9 +5479,9 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
 
       // 输出增量轮询：每个 live 任务各每秒拉一次（用户定稿 2026-09-05：输出
       // 常显不再要「输出」按钮）。任务进入终态即不再拉——终态行随 session/jobs
-      // 推送从列表消失，liveIdsKey 随之变化重挂本 effect。注意 read 与
-      // job_output 共享读取游标——面板打开期间模型侧 job_output 读到的是面板
-      // 尚未读走的增量（官方语义，无法并行两份）；页面隐藏时暂停，回前台下一秒续上。
+      // 推送从列表消失，liveIdsKey 随之变化重挂本 effect。面板读取走宿主
+      // job-tee 的独立游标（src/job-tee.ts），与模型侧 job_output 互不抢量，
+      // 两边都能看到全量输出；页面隐藏时暂停，回前台下一秒续上。
       const liveIdsKey = live.map((j) => j.id).join("\n");
       react.useEffect(() => {
         if (!current || liveIdsKey === "") return undefined;

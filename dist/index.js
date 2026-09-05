@@ -65,6 +65,7 @@ import { applySkillPool, findProjectRoot } from "./skill-pool.js";
 import { applyWebSearch } from "./web-search.js";
 import { parseStatusBranch, parseLogRecords, parseBranchList, parseTrack } from "./git.js";
 import { startPhoneGateway, lanAddresses, defaultStateFile, loadGatewayState, saveGatewayState } from "./phone-gateway.js";
+import { teeRegistryJobs, panelReadJobOutput } from "./job-tee.js";
 import { decodePreviewText } from "./text-decode.js";
 import { rawContentType, parseRangeHeader } from "./raw-file.js";
 import { multipartBoundary, parseMultipart, safeUploadName, dedupeName } from "./upload.js";
@@ -541,9 +542,12 @@ export async function apply(ctx) {
     // 后台任务控制（实现见下）：浏览器半边「任务」面板的结束/读输出走这里。
     // jobs 注册表（dsh-jobs-local）与 agents 注册表（dsh-agent）都是宿主组合里的
     // 可选服务，分开注入捕获引用；缺失时对应端点返回 503（面板隐藏对应能力）。
+    // 注入即给 registry 装 start 包装（job-tee）：任务创建即装输出分身，面板与
+    // 模型侧 job_output 各持独立游标，不再互抢同一条增量。
     let jobsRegistry = null;
     ctx.inject(['jobs'], (capacityCtx) => {
         jobsRegistry = capacityCtx.jobs;
+        teeRegistryJobs(jobsRegistry);
     });
     let agentsRegistry = null;
     ctx.inject(['agents'], (capacityCtx) => {
@@ -2379,10 +2383,12 @@ export async function apply(ctx) {
                 },
             });
             // ── 后台任务控制端点 ──
-            // 浏览器半边「任务」面板（运行中任务 + 结束 + 输出）的数据源是官方
+            // 浏览器半边「任务」面板（运行中任务 + 结束 + 常显输出）的数据源是官方
             // session/jobs 推送（只带元数据，无输出正文）；这里补两个操作口：
             //   1) POST /dsh-kit/jobs/kill    body {sessionId, jobId} —— 结束任务
             //   2) GET  /dsh-kit/jobs/output?sessionId=&jobId= —— 增量读输出
+            // 输出读取走 job-tee（src/job-tee.ts）：底层 readOutput 降级为取新块进
+            // 公共 buffer，面板与模型侧 job_output 各持独立游标切片，互不抢量。
             // 权限对齐官方 job_kill/job_output 工具：caller 必须是任务所属 session 的
             // agent（jobs-local assertAccess 校验 owner.id === caller.id），做不到的
             // 请求（跨会话/未知任务）抛错 → 404/403。jobs 服务缺失（宿主组合没挂
@@ -2476,19 +2482,22 @@ export async function apply(ctx) {
                         return;
                     }
                     try {
-                        // read 返回增量（自上次读取以来），与 job_output 工具共享同一游标；
-                        // 快照里的 status/detail 用于前端判断终态与停止轮询。
-                        const read = jobsRegistry.read(jobId, caller);
+                        // 面板读取走 job-tee 的独立游标（panelReadJobOutput）：底层 readOutput
+                        // 被降级为"取新块进公共 buffer"，面板与模型侧 job_output 各切各的，
+                        // 谁也不抢谁的增量。get 提供与 read 相同的存在性/权限把关（无副作用）。
+                        const snapshot = jobsRegistry.get(jobId, caller);
+                        const job = jobsRegistry.store?.get(jobId);
+                        const text = job !== undefined ? panelReadJobOutput(job) : jobsRegistry.read(jobId, caller).text;
                         json(200, {
-                            text: read.text,
+                            text,
                             job: {
-                                id: read.snapshot.id,
-                                kind: read.snapshot.kind,
-                                label: read.snapshot.label,
-                                status: read.snapshot.status,
-                                ...(read.snapshot.detail !== undefined ? { detail: read.snapshot.detail } : {}),
-                                startedAt: read.snapshot.startedAt,
-                                ...(read.snapshot.finishedAt !== undefined ? { finishedAt: read.snapshot.finishedAt } : {}),
+                                id: snapshot.id,
+                                kind: snapshot.kind,
+                                label: snapshot.label,
+                                status: snapshot.status,
+                                ...(snapshot.detail !== undefined ? { detail: snapshot.detail } : {}),
+                                startedAt: snapshot.startedAt,
+                                ...(snapshot.finishedAt !== undefined ? { finishedAt: snapshot.finishedAt } : {}),
                             },
                         });
                     }
