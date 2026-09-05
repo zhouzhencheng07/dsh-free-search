@@ -36,7 +36,18 @@ interface PwLocator {
   press(key: string, options?: { timeout?: number }): Promise<void>
   setChecked(checked: boolean, options?: { timeout?: number }): Promise<void>
   selectOption(value: string, options?: { timeout?: number }): Promise<void>
+  hover(options?: { timeout?: number }): Promise<void>
+  setInputFiles(files: string[], options?: { timeout?: number }): Promise<void>
+  scrollIntoViewIfNeeded(options?: { timeout?: number }): Promise<void>
   ariaSnapshot(options?: { mode?: string }): Promise<string>
+}
+
+/** JS 对话框（alert/confirm/prompt/beforeunload）——本服务只读 type/message 并
+ *  统一 dismiss（取消）；挂了监听器后 playwright 不再自动关，必须显式处理 */
+interface PwDialog {
+  type(): string
+  message(): string
+  dismiss(): Promise<void>
 }
 
 /** 纳管页：__dshTabId 是本服务盖在 playwright Page 上的管理标记（幂等锚） */
@@ -57,6 +68,9 @@ type PwPage = {
   on(event: 'framenavigated', cb: (frame: PwFrame) => void): void
   on(event: 'crash', cb: () => void): void
   on(event: 'close', cb: () => void): void
+  on(event: 'dialog', cb: (dialog: PwDialog) => void): void
+  viewportSize(): { width: number; height: number }
+  setViewportSize(size: { width: number; height: number }): Promise<void>
   keyboard: { press(key: string): Promise<void>; insertText(text: string): Promise<void> }
   mouse: {
     move(x: number, y: number): Promise<void>
@@ -106,12 +120,17 @@ export type BrowserEvent =
   | { kind: 'navigated'; tabId: number; url: string; title: string }
   | { kind: 'crashed'; tabId: number }
 
-/** act 工具参数的宿主侧契约（browser-tools 校验后原样传入） */
+/** act 工具参数的宿主侧契约（browser-tools 校验后原样传入）。
+ *  ref=快照 [ref=eN] 回填（aria-ref 引擎解析，可穿透 iframe）；dx/dy=scroll 无
+ *  定位目标时的滚动增量（负值向上）。 */
 export interface ActArgs {
   action?: string
   tabId?: number
   value?: string
   key?: string
+  ref?: string
+  dx?: number
+  dy?: number
   timeoutMs?: number
   snapshot?: boolean
   role?: string
@@ -195,9 +214,16 @@ export function pngSize(buffer: Buffer): { width: number; height: number } | nul
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
 }
 
-/** 校验 act 的定位参数：三选一（role+name / text / selector），返回归一化对象或错误 */
-export function normalizeLocatorArgs(args?: ActArgs): { kind: 'selector'; selector: string } | { kind: 'role'; role: string; name: string } | { kind: 'text'; text: string } | { error: string } {
-  const { role, name, text, selector } = args ?? {}
+/** 校验 act 的定位参数：四选一（ref / role+name / text / selector），ref 最先——
+ *  它是快照里的逐元素精确指针。返回归一化对象或错误 */
+export function normalizeLocatorArgs(args?: ActArgs): { kind: 'ref'; ref: string } | { kind: 'selector'; selector: string } | { kind: 'role'; role: string; name: string } | { kind: 'text'; text: string } | { error: string } {
+  const { role, name, text, selector, ref } = args ?? {}
+  if (ref !== undefined && ref !== null && String(ref).trim() !== '') {
+    // 宽容收各写法：e12 / ref=e12 / [ref=e12]；核心形态 eN（playwright aria-ref 引擎的键）
+    const cleaned = String(ref).trim().replace(/^\[/, '').replace(/\]$/, '').replace(/^ref=/, '').trim()
+    if (/^e\d+$/.test(cleaned)) return { kind: 'ref', ref: cleaned }
+    return { error: `ref 形如 e12（来自快照 [ref=eN]），收到：${String(ref).slice(0, 40)}` }
+  }
   if (selector !== undefined && selector !== null && String(selector).trim() !== '') {
     return { kind: 'selector', selector: String(selector).trim() }
   }
@@ -210,14 +236,15 @@ export function normalizeLocatorArgs(args?: ActArgs): { kind: 'selector'; select
   return { error: '缺少定位参数：role（+name）/ text / selector 三选一' }
 }
 
-const ACT_KINDS = new Set(['click', 'type', 'press', 'check', 'uncheck', 'select'])
-/** 校验 act 的动作与参数配套（type/select 需要 value，press 需要 key） */
+const ACT_KINDS = new Set(['click', 'type', 'press', 'check', 'uncheck', 'select', 'hover', 'scroll', 'upload'])
+/** 校验 act 的动作与参数配套（type/select/upload 需要 value，press 需要 key；
+ *  scroll 的定位目标/dx dy 配套在 service 层校验——normalize 不知道有无定位） */
 export function normalizeActArgs(args?: ActArgs): { action: string } | { error: string } {
   const action = String(args?.action ?? '').trim()
   if (!ACT_KINDS.has(action)) {
-    return { error: `未知 action：${action || '(空)'}——可选 click/type/press/check/uncheck/select` }
+    return { error: `未知 action：${action || '(空)'}——可选 click/type/press/check/uncheck/select/hover/scroll/upload` }
   }
-  if ((action === 'type' || action === 'select') && (args?.value === undefined || String(args.value) === '')) {
+  if ((action === 'type' || action === 'select' || action === 'upload') && (args?.value === undefined || String(args.value) === '')) {
     return { error: `action=${action} 需要 value` }
   }
   if (action === 'press' && (args?.key === undefined || String(args.key).trim() === '')) {
@@ -232,6 +259,14 @@ function dshHomeDir(): string {
   return env && env.trim() !== '' ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
+/** JS 对话框记录的文本投影：act/navigate 结果 warning 用。playwright 无监听器时
+ *  会静默 auto-dismiss，agent 端看到的只是"点了没反应"——把弹出事实带回即可消除
+ *  这一类神秘失效 */
+function dialogWarning(dialogs: Array<{ type: string; message: string }>): string | null {
+  if (dialogs.length === 0) return null
+  return `页面弹出 ${dialogs.map((d) => `${d.type}「${d.message}」`).join('、')}，已自动关闭（confirm 默认按取消处理）`
+}
+
 export class BrowserService {
   private _log: (msg: string) => void
   private _pw: PwModule | null
@@ -240,6 +275,9 @@ export class BrowserService {
   private _launching: Promise<{ ok: true } | { ok: false; error: string }> | null
   private _pages: Map<number, PwPage>
   private _titles: Map<number, string>
+  /** 每页 JS 对话框环形缓冲（cap 5）：act/navigate 结果 drain 带回，未 drain 的
+   *  靠 cap 兜底不泄漏 */
+  private _dialogs: Map<number, Array<{ type: string; message: string; at: number }>>
   private _nextId: number
   private _activeId: number | null
   /** 面板观察页：帧流、人机共驾输入、面板 URL 栏都作用于它；agent 的默认目标页是
@@ -264,6 +302,7 @@ export class BrowserService {
     this._launching = null
     this._pages = new Map() // tabId → Page
     this._titles = new Map() // tabId → title
+    this._dialogs = new Map() // tabId → 对话框记录环形缓冲
     this._nextId = 1
     this._activeId = null
     this._viewId = null
@@ -435,6 +474,7 @@ export class BrowserService {
       this._context = null
       this._pages.clear()
       this._titles.clear()
+      this._dialogs.clear()
       this._activeId = null
       this._stream = null
       this._emit({ kind: 'closed' })
@@ -482,6 +522,18 @@ export class BrowserService {
       this._emit({ kind: 'navigated', tabId: id, url: page.url(), title: this._titles.get(id) ?? '' })
       this._resyncStream(id)
     })
+    page.on('dialog', (dialog) => {
+      const id = page.__dshTabId
+      if (id === undefined) return
+      const list = this._dialogs.get(id) ?? []
+      list.push({ type: dialog.type(), message: dialog.message().slice(0, 120), at: Date.now() })
+      if (list.length > 5) list.shift()
+      this._dialogs.set(id, list)
+      // 挂了监听器后 playwright 不再自动关对话框，必须显式 dismiss（否则页面冻结
+      // 等输入、后续动作全部超时）。dismiss=取消，与旧默认（无监听自动关闭）一致，
+      // 差别只在弹出事实被记录并回传
+      void dialog.dismiss().catch(() => {})
+    })
     page.on('crash', () => {
       const id = page.__dshTabId
       if (id === undefined) return
@@ -512,6 +564,7 @@ export class BrowserService {
 
   /** 页面消失（关闭/崩溃）后两个指针的回退：agent 活动页取剩余首页；观察页优先跟随活动页 */
   private _pageGone(id: number): void {
+    this._dialogs.delete(id)
     if (this._activeId === id) this._activeId = this._pages.keys().next().value ?? null
     if (this._viewId === id) {
       this._viewId = this._activeId ?? this._pages.keys().next().value ?? null
@@ -542,6 +595,15 @@ export class BrowserService {
     return this._pages.get(Number(tabId)) ?? null
   }
 
+  /** 取走 tabId 自 since 起弹出的对话框记录（取走即清，下一次动作不重复报告） */
+  private _drainDialogs(tabId: number, since: number): Array<{ type: string; message: string }> {
+    const list = this._dialogs.get(tabId)
+    if (!list || list.length === 0) return []
+    const fresh = list.filter((d) => d.at >= since).map((d) => ({ type: d.type, message: d.message }))
+    this._dialogs.set(tabId, [])
+    return fresh
+  }
+
   async listPages(): Promise<{ ok: true; pages: Array<{ tabId: number; url: string; title: string; active: boolean; viewed: boolean }>; activeId: number | null; viewId: number | null } | { ok: false; error: string }> {
     const ensureResult = await this.ensure()
     if (!ensureResult.ok) return { ok: false, error: ensureResult.error }
@@ -570,7 +632,7 @@ export class BrowserService {
   /** 导航（工具与面板共用）：返回 { tabId, title, url, snapshot? }。
    *  agent 路径作用于 agent 活动页（成功后按 follow 开关把观察页拽过去）；
    *  forHuman（面板 URL 栏）作用于观察页、不动 agent 活动页。 */
-  async navigate(url: string, { newTab = false, snapshot = true, forHuman = false }: { newTab?: boolean; snapshot?: boolean; forHuman?: boolean } = {}): Promise<{ ok: true; tabId: number; url: string; title: string; snapshot?: string } | { ok: false; error: string }> {
+  async navigate(url: string, { newTab = false, snapshot = true, forHuman = false }: { newTab?: boolean; snapshot?: boolean; forHuman?: boolean } = {}): Promise<{ ok: true; tabId: number; url: string; title: string; snapshot?: string; warning?: string } | { ok: false; error: string }> {
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
       return { ok: false, error: '仅支持 http/https URL' }
     }
@@ -587,6 +649,7 @@ export class BrowserService {
       page = this._pages.get(anchorId)!
     }
     const tabId = page!.__dshTabId!
+    const t0 = Date.now()
     try {
       await page!.goto(url.trim(), { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT })
     } catch (error) {
@@ -595,8 +658,11 @@ export class BrowserService {
     this._touch()
     const title = await page!.title().catch(() => '')
     this._titles.set(tabId, title)
-    const result: { ok: true; tabId: number; url: string; title: string; snapshot?: string } = { ok: true, tabId, url: page!.url(), title }
+    const result: { ok: true; tabId: number; url: string; title: string; snapshot?: string; warning?: string } = { ok: true, tabId, url: page!.url(), title }
     if (snapshot) result.snapshot = capText(await this._snapshotOf(page!))
+    // 加载期弹出的对话框（部分页面 onload alert）随结果带回
+    const dlgWarn = dialogWarning(this._drainDialogs(tabId, t0))
+    if (dlgWarn) result.warning = dlgWarn
     // 观察页跟随（恒定语义）：agent 导航与人的 URL 栏导航都作用于观察页
     this._setView(tabId)
     this._emit({ kind: 'navigated', tabId, url: result.url, title })
@@ -622,7 +688,9 @@ export class BrowserService {
     return { ok: true, tabId: id, url: page.url(), title: this._titles.get(id) ?? '', snapshot: capText(await this._snapshotOf(page)) }
   }
 
-  /** 统一动作：click/type/press/check/uncheck/select；默认返回新快照（动作即观察） */
+  /** 统一动作：click/type/press/check/uncheck/select/hover/scroll/upload；默认返回
+   *  新快照（动作即观察）。ref 定位走 aria-ref 引擎（可穿透 iframe）；scroll 有定位
+   *  目标=滚动到元素可见，无定位=按 dx/dy 真实滚轮；upload 的 value 为本地绝对路径 */
   async act(args: ActArgs): Promise<{ ok: true; tabId: number; url: string; title: string; matched: number | null; warning?: string; snapshot?: string } | { ok: false; error: string }> {
     const ensured = await this.ensure()
     if (!ensured.ok) return ensured
@@ -630,21 +698,47 @@ export class BrowserService {
     if (!page) return { ok: false, error: `页不存在：${args.tabId}` }
     const act = normalizeActArgs(args)
     if ('error' in act) return { ok: false, error: act.error }
+    const t0 = Date.now() // 对话框可见性窗口起点（动作派发前）
     const timeout = Math.min(Math.max(Number(args.timeoutMs) || ACT_TIMEOUT_DEFAULT, 1000), ACT_TIMEOUT_MAX)
-    const hasLocator = [args?.role, args?.name, args?.text, args?.selector].some(
+    const hasLocator = [args?.ref, args?.role, args?.name, args?.text, args?.selector].some(
       (v) => v !== undefined && v !== null && String(v).trim() !== '',
     )
+    const wheelDelta = (v: unknown) => {
+      const n = Number(v)
+      return Number.isFinite(n) ? Math.max(-5000, Math.min(5000, Math.round(n))) : 0
+    }
+    const dx = wheelDelta(args.dx)
+    const dy = wheelDelta(args.dy)
+    if (act.action === 'scroll' && !hasLocator && dx === 0 && dy === 0) {
+      return { ok: false, error: 'scroll 需要 dx/dy（滚动增量，负值向上）或定位目标（滚动到元素可见）' }
+    }
+    // upload 的 value=本地文件路径（多文件换行分隔），先验存在再交给 playwright
+    let uploadFiles: string[] = []
+    if (act.action === 'upload') {
+      uploadFiles = String(args.value).split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== '')
+      const missing = uploadFiles.filter((f) => {
+        try {
+          return !fs.existsSync(f)
+        } catch {
+          return true
+        }
+      })
+      if (uploadFiles.length === 0) return { ok: false, error: 'upload 的 value 未包含有效文件路径' }
+      if (missing.length > 0) return { ok: false, error: `文件不存在：${missing.join('、')}` }
+    }
     let locator: PwLocator | null = null
     let loc: ReturnType<typeof normalizeLocatorArgs> | null = null
     try {
-      if (!hasLocator && act.action === 'press') {
-        // 无定位目标的键盘事件直接发给页面
-        await page.keyboard.press(args.key ?? '')
+      if (!hasLocator && (act.action === 'press' || act.action === 'scroll')) {
+        // 无定位目标：press 直接发键盘、scroll 走真实滚轮事件
+        if (act.action === 'press') await page.keyboard.press(args.key ?? '')
+        else await page.mouse.wheel(dx, dy)
         locator = null
       } else {
         loc = normalizeLocatorArgs(args)
         if ('error' in loc) return { ok: false, error: loc.error }
-        if (loc.kind === 'selector') locator = page.locator(loc.selector)
+        if (loc.kind === 'ref') locator = page.locator(`aria-ref=${loc.ref}`)
+        else if (loc.kind === 'selector') locator = page.locator(loc.selector)
         else if (loc.kind === 'role') locator = page.getByRole(loc.role, loc.name ? { name: loc.name } : {})
         else locator = page.getByText(loc.text)
       }
@@ -660,6 +754,12 @@ export class BrowserService {
       }
       if (matched === 0) {
         const l = loc!
+        if (l.kind === 'ref') {
+          return {
+            ok: false,
+            error: `ref=${l.ref} 未找到——ref 在每次快照后可能重排（页面已变化），重取 browser_snapshot 用新 ref，不要原样重试`,
+          }
+        }
         return {
           ok: false,
           error: `目标未找到（${l.kind}${l.kind === 'role' ? `=${l.role}` : ''}${'name' in l && l.name ? ` name=${l.name}` : ''}${l.kind === 'text' ? ` text=${l.text}` : ''}${l.kind === 'selector' ? ` selector=${l.selector}` : ''}）——重取 browser_snapshot 再构造定位，不要原样重试`,
@@ -687,6 +787,15 @@ export class BrowserService {
           case 'select':
             await target.selectOption(String(args.value), { timeout })
             break
+          case 'hover':
+            await target.hover({ timeout })
+            break
+          case 'scroll':
+            await target.scrollIntoViewIfNeeded({ timeout })
+            break
+          case 'upload':
+            await target.setInputFiles(uploadFiles, { timeout })
+            break
         }
       } catch (error) {
         return { ok: false, error: `${act.action} 失败：${error instanceof Error ? error.message : error}——重取 browser_snapshot 后重建定位，不要原样重试` }
@@ -702,6 +811,9 @@ export class BrowserService {
     // act 是 agent 的状态改变操作：观察页恒跟随（与 navigate 同规则）
     this._setView(page.__dshTabId!)
     if (matched !== null && matched > 1) result.warning = `目标不唯一（${matched} 个匹配），已作用于第一个——可加 name/text 收窄`
+    // 动作期间弹出的对话框（如 confirm）带回——点击"没反应"多半是它
+    const dlgWarn = dialogWarning(this._drainDialogs(page.__dshTabId!, t0))
+    if (dlgWarn) result.warning = result.warning ? `${result.warning}；${dlgWarn}` : dlgWarn
     if (args.snapshot !== false) result.snapshot = capText(await this._snapshotOf(page))
     return result
   }
@@ -744,6 +856,29 @@ export class BrowserService {
     } catch (error) {
       return { ok: false, error: `截图失败：${error instanceof Error ? error.message : error}` }
     }
+  }
+
+  /** 视口切换（响应式/移动布局验证）：作用于指定页（默认 agent 活动页）。
+   *  范围 320–3840 × 320–2160，越界报错不静默 clamp；新页签仍以启动默认 1280×800
+   *  打开（launchPersistentContext 的 viewport 选项），面板帧流坐标按帧原始尺寸
+   *  换算，视口变化天然跟随。 */
+  async setViewport({ width, height, tabId }: { width: number; height: number; tabId?: number | null } = { width: 1280, height: 800 }): Promise<{ ok: true; tabId: number; url: string; viewport: { width: number; height: number } } | { ok: false; error: string }> {
+    const w = Number(width)
+    const h = Number(height)
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w < 320 || w > 3840 || h < 320 || h > 2160) {
+      return { ok: false, error: `视口需整数且 320≤宽≤3840、320≤高≤2160，收到 ${width}×${height}` }
+    }
+    const ensured = await this.ensure()
+    if (!ensured.ok) return ensured
+    const page = this._page(tabId)
+    if (!page) return { ok: false, error: `页不存在：${tabId ?? '(缺省)'}` }
+    this._touch()
+    try {
+      await page.setViewportSize({ width: w, height: h })
+    } catch (error) {
+      return { ok: false, error: `视口设置失败：${error instanceof Error ? error.message : error}` }
+    }
+    return { ok: true, tabId: page.__dshTabId!, url: page.url(), viewport: { width: w, height: h } }
   }
 
   /** 关一页 */
@@ -952,6 +1087,7 @@ export class BrowserService {
     this._context = null
     this._pages.clear()
     this._titles.clear()
+    this._dialogs.clear()
     this._activeId = null
     this._viewId = null
     await this._detachStream()

@@ -1,6 +1,7 @@
 // dsh-kit 浏览器服务端到端测试：合成 todo 页上跑完整 agent 循环
 // navigate → snapshot → type/click → 断言快照 → check → 负路径 → screenshot →
-// 双指针（agent 活动页/观察页）切换隔离 → history → follow 开关 → dispose
+// ref 回填/hover/scroll/upload/dialog 可见性/viewport → 双指针（agent 活动页/
+// 观察页）切换隔离 → history → dispose
 // 无 Edge/Chrome 环境自动 skip；DSH_HOME 重定向到临时目录（不碰真实 profile）。
 // 运行：node tests/test-browser-e2e.mjs
 import assert from 'node:assert/strict'
@@ -29,6 +30,10 @@ body{font-family:system-ui;max-width:420px;margin:40px auto}li.done span{text-de
 <input id="inp" aria-label="新待办" placeholder="要做什么？"><button id="add" onclick="add()">添加</button>
 <div id="err" role="alert">内容不能为空</div>
 <ul id="list"></ul><div id="status" role="status"></div>
+<div id="hov" style="padding:10px;border:1px solid #ccc" onmouseover="document.getElementById('status').textContent='hovered'">悬停区</div>
+<input type="file" id="f" aria-label="附件" onchange="document.getElementById('status').textContent='picked:'+(this.files.length)">
+<button id="del" onclick="if(confirm('确认删除？')){document.getElementById('status').textContent='已删除'}else{document.getElementById('status').textContent='已取消'}">删除</button>
+<div style="height:2000px"></div>
 <script>
 let todos=[]
 function render(){
@@ -197,6 +202,67 @@ try {
   assert.equal(listed.ok, true)
   assert.ok(listed.pages.length >= 1)
   ok(`listPages 列出 ${listed.pages.length} 页`)
+
+  // ── act 升级面：ref 回填 / hover / scroll / upload / dialog 可见性 / viewport ──
+  const snapForRef = await service.snapshot()
+  assert.equal(snapForRef.ok, true)
+  const refLine = snapForRef.snapshot.split('\n').find((l) => l.includes('添加'))
+  const refMatch = refLine && refLine.match(/\[ref=(e\d+)\]/)
+  assert.ok(refMatch, `快照应含 [ref=eN]：${refLine}`)
+  const refClick = await service.act({ action: 'click', ref: refMatch[1] })
+  assert.equal(refClick.ok, true, `ref 点击失败：${refClick.error}`)
+  assert.match(refClick.snapshot, /内容不能为空/)
+  ok(`act ref 回填点击（${refMatch[1]}）一次到位`)
+
+  const hov = await service.act({ action: 'hover', text: '悬停区' })
+  assert.equal(hov.ok, true, `hover 失败：${hov.error}`)
+  const hovStatus = await service.evaluate(`document.getElementById('status').textContent`)
+  assert.equal(JSON.parse(hovStatus.value), 'hovered')
+  ok('act hover 触发悬停副作用')
+
+  const scDown = await service.act({ action: 'scroll', dy: 800 })
+  assert.equal(scDown.ok, true, `scroll 失败：${scDown.error}`)
+  // mouse.wheel 不等待滚动落定（Chromium 逐帧应用），读取前留出落定时间
+  await new Promise((r) => setTimeout(r, 300))
+  const sy1 = JSON.parse((await service.evaluate(`window.scrollY`)).value)
+  assert.ok(sy1 > 0, `scroll 后 scrollY 应 >0：${sy1}`)
+  const scUp = await service.act({ action: 'scroll', dy: -2000 })
+  assert.equal(scUp.ok, true)
+  await new Promise((r) => setTimeout(r, 300))
+  const sy2 = JSON.parse((await service.evaluate(`window.scrollY`)).value)
+  assert.equal(sy2, 0, `scroll 回顶失败：${sy2}`)
+  const scView = await service.act({ action: 'scroll', text: '悬停区' })
+  assert.equal(scView.ok, true, `scrollIntoView 失败：${scView.error}`)
+  ok('act scroll 真实滚轮下滚/回滚/定位滚到元素')
+  const scBad = await service.act({ action: 'scroll' })
+  assert.equal(scBad.ok, false)
+  assert.match(scBad.error, /dx\/dy/)
+  ok('scroll 无定位无增量给出可恢复错误')
+
+  const upFile = path.join(tmpHome, 'upload-me.txt')
+  fs.writeFileSync(upFile, 'upload-payload')
+  const up = await service.act({ action: 'upload', selector: '#f', value: upFile })
+  assert.equal(up.ok, true, `upload 失败：${up.error}`)
+  const fCount = JSON.parse((await service.evaluate(`document.getElementById('f').files.length`)).value)
+  assert.equal(fCount, 1, `文件未进入 input：${fCount}`)
+  ok('act upload setInputFiles 落进文件选择框')
+
+  const dlg = await service.act({ action: 'click', role: 'button', name: '删除' })
+  assert.equal(dlg.ok, true, `dialog 路径点击失败（页面若冻结=未 dismiss）：${dlg.error}`)
+  assert.ok(dlg.warning && /confirm/.test(dlg.warning) && /确认删除/.test(dlg.warning), `应带回对话框 warning：${dlg.warning}`)
+  const dlgStatus = JSON.parse((await service.evaluate(`document.getElementById('status').textContent`)).value)
+  assert.equal(dlgStatus, '已取消')
+  ok('act 触发 confirm：自动关闭且弹出事实带回 warning')
+
+  const vp = await service.setViewport({ width: 375, height: 812 })
+  assert.equal(vp.ok, true, `viewport 失败：${vp.error}`)
+  assert.deepEqual(vp.viewport, { width: 375, height: 812 })
+  const iw = JSON.parse((await service.evaluate(`window.innerWidth`)).value)
+  assert.equal(iw, 375, `innerWidth 应为 375：${iw}`)
+  const vpBad = await service.setViewport({ width: 100, height: 100 })
+  assert.equal(vpBad.ok, false)
+  assert.match(vpBad.error, /320/)
+  ok('viewport 设置生效 + 越界拒绝')
 
   // ── 关掉最后一页 = 整个浏览器优雅关闭；下次导航必须能重新拉起。回归：
   // _launching 落定后若不清，context 事后关闭会让 ensure 误报 ok，

@@ -1,11 +1,14 @@
 // dsh-kit 内置浏览器——工具层（browser-tools.ts）
 //
-// 向 DSH 工具注册表（dsh-tools，ctx.tools）注册 5 个浏览器工具：
-//   browser_navigate / browser_snapshot / browser_act / browser_eval / browser_screenshot
+// 向 DSH 工具注册表（dsh-tools，ctx.tools）注册 6 个浏览器工具：
+//   browser_navigate / browser_snapshot / browser_act / browser_eval /
+//   browser_screenshot / browser_viewport
 // 设计核心：快照（ariaSnapshot mode:'ai'，含 [ref=eN]）是主观察面——紧凑、省 token、
 // 与模型是否多模态无关；navigate/act 返回内嵌新快照（"动作即观察"，一跳完成操作
-// +回看）；snapshot 工具仅用于动作失败后的恢复观察。全部串行（isConcurrencySafe
-// 省略 = 独占），单页面状态机不允许并发派发。
+// +回看）；snapshot 工具仅用于动作失败后的恢复观察。act 的 ref 定位把快照引用
+// 直接回填（aria-ref 引擎，可穿透 iframe），hover/scroll/upload 补齐悬停菜单、
+// 真实滚轮与文件上传；browser_viewport 支撑响应式/移动布局验证。全部串行
+// （isConcurrencySafe 省略 = 独占），单页面状态机不允许并发派发。
 //
 // dsh-tools 是 ESM（type: module），加载走 loadSettingsDep 同款两锚点：裸 import →
 // dsh 本体锚点 resolve+import（profile/全局安装都命中）；monorepo 源码形态跳过
@@ -170,22 +173,25 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled }: { de
   const act = defineTool({
     name: 'browser_act',
     description:
-      '对内置浏览器页面执行一个动作并返回新快照。action：click（点击）/ type（填输入框，value 替换现值）/ press（按键，key 如 Enter）/ check / uncheck / select（下拉选择，value 为选项 value）。' +
-      '定位三选一：role+name（推荐，role 如 button/link/textbox/checkbox/tab）、text（可见文本）、selector（CSS，快照无法表达时才用）。' +
+      '对内置浏览器页面执行一个动作并返回新快照。action：click（点击）/ type（填输入框，value 替换现值）/ press（按键，key 如 Enter）/ check / uncheck / select（下拉选择，value 为选项 value）/ hover（悬停，触发悬停菜单与 tooltip，为悬停才出现的元素先 hover 再取快照）/ scroll（滚动：有定位目标=滚到该元素可见；无定位=按 dx/dy 滚动，负值向上）/ upload（上传文件，value=本地绝对路径，多文件用换行分隔）。' +
+      '定位四选一：ref（推荐，快照里的 [ref=eN] 直接回填，可命中 iframe 内元素）、role+name（role 如 button/link/textbox/checkbox/tab）、text（可见文本）、selector（CSS，前三种无法表达时才用）。' +
       `${commonHint}`,
     parameters: {
       action: {
         type: 'string',
         required: true,
-        enum: ['click', 'type', 'press', 'check', 'uncheck', 'select'],
+        enum: ['click', 'type', 'press', 'check', 'uncheck', 'select', 'hover', 'scroll', 'upload'],
         description: '要执行的动作',
       },
-      role: { type: 'string', description: 'ARIA 角色（配合 name 定位，推荐）' },
+      ref: { type: 'string', description: '快照里的元素引用 eN（来自 [ref=eN]，推荐的定位方式）' },
+      role: { type: 'string', description: 'ARIA 角色（配合 name 定位）' },
       name: { type: 'string', description: '可访问名称（配合 role）' },
       text: { type: 'string', description: '可见文本定位' },
       selector: { type: 'string', description: 'CSS 选择器（最后手段）' },
-      value: { type: 'string', description: 'type 要填入的文本 / select 的选项 value' },
+      value: { type: 'string', description: 'type 要填入的文本 / select 的选项 value / upload 的文件路径' },
       key: { type: 'string', description: 'press 的按键（如 Enter、Control+A）' },
+      dx: { type: 'number', description: 'scroll 横向增量（无定位目标时）' },
+      dy: { type: 'number', description: 'scroll 纵向增量（无定位目标时，负值向上）' },
       timeoutMs: { type: 'number', description: '动作等待上限（1000-15000，默认 5000）' },
       snapshot: { type: 'boolean', description: '返回新快照（默认 true；批量连续动作可关）' },
       tabId: { type: 'number', description: '页签 id（默认当前页）' },
@@ -197,11 +203,11 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled }: { de
       const loc = normalizeLocatorArgs(args)
       const actArgs = normalizeActArgs(args)
       if ('error' in actArgs) throw new Error(actArgs.error)
-      // press 允许无定位目标（直接发给页面）；其余动作必须有定位
-      const hasLocator = [args.role, args.name, args.text, args.selector].some(
+      // press（发页面）/scroll（按 dx dy）允许无定位目标；其余动作必须有定位
+      const hasLocator = [args.ref, args.role, args.name, args.text, args.selector].some(
         (v) => v !== undefined && v !== null && String(v).trim() !== '',
       )
-      if (!hasLocator && actArgs.action !== 'press') {
+      if (!hasLocator && actArgs.action !== 'press' && actArgs.action !== 'scroll') {
         throw new Error(('error' in loc ? loc.error : '') || '缺少定位参数')
       }
       const r = await service.act(args)
@@ -273,5 +279,28 @@ export function buildBrowserTools({ defineTool, service, ctx, isDisabled }: { de
     },
   })
 
-  return [navigate, snapshot, act, evaluate, screenshot]
+  const viewport = defineTool({
+    name: 'browser_viewport',
+    description:
+      '设置内置浏览器页面视口尺寸（320–3840 × 320–2160，移动端常用 375×812），用于验证响应式/移动布局；' +
+      '设置后重新 browser_snapshot / browser_screenshot 观察新布局。只影响目标页签，新开页签仍以默认 1280×800 启动。',
+    parameters: {
+      width: { type: 'number', required: true, description: '视口宽（320–3840）' },
+      height: { type: 'number', required: true, description: '视口高（320–2160）' },
+      tabId: { type: 'number', description: '页签 id（默认当前页）' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_args, value) => [{ type: 'text', text: `视口已设为 ${value.viewport.width}×${value.viewport.height}（tab=${value.tabId} ${value.url}）` }],
+    },
+    timeoutMs: 10000,
+    async execute(args) {
+      guard()
+      const r = await service.setViewport({ width: args.width, height: args.height, tabId: args.tabId })
+      if (!r.ok) throw new Error(r.error)
+      return r
+    },
+  })
+
+  return [navigate, snapshot, act, evaluate, screenshot, viewport]
 }

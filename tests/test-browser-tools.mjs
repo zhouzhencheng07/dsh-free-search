@@ -1,6 +1,6 @@
 // dsh-kit 浏览器纯逻辑单测（不启浏览器）：
 //   1) browser.js 纯函数：capText / pngSize / normalizeLocatorArgs / normalizeActArgs
-//   2) browser-tools.js：defineTool mock 下 5 个工具的 schema/render/execute 投影
+//   2) browser-tools.js：defineTool mock 下 6 个工具的 schema/render/execute 投影
 // 运行：node tests/test-browser-tools.mjs
 import assert from 'node:assert/strict'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -43,13 +43,18 @@ const ok = (name) => {
 
 // ── normalizeLocatorArgs ──
 {
+  assert.deepEqual(normalizeLocatorArgs({ ref: 'e12' }), { kind: 'ref', ref: 'e12' })
+  assert.deepEqual(normalizeLocatorArgs({ ref: '[ref=e7]' }), { kind: 'ref', ref: 'e7' })
+  assert.deepEqual(normalizeLocatorArgs({ ref: 'ref=e3' }), { kind: 'ref', ref: 'e3' })
+  assert.ok(normalizeLocatorArgs({ ref: 'button' }).error) // 非 eN 形态
+  assert.deepEqual(normalizeLocatorArgs({ ref: 'e1', role: 'button' }), { kind: 'ref', ref: 'e1' }) // ref 优先
   assert.deepEqual(normalizeLocatorArgs({ role: 'button', name: '添加' }), { kind: 'role', role: 'button', name: '添加' })
   assert.deepEqual(normalizeLocatorArgs({ role: 'button' }), { kind: 'role', role: 'button', name: '' })
   assert.deepEqual(normalizeLocatorArgs({ text: ' 登录 ' }), { kind: 'text', text: ' 登录 ' })
   assert.deepEqual(normalizeLocatorArgs({ selector: '#go' }), { kind: 'selector', selector: '#go' })
   assert.ok(normalizeLocatorArgs({}).error)
   assert.ok(normalizeLocatorArgs().error)
-  ok('normalizeLocatorArgs 三选一归一化与缺参报错')
+  ok('normalizeLocatorArgs 四选一归一化（ref 优先）与缺参报错')
 }
 
 // ── normalizeActArgs ──
@@ -59,8 +64,12 @@ const ok = (name) => {
   assert.deepEqual(normalizeActArgs({ action: 'type', value: 'hi' }), { action: 'type' })
   assert.ok(normalizeActArgs({ action: 'press' }).error) // press 缺 key
   assert.deepEqual(normalizeActArgs({ action: 'press', key: 'Enter' }), { action: 'press' })
-  assert.ok(normalizeActArgs({ action: 'hover' }).error) // 未知动作
-  ok('normalizeActArgs 动作/参数配套校验')
+  assert.deepEqual(normalizeActArgs({ action: 'hover' }), { action: 'hover' }) // 定位配套在 service 层校验
+  assert.deepEqual(normalizeActArgs({ action: 'scroll' }), { action: 'scroll' })
+  assert.ok(normalizeActArgs({ action: 'upload' }).error) // upload 缺 value
+  assert.deepEqual(normalizeActArgs({ action: 'upload', value: 'C:/x/a.png' }), { action: 'upload' })
+  assert.ok(normalizeActArgs({ action: 'drag' }).error) // 未知动作
+  ok('normalizeActArgs 动作/参数配套校验（hover/scroll/upload）')
 }
 
 // ── buildBrowserTools（mock defineTool + mock service）──
@@ -86,14 +95,34 @@ const ok = (name) => {
       return { ok: true, tabId: 1, url: 'u', value: '"v"' }
     },
     screenshot: async () => ({ ok: true, tabId: 1, url: 'u', buffer: Buffer.from('png'), size: { width: 2, height: 3 } }),
+    setViewport: async (p) => {
+      calls.push(['setViewport', p])
+      return { ok: true, tabId: 1, url: 'u', viewport: { width: p.width, height: p.height } }
+    },
   }
   const defs = buildBrowserTools({ defineTool, service, ctx: { get: () => undefined }, isDisabled: () => false })
-  assert.equal(defs.length, 5)
+  assert.equal(defs.length, 6)
   assert.deepEqual(
     defs.map((d) => d.name),
-    ['browser_navigate', 'browser_snapshot', 'browser_act', 'browser_eval', 'browser_screenshot'],
+    ['browser_navigate', 'browser_snapshot', 'browser_act', 'browser_eval', 'browser_screenshot', 'browser_viewport'],
   )
-  ok('5 个工具按序注册')
+  ok('6 个工具按序注册')
+
+  // act：ref 定位透传 service；无定位且非 press/scroll → 报错；scroll 无定位放行
+  await defs[2].execute({ action: 'click', ref: 'e12' })
+  assert.equal(calls.at(-1)[1].ref, 'e12')
+  await defs[2].execute({ action: 'scroll', dy: -600 })
+  assert.equal(calls.at(-1)[1].dy, -600)
+  await assert.rejects(() => defs[2].execute({ action: 'click' }), /缺少定位参数/)
+  const pressValue = await defs[2].execute({ action: 'press', key: 'Enter' })
+  assert.equal(pressValue.ok, true)
+  ok('act ref/scroll 无定位放行与定位校验')
+
+  // viewport：execute → 返回值 + render 文本投影
+  const vpValue = await defs[5].execute({ width: 375, height: 812 })
+  assert.deepEqual(vpValue.viewport, { width: 375, height: 812 })
+  assert.match(defs[5].output.render({}, vpValue)[0].text, /375×812/)
+  ok('viewport execute+render')
 
   // navigate：execute → 返回值 + render 文本投影
   const navValue = await defs[0].execute({ url: 'http://x/' })
@@ -101,12 +130,6 @@ const ok = (name) => {
   assert.ok(defs[0].output.render({}, navValue)[0].text.includes('http://x/'))
   assert.ok(defs[0].output.render({}, navValue)[0].text.includes('- heading "T"'))
   ok('navigate execute+render 内嵌快照')
-
-  // act：无定位且非 press → 报错；press 无定位 → 放行
-  await assert.rejects(() => defs[2].execute({ action: 'click' }), /缺少定位参数/)
-  const pressValue = await defs[2].execute({ action: 'press', key: 'Enter' })
-  assert.equal(pressValue.ok, true)
-  ok('act 定位校验与 press 无定位放行')
 
   // screenshot：无 attachments 服务 → 优雅退化（note + 无 image 块）
   const shotValue = await defs[4].execute({ fullPage: false }, { agent: undefined })
