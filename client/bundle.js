@@ -93,12 +93,16 @@ window.__ModuleLoader__.load({
     /** 打开/激活文件预览标签：已存在则置顶激活（usedAt 刷新，deleted/untracked
      *  同步为本次状态）；超过上限按 LRU 逐出最久未用的（绝不含本次）；顺带取消
      *  最小化态并激活预览大标签。deleted=已删除文件，预览只承载删除 diff。 */
-    function openPreviewTab(ui, path, from, untracked, deleted) {
+    /** 打开/激活一个文件预览标签：commit（可选）= 提交钉定模式（图谱提交详情
+     *  进入，diff 视图与该提交的第一父对比，与工作区状态无关）；重开同路径时
+     *  commit 随入口刷新（从 SCM 更改列表重开即清除钉定） */
+    function openPreviewTab(ui, path, from, untracked, deleted, commit) {
       const now = Date.now();
+      const commitRef = typeof commit === "string" && commit !== "" ? commit : undefined;
       const items = ui.previews ?? [];
       let list = items.some((x) => x.path === path)
-        ? items.map((x) => (x.path === path ? { ...x, from: from ?? x.from, untracked: untracked === true, deleted: deleted === true, usedAt: now } : x))
-        : [...items, { path, from: from ?? "tree", untracked: untracked === true, deleted: deleted === true, usedAt: now }];
+        ? items.map((x) => (x.path === path ? { ...x, from: from ?? x.from, untracked: untracked === true, deleted: deleted === true, commit: commitRef, usedAt: now } : x))
+        : [...items, { path, from: from ?? "tree", untracked: untracked === true, deleted: deleted === true, commit: commitRef, usedAt: now }];
       const max = previewLimit();
       while (list.length > max) {
         let oldest = null;
@@ -515,6 +519,8 @@ window.__ModuleLoader__.load({
       diffFail: "diff 加载失败",
       diffEmpty: "（无未暂存差异）",
       diffUntracked: "未跟踪文件，暂无 diff",
+      diffBaseParent: "与上一版（父提交 {base}）对比",
+      diffBaseRoot: "根提交：与空树对比（全部为新增）",
       mdCopyCode: "复制代码",
       mdCopied: "已复制",
       gitM: "已修改",
@@ -769,6 +775,8 @@ window.__ModuleLoader__.load({
       diffFail: "Failed to load diff",
       diffEmpty: "(no unstaged changes)",
       diffUntracked: "Untracked file, no diff yet",
+      diffBaseParent: "Compared with parent commit {base}",
+      diffBaseRoot: "Root commit: diffed against empty tree (all additions)",
       mdCopyCode: "Copy",
       mdCopied: "Copied",
       gitM: "Modified",
@@ -4120,7 +4128,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                           {
                             className: "dshk-gfile",
                             title: f.abs,
-                            onClick: () => onOpenFile(f.abs, st === "A"),
+                            onClick: () => onOpenFile(f.abs, false, false, sel),
                             children: [
                               jsxRuntime.jsx("span", { className: "dshk-gitbadge", "data-k": st, children: st }),
                               jsxRuntime.jsx("span", { className: "dshk-name", children: base }),
@@ -4227,7 +4235,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const dir = fromPath.split(/[\\/]+/).slice(0, -1).join("\\");
       return norm(`${dir}\\${raw}`);
     }
-    function FileContentPane({ path, source, untracked, deleted, cwd, onOpenFile }) {
+    function FileContentPane({ path, source, untracked, deleted, cwd, commit, onOpenFile }) {
       const [state, setState] = react.useState({ phase: "loading" });
       // git/diff 视图状态——xy=null 表示无变更或非仓库；diff 数据懒加载。
       // 视图模式：默认随入口（源代码管理=diff，文件树=原文；未跟踪文件没有
@@ -4302,7 +4310,8 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       const diffFetchRef = react.useRef(null);
       diffFetchRef.current = () => {
         const c = new AbortController();
-        fetch(`/dsh-kit/git/diff?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd ?? path)}`, { signal: c.signal })
+        const commitQ = commit ? `&commit=${encodeURIComponent(commit)}` : "";
+        fetch(`/dsh-kit/git/diff?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd ?? path)}${commitQ}`, { signal: c.signal })
           .then(async (res) => {
             const b = await res.json().catch(() => null);
             if (!res.ok || !b || b.available !== true) throw new Error(b?.error ?? `HTTP ${res.status}`);
@@ -4310,7 +4319,15 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           })
           .then((b) => {
             if (!c.signal.aborted)
-              setDiff({ phase: "ready", untracked: b.untracked === true, clean: b.clean === true, text: typeof b.diff === "string" ? b.diff : null });
+              setDiff({
+                phase: "ready",
+                untracked: b.untracked === true,
+                clean: b.clean === true,
+                base: typeof b.base === "string" ? b.base : "",
+                content: typeof b.content === "string" ? b.content : undefined,
+                blobMissing: b.blobMissing === true,
+                text: typeof b.diff === "string" ? b.diff : null,
+              });
           })
           .catch((error) => {
             if (!c.signal.aborted && error?.name !== "AbortError") setDiff({ phase: "error", error: String(error?.message ?? error) });
@@ -4318,11 +4335,13 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
       };
       // diff 数据（仅 diff 视图激活时）：进入时拉一次，可见期间低频静默跟随
       // （AI 边改边看也能跟上），转回可见/聚焦立即补；切回原文视图即停轮询。
-      // 已删除文件即使二进制也拉（删除 diff 是一行 "Binary files differ"，可显示）
+      // 已删除文件即使二进制也拉（删除 diff 是一行 "Binary files differ"，可显示）。
+      // commit 钉定模式的 diff 不可变（固定对某提交的第一父），拉一次即可不轮询
       react.useEffect(() => {
         if (mode !== "diff" || (binaryPreview && deleted !== true) || !cwd) return undefined;
         setDiff({ phase: "loading" });
         if (diffFetchRef.current) diffFetchRef.current();
+        if (commit) return undefined;
         const tick = () => {
           if (document.visibilityState !== "hidden" && diffFetchRef.current) diffFetchRef.current();
         };
@@ -4334,7 +4353,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           document.removeEventListener("visibilitychange", tick);
           window.removeEventListener("focus", tick);
         };
-      }, [mode, path, cwd]);
+      }, [mode, path, cwd, commit]);
 
       // 让位布局（body 类/宽度/拖拽）由右侧标签页容器统一负责，本组件只管内容。
 
@@ -4365,8 +4384,6 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           });
         return () => controller.abort();
       }, [path, reloadNonce, deleted]);
-
-      const base = path.split(/[\\/]/).pop() || path;
 
       // ── md 渲染 + CM 只读/编辑挂载（依赖就绪后接管对应宿主 div）──
       const isMd = /\.(md|markdown)$/i.test(path);
@@ -4604,15 +4621,20 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         return () => h.destroy();
       }, [cmReady, editing, path]);
 
-      /** diff 视图：优先全文件着色（hunk 套回完整内容，删除红/新增绿）；
-       *  截断大文件或 hunk 对不上时回退原始 patch 渲染 */
-      const renderDiffView = () => {
+      /** diff 视图：优先全文件着色（hunk 套回完整新像，删除红/新增绿）；
+       *  截断大文件或 hunk 对不上时回退原始 patch 渲染。新像来源两分支——
+       *  常规视图 = 当前盘上内容；commit 钉定模式 = 该提交时刻的内容（端点
+       *  随 diff 带回，盘上已是别的版本不能叠）。commit 模式下该提交已删除的
+       *  文件（新像不存在）与工作区删除文件同款纯红展示；内容缺失（过大/二进制）
+       *  回落原始 patch。顶部基线说明见 renderDiffView 包装层。 */
+      const renderDiffBody = () => {
         if (diff.phase === "loading") return jsxRuntime.jsx("div", { className: "dshk-note", children: t("contentLoading") });
         if (diff.phase === "error")
           return jsxRuntime.jsx("div", { className: "dshk-note", title: diff.error, children: `${t("diffFail")}：${diff.error}` });
-        if (deleted === true) {
+        if (deleted === true || (commit && diff.blobMissing === true)) {
           // 已删除文件：不看 raw diff（diff --git/index/--- 等元数据是噪音）——
-          // 只抽删除行、剥掉前缀 `-`，整块按"已删除"红色展示（= 被删文件全文）
+          // 只抽删除行、剥掉前缀 `-`，整块按"已删除"红色展示（= 被删文件全文）。
+          // commit 钉定模式下该提交已删除的文件（新像不存在）同款处理
           if (diff.clean || diff.text === null) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffEmpty") });
           const removed = diff.text
             .split("\n")
@@ -4649,8 +4671,17 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
         }
         if (diff.clean || diff.text === null) return jsxRuntime.jsx("div", { className: "dshk-note", children: t("diffEmpty") });
 
+        // 新像：常规视图 = 当前盘上内容（read 带回）；commit 钉定 = 该提交时刻的
+        // 内容（diff 响应带回，不读盘——盘上已是别的版本，套上去会错位着色）。
+        // 钉定模式无新像（过大/二进制）时 null → 回落原始 patch
         const newLines =
-          state.body && !state.body.truncated && typeof state.body.content === "string" ? state.body.content.split("\n") : null;
+          commit
+            ? typeof diff.content === "string"
+              ? diff.content.split("\n")
+              : null
+            : state.body && !state.body.truncated && typeof state.body.content === "string"
+              ? state.body.content.split("\n")
+              : null;
         const rows = newLines ? buildInlineRows(diff.text, newLines) : null;
         if (rows) {
           return jsxRuntime.jsx(
@@ -4679,6 +4710,22 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             return jsxRuntime.jsx("div", { className: `dshk-diff-${cls}`, children: line === "" ? " " : line }, i);
           }),
         });
+      };
+      const renderDiffView = () => {
+        const body = renderDiffBody();
+        if (commit && diff.phase === "ready") {
+          return jsxRuntime.jsxs("div", {
+            className: "dshk-diffwrap",
+            children: [
+              jsxRuntime.jsx("div", {
+                className: "dshk-diffnote",
+                children: diff.base ? tf("diffBaseParent", { base: diff.base }) : t("diffBaseRoot"),
+              }),
+              body,
+            ],
+          });
+        }
+        return body;
       };
 
       /** 编辑态 UI：工具条（保存/取消/未保存提示）+ 受控 textarea */
@@ -4860,9 +4907,10 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
           jsxRuntime.jsxs("div", {
             className: "dshk-head",
             children: [
-              // 只留文件名；绝对路径放悬停 tooltip（用户定稿：相对路径信息量低，
-              // 且文件在工作区根时与文件名重复）
-              jsxRuntime.jsx("span", { className: "dshk-title", title: path, children: base }),
+              // 标题行显示绝对路径（文件名已由页签 chip 承担，重复信息去掉；
+              // 用户定稿 2026-09-05：同仓多目录/同名校验场景下绝对路径更有用；
+              // 不挂 title 悬停——文本已是全路径，悬停提示只保留页签 chip 那份）
+              jsxRuntime.jsx("span", { className: "dshk-title", children: path }),
               jsxRuntime.jsx("span", { className: "dshk-spring" }),
               // PDF 页码指示器：挂标题栏固定区不遮内容；文档加载失败时不给槽位
               isPdf && state.phase === "ready" && !pdfError
@@ -6244,6 +6292,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
                     source: pv.from ?? "tree",
                     untracked: pv.untracked === true,
                     deleted: pv.deleted === true,
+                    commit: pv.commit,
                     cwd,
                     onOpenFile: (p, untracked) => setKitUi(openPreviewTab(kitUi, p, "md-link", untracked === true)),
                   }),
@@ -6362,7 +6411,7 @@ body[data-ds-dark-theme] .dshk-cm-scope{--dshk-tok-keyword:#ff7b72;--dshk-tok-st
             const side = owner ?? {};
             if (side.wide === false) return null;
             return ui.gitOpen
-              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked, deleted) => setKitUi(openPreviewTab(kitUi, p, "scm", untracked === true, deleted === true)), ...owner })
+              ? jsxRuntime.jsx(GitChangesPanel, { cwd, onOpenFile: (p, untracked, deleted, commit) => setKitUi(openPreviewTab(kitUi, p, "scm", untracked === true, deleted === true, typeof commit === "string" && commit !== "" ? commit : undefined)), ...owner })
               : jsxRuntime.jsx(FileTreePanel, { cwd, onOpenFile: (p) => setKitUi(openPreviewTab(kitUi, p, "tree", false)), ...owner });
           });
         } catch (error) {

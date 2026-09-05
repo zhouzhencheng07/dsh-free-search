@@ -1326,12 +1326,16 @@ export async function apply(ctx) {
                     })();
                 },
             });
-            // GET /dsh-kit/git/diff?path=<绝对文件>&cwd=<工作目录> →
+            // GET /dsh-kit/git/diff?path=<绝对文件>&cwd=<工作目录>[&commit=<提交引用>] →
             //   {available:true, diff:<原文>}——基线为 git diff HEAD，即相对上次提交的
             //   全部未提交改动（含已暂存）；未跟踪 {available:true, untracked:true}；
             //   无变更 {available:true, clean:true}。path 不做存在性校验（validatePathShape）：
             //   已删除文件的删除 diff 是合法产物（git diff HEAD 支持），预览面板靠它
-            //   展示"仅 diff"视图
+            //   展示"仅 diff"视图。
+            //   带 commit 参数 = 提交钉定模式（图谱提交详情点文件）：基线是该提交的
+            //   第一父（根提交由 --root 对空树，merge 默认无 patch），显示该提交对本
+            //   文件的改动；返回 {available:true, commitMode:true, base:<父短哈希|"">,
+            //   diff}。该提交里被列出的文件必然有 patch（清单与 diff 同源 diff-tree）。
             const disposeGitDiff = webCtx.webServer.register({
                 kind: 'exact',
                 path: '/dsh-kit/git/diff',
@@ -1368,6 +1372,53 @@ export async function apply(ctx) {
                     const rel = path.relative(root, file.path);
                     if (rel.startsWith('..') || path.isAbsolute(rel)) {
                         json(400, { error: '文件不在项目根内' });
+                        return;
+                    }
+                    const commitRaw = String(url.searchParams.get('commit') ?? '').trim();
+                    if (commitRaw !== '') {
+                        if (commitRaw.length > 200 || /[\u0000-\u001f]/.test(commitRaw)) {
+                            json(400, { error: '提交引用非法' });
+                            return;
+                        }
+                        runGit(['rev-parse', '--verify', '--quiet', `${commitRaw}^{commit}`], root).then((rv) => {
+                            const full = rv.ok ? rv.out.trim() : '';
+                            if (!/^[0-9a-f]{40}$/.test(full)) {
+                                json(400, { error: '提交不存在：' + commitRaw });
+                                return;
+                            }
+                            // 父哈希只用于顶部基线说明；diff 本体走 diff-tree -p --root（对根提交
+                            // 自动取空树、对 merge 默认无输出），与详情清单同源同语义
+                            runGit(['rev-list', '--parents', '-n', '1', full], root).then((pl) => {
+                                const parent = pl.ok && typeof pl.out === 'string' ? (pl.out.trim().split(' ')[1] ?? '') : '';
+                                runGit(['-c', 'core.quotePath=false', 'diff-tree', '--root', '-p', '--no-commit-id', full, '--', rel], root).then((d) => {
+                                    const patch = d.ok ? d.out : null;
+                                    const base = parent !== '' ? parent.slice(0, 7) : '';
+                                    // 二进制 patch 没有可叠着色的文本新像，直接不取 blob
+                                    if (patch === null || /GIT binary patch|^Binary files /m.test(patch)) {
+                                        json(200, { available: true, commitMode: true, base, diff: patch });
+                                        return;
+                                    }
+                                    // 新像 = 该提交时刻的文件内容，供前端复用全文件着色视图；
+                                    // 取不到（该提交删除了此文件）标 blobMissing 走纯红删除视图；
+                                    // 超 1MB 不取（前端回落原始 patch，避免大内容白拉）
+                                    runGit(['-c', 'core.quotePath=false', 'show', `${full}:${rel.replace(/\\/g, '/')}`], root).then((blob) => {
+                                        const text = blob.ok && typeof blob.out === 'string' && blob.out.length > 0 && blob.out.length <= 1024 * 1024
+                                            ? blob.out
+                                            : null;
+                                        if (text !== null) {
+                                            json(200, { available: true, commitMode: true, base, diff: patch, content: text });
+                                            return;
+                                        }
+                                        if (!blob.ok) {
+                                            // blob 读不出来 = 该提交时刻不存在此文件（删除/路径变形）
+                                            json(200, { available: true, commitMode: true, base, diff: patch, blobMissing: true });
+                                            return;
+                                        }
+                                        json(200, { available: true, commitMode: true, base, diff: patch });
+                                    });
+                                });
+                            });
+                        });
                         return;
                     }
                     runGit(['status', '--porcelain', '--', rel], root).then((st) => {

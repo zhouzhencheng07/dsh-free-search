@@ -420,6 +420,72 @@ const closedLast = comps.closePreviewTab({ previews: [{ path: "C:/x/only.js", fr
 check("closePreviewTab 关最后一个文件预览大标签随之消失", closedLast.previews.length === 0 && closedLast.activePreview === null);
 const delOpen = comps.openPreviewTab({ previews: [], activePreview: null }, "C:/x/gone.js", "scm", false, true);
 check("openPreviewTab 携带 deleted 标记", delOpen.previews.length === 1 && delOpen.previews[0].deleted === true && delOpen.activePreview === "C:/x/gone.js");
+// 7.2.3b) commit 钉定（图谱提交详情进入）：条目携带 commit；从 SCM 重开同路径清除钉定
+const commitOpen = comps.openPreviewTab({ previews: [], activePreview: null }, "C:/x/hist.js", "scm", false, false, "abc1234def");
+check("openPreviewTab 携带 commit 钉定", commitOpen.previews.length === 1 && commitOpen.previews[0].commit === "abc1234def" && commitOpen.activePreview === "C:/x/hist.js");
+const commitReopen = comps.openPreviewTab(commitOpen, "C:/x/hist.js", "scm", false);
+check("openPreviewTab 从 SCM 重开同路径清除钉定", commitReopen.previews[0].commit === undefined);
+
+// 7.2.3c) 提交钉定 diff 视图：顶部基线说明（父短哈希/根提交空树）；复用全文件
+// 着色（新像 = 该提交时刻的内容，由 diff 响应带回）而非叠当前盘上内容；
+// 新像缺失分支——该提交已删除的文件走纯红删除块，过大/二进制回落原始 patch。
+// 桩 effect 不执行，diff 态用 stateStore 预置（#0 state、#1 mode、#2 diff）
+const commitDiffText = "diff --git a/f.js b/f.js\nindex 111..222 100644\n--- a/f.js\n+++ b/f.js\n@@ -1 +1 @@\n-old\n+new\n";
+const readyBody = { phase: "ready", body: { path: "C:/x/f.js", size: 2, mtimeMs: 1, truncated: false, binary: false, content: "x\n" } };
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, readyBody);
+stateStore.set(2, { phase: "ready", clean: false, base: "abcd123", text: commitDiffText, content: "new\n" });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/f.js", cwd: "C:/x", source: "scm", commit: "full40hash" });
+const baseNote = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-diffnote" && typeof c[2].children === "string" && c[2].children.includes("abcd123"));
+const overlayRows = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-inline");
+const rawOnly = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-diff");
+check("提交钉定 diff 渲染基线说明（父提交 abcd123）", !!baseNote);
+check("提交钉定 diff 复用全文件着色（新像=提交时刻内容）", !!overlayRows && !rawOnly);
+// 该提交已删除的文件（blobMissing）：纯红删除块，不出元数据噪音
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, readyBody);
+stateStore.set(2, { phase: "ready", clean: false, base: "abcd123", text: commitDiffText, blobMissing: true });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/f.js", cwd: "C:/x", source: "scm", commit: "full40hash" });
+const delRed = callLog.filter((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-il-del").map((c) => c[2].children);
+const delMeta = callLog.find((c) => (c[0] === "jsx") && c[2] && typeof c[2].children === "string" && (c[2].children.startsWith("diff --git") || c[2].children.startsWith("@@")));
+check("提交钉定删除文件走纯红块（无元数据噪音）", delRed.includes("old") && !delRed.includes("new") && !delMeta);
+// 新像缺失（过大/二进制，无 content 无 blobMissing）：回落原始 patch
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, readyBody);
+stateStore.set(2, { phase: "ready", clean: false, base: "abcd123", text: commitDiffText });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/f.js", cwd: "C:/x", source: "scm", commit: "full40hash" });
+const rawFallback = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-diff");
+check("钉定无新像回落原始 patch", !!rawFallback);
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, readyBody);
+stateStore.set(2, { phase: "ready", clean: false, base: "", text: commitDiffText });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/f.js", cwd: "C:/x", source: "scm", commit: "root40hash" });
+const rootNote = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-diffnote" && typeof c[2].children === "string" && (c[2].children.includes("empty tree") || c[2].children.includes("空树")));
+check("根提交钉定显示空树基线说明", !!rootNote);
+// 非 commit 的常规 diff 视图不受影响：hunk 仍套回盘上内容（全文件着色）
+stateStore.clear();
+stateSeq = 0;
+stateStore.set(0, readyBody);
+stateStore.set(2, { phase: "ready", clean: false, text: commitDiffText });
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/f.js", cwd: "C:/x", source: "scm" });
+const normalOverlay = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-inline");
+check("常规 diff 视图仍套盘上内容（无 commit 钉定）", !!normalOverlay);
+// 预览头部标题：绝对路径（文件名由页签 chip 承担）
+callLog = [];
+out = comps.FileContentPane({ path: "C:/x/dir/f.js", cwd: "C:/x", source: "scm" });
+const titleAbs = callLog.find((c) => (c[0] === "jsx") && c[2] && c[2].className === "dshk-title" && c[2].children === "C:/x/dir/f.js");
+check("预览头部标题显示绝对路径", !!titleAbs);
+check("预览头部不挂 title 悬停（全路径已直显，悬停只留页签 chip）", !!(titleAbs && titleAbs[2] && titleAbs[2].title === undefined));
+stateStore.clear();
 
 // 7.5) 终端坞（多标签）：预置两个会话（含同 cwd 多开）后渲染——标签 map 曾因
 // 变量遮蔽翻译函数 t 而崩溃，此用例专防"有状态后才走到的渲染分支"
